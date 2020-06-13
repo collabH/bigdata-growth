@@ -49,7 +49,7 @@
 
 ### RPC机制的实现
 
-![img4](/Users/babywang/Documents/reserch/studySummary/repository/img/img5.jpg)
+![img4](../../../img/img5.jpg)
 
 ## Java远程方法调用(RMI)
 
