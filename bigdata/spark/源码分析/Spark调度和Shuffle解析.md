@@ -175,3 +175,64 @@ ExecutorBackend
     ![HashShuffleManager](./img/优化HashShuffleManager.jpg)
 
 * 核数如果过多就会导致文件过多，这样也会导致文件过多的问题。
+
+## SortShuffleManager
+
+### 原理流程
+
+![原理流程](./img/SortShuffle原理.jpg)
+
+### bypass运行机制
+
+* bypass运行机制的触发条件：
+  * **shuffle map task**数量小于**spark.shuffle.sort.bypassMergeThreshold**不需要进行排序，直接使用hash即可。
+  * 不是聚合类的shuffle算子。
+
+![bypass机制](./img/bypass机制.jpg)
+
+### bypass机制源码剖析
+
+```scala
+--SortShuffleManager
+	-- getWriter 拿到Writer根据ShuffleHandle区分
+    handle match {
+          // 不同模式numMapsForShuffle
+        case unsafeShuffleHandle: SerializedShuffleHandle[K @unchecked, V @unchecked] =>
+          new UnsafeShuffleWriter(
+            env.blockManager,
+            shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver],
+            context.taskMemoryManager(),
+            unsafeShuffleHandle,
+            mapId,
+            context,
+            env.conf)
+          // bypass运行机制
+        case bypassMergeSortHandle: BypassMergeSortShuffleHandle[K @unchecked, V @unchecked] =>
+          new BypassMergeSortShuffleWriter(
+            env.blockManager,
+            shuffleBlockResolver.asInstanceOf[IndexShuffleBlockResolver],
+            bypassMergeSortHandle,
+            mapId,
+            context,
+            env.conf)
+        case other: BaseShuffleHandle[K @unchecked, V @unchecked, _] =>
+          new SortShuffleWriter(shuffleBlockResolver, other, mapId, context)
+      }
+-- registerShuffle  注册Shuffle
+	-- SortShuffleWriter.shouldBypassMergeSort(conf, dependency)
+     def shouldBypassMergeSort(conf: SparkConf, dep: ShuffleDependency[_, _, _]): Boolean = {
+    // We cannot bypass sorting if we need to do map-side aggregation.
+    // 如果shuffle依赖存在map端聚合，理解执行reduceByKey算子
+    if (dep.mapSideCombine) {
+      false
+    } else {
+      // 拿到spark.shuffle.sort.bypassMergeThreshold配置
+      val bypassMergeThreshold: Int = conf.getInt("spark.shuffle.sort.bypassMergeThreshold", 200)
+      // 如果分区数小于等于bypassMergeThreshold则进行bypass机制
+      dep.partitioner.numPartitions <= bypassMergeThreshold
+    }
+  }
+-- SortShuffleManager.canUseSerializedShuffle(dependency)
+	
+```
+
