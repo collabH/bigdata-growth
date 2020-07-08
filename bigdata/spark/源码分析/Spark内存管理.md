@@ -121,7 +121,7 @@ def releaseUnrollMemory(numBytes: Long, memoryMode: MemoryMode): Unit
 
 ![动态内存管理](./img/动态内存调用机制.jpg)
 
-# 存储内存管理
+# Storage内存管理
 
 ## RDD的持久化机制
 
@@ -130,3 +130,88 @@ def releaseUnrollMemory(numBytes: Long, memoryMode: MemoryMode): Unit
 * RDD 的持久化由 **Spark 的 Storage 模块** [7] 负责，实现了 **RDD 与物理存储的解耦合**。Storage 模块**负责管理 Spark 在计算过程中产生的数据，将那些在内存或磁盘、在本地或远程存取数据的功能封装了起来**。在具体实现时 **Driver 端和 Executor 端的 Storage 模块构成了主从式的架构**，即 **Driver 端的 BlockManager 为 Master，Executor 端的 BlockManager 为 Slave**。Storage 模块在逻辑上以 **Block 为基本存储单位，RDD 的每个 Partition 经过处理后唯一对应一个 Block**（BlockId 的格式为 rdd_RDD-ID_PARTITION-ID ）。**Master 负责整个 Spark 应用程序的 Block 的元数据信息的管理和维护，而 Slave 需要将 Block 的更新等状态上报到 Master，同时接收 Master 的命令，例如新增或删除一个 RDD**。
 
 ![Storage](./img/Spark Storage模板.jpg)
+
+### 存储级别
+
+```scala
+ case "NONE" => NONE
+    case "DISK_ONLY" => DISK_ONLY
+    case "DISK_ONLY_2" => DISK_ONLY_2
+    case "MEMORY_ONLY" => MEMORY_ONLY
+    case "MEMORY_ONLY_2" => MEMORY_ONLY_2
+    case "MEMORY_ONLY_SER" => MEMORY_ONLY_SER
+    case "MEMORY_ONLY_SER_2" => MEMORY_ONLY_SER_2
+    case "MEMORY_AND_DISK" => MEMORY_AND_DISK
+    case "MEMORY_AND_DISK_2" => MEMORY_AND_DISK_2
+    case "MEMORY_AND_DISK_SER" => MEMORY_AND_DISK_SER
+    case "MEMORY_AND_DISK_SER_2" => MEMORY_AND_DISK_SER_2
+    case "OFF_HEAP" => OFF_HEAP
+```
+
+* 存储级别从disk、memory、offheap三个维度定义了RDD的Partition(Block)的存储方式：
+  * 存储位置:磁盘/堆内内存/堆外内存。
+  * 存储形式：Block 缓存到存储内存后，是否为非序列化的形式。如 MEMORY_ONLY 是非序列化方式存储，OFF_HEAP 是序列化方式存储。
+  * 副本数量：大于 1 时需要远程冗余备份到其他节点。如 DISK_ONLY_2 需要远程备份 1 个副本。
+
+## RDD缓存的过程
+
+* RDD **在缓存到存储内存之前**，**Partition 中的数据一般以迭代器（[Iterator](http://www.scala-lang.org/docu/files/collections-api/collections_43.html)）的数据结构来访问**，这是 Scala 语言中一种遍历数据集合的方法。通过 Iterator 可以**获取分区中每一条序列化或者非序列化的数据项(Record)**，这些 Record 的对象实例在逻辑上占用了 **JVM 堆内内存的 other 部分的空间**，**同一 Partition 的不同 Record 的空间并不连续。**
+* 读取Other区Iterator的Record后，**Partition 被转换成 Block，Record 在堆内或堆外存储内存中占用一块连续的空间。**将**Partition由不连续的存储空间转换为连续存储空间的过程，Spark称之为"展开"（Unroll）**。**Block 有序列化和非序列化**两种存储格式，具体以哪种方式取决于**该 RDD 的存储级别**。非**序列化的 Block 以一种 DeserializedMemoryEntry 的数据结构定义，用一个数组存储所有的对象实例，序列化的 Block 则以 SerializedMemoryEntry的数据结构定义，用字节缓冲区（ByteBuffer）来存储二进制数据**。每个 Executor 的 **Storage 模块用一个链式 Map 结构（LinkedHashMap）来管理堆内和堆外存储内存中所有的 Block 对象的实例**，对这个 LinkedHashMap 新增和删除间接记录了内存的申请和释放，同时也是为了LinkedHashMap自带的LRU特性。
+* 因为**不能保证存储空间可以一次容纳 Iterator 中的所有数据，当前的计算任务在 Unroll 时要向 MemoryManager 申请足够的 Unroll 空间来临时占位，空间不足则 Unroll 失败，空间足够时可以继续进行。**对于**序列化的 Partition，其所需的 Unroll 空间可以直接累加计算，一次申请。**而**非序列化的 Partition 则要在遍历 Record 的过程中依次申请，即每读取一条 Record，采样估算其所需的 Unroll 空间并进行申请，空间不足时可以中断，释放已占用的 Unroll 空间。**如果最终 Unroll 成功，**当前 Partition 所占用的 Unroll 空间被转换为正常的缓存 RDD 的存储空间。**
+
+**Spark Unroll**
+
+![Spark Unroll](./img/Spark Unroll示意图.jpg)
+
+## 淘汰和落盘
+
+* 由于同一个 Executor 的所有的计算任务共享有限的存储内存空间，当有新的 Block 需要缓存但是剩余空间不足且无法动态占用时，**就要对 LinkedHashMap 中的旧 Block 进行淘汰（Eviction  LRU特性）**，而被淘汰的 Block 如果其存储级别中同时包含存储到磁盘的要求，则要对其进行落盘（Drop），否则直接删除该 Block。
+
+**存储内存的淘汰规则为：**
+
+- 被淘汰的旧 Block 要与新 Block 的 MemoryMode 相同，即同属于堆外或堆内内存
+- 新旧 Block 不能属于同一个 RDD，避免循环淘汰
+- 旧 Block 所属 RDD 不能处于被读状态，避免引发一致性问题
+- 遍历 LinkedHashMap 中 Block，按照最近最少使用（LRU）的顺序淘汰，直到满足新 Block 所需的空间。其中 LRU 是 LinkedHashMap 的特性。
+
+落盘的流程则比较简单，如果其存储级别符合**_useDisk** 为 true 的条件，再根据其**_deserialized** 判断是否是非序列化的形式，若是则对其进行序列化，最后将数据存储到磁盘，在 Storage 模块中更新其信息。
+
+# Execution内存管理
+
+## 多任务间内存分配
+
+Executor 内运行的任务同样**共享执行内存**，Spark 用一个 HashMap 结构保存了任务到内存耗费的映射。**每个任务可占用的执行内存大小的范围为 1/2N ~ 1/N，其中 N 为当前 Executor 内正在运行的任务的个数。每个任务在启动之时，要向 MemoryManager 请求申请最少为 1/2N 的执行内存，如果不能被满足要求则该任务被阻塞，直到有其他任务释放了足够的执行内存，该任务才可以被唤醒。**
+
+## Shuffle的内存占用
+
+执行内存主要用来`存储任务在执行 Shuffle 时占用的内存`，Shuffle 是`按照一定规则对 RDD 数据重新分区的过程`，主要来看 Shuffle 的`Write 和 Read`两阶段对执行内存的使用：
+
+### Shuffle Write
+
+1. 若在map端选择`普通的排序方式`，会采用`ExternalSorter进行外排`，在内存中存储数据时主要占用`堆内`执行空间。
+2. 若在map端选择 `Tungsten的排序方式`，则采用`ShuffleExternalSorter`直接对`以序列化形式存储的数据排序`，在内存中存储数据时可以占用`堆外或堆内`执行空间，取决于用户`是否开启了堆外内存以及堆外执行内存是否足够`。
+
+### Shuffle Read
+
+1. 在对reduce端的数据进行`聚合`时，要将数据交给`Aggregator`处理，在内存中存储数据时占用`堆内`执行空间。
+2. 如果需要进行`最终结果排序`，则要将再次将数据交给`ExternalSorter处理，占用堆内执行空间`。
+
+> 在`ExternalSorter和Aggregator`中，Spark 会使用一种叫 **AppendOnlyMap** 的`哈希表在堆内执行内存中存储数据`，但在 Shuffle 过程中所有数据并不能都保存到该哈希表中，**当这个哈希表占用的内存会进行周期性地采样估算，当其大到一定程度，无法再从 MemoryManager 申请到新的执行内存时，Spark 就会将其全部内容存储到磁盘文件中，这个过程被称为溢存(Spill)，溢存到磁盘的文件最后会被归并(Merge)。**
+>
+> Shuffle Write 阶段中用到的 `Tungsten` 是 Databricks 公司提出的对 Spark 优化内存和 CPU 使用的计划，解决了一些 JVM 在性能上的`限制和弊端`。Spark 会根据 `Shuffle 的情况来自动选择是否采用 Tungsten 排序`。
+>
+> **Tungsten排序**
+>
+> Tungsten 采用的`页式内存管理机制`建立在 MemoryManager 之上，即 Tungsten 对执行内存的使用进行了一步的抽象，这样在 Shuffle 过程中无需关心数据具体存储在堆内还是堆外。每个`内存页用一个 MemoryBlock 来定义`，并用 `Object obj 和 long offset `这两个变量统一标识一个内存页在系统内存中的地址。堆内的 MemoryBlock 是以 long 型数组的形式分配的内存，其` obj 的值为是这个数组的对象引用，offset 是 long 型数组的在 JVM 中的初始偏移地址`，两者配合使用可以定位这个数组在`堆内的绝对地址`；堆外的 MemoryBlock 是直接申请到的`内存块`，其 obj 为 null，offset 是这个内存块在系统内存中的 `64 位绝对地址`。Spark 用 MemoryBlock 巧妙地将堆内和堆外内存页统一抽象封装，并用页表(pageTable)管理每个 Task 申请到的内存页。
+>
+> Tungsten 页式管理下的所有内存用 64 位的逻辑地址表示，由页号和页内偏移量组成：
+>
+> - 页号：占 13 位，唯一标识一个内存页，Spark 在申请内存页之前要先申请空闲页号。
+> - 页内偏移量：占 51 位，是在使用内存页存储数据时，数据在页内的偏移地址。
+>
+> 有了统一的寻址方式，Spark 可以用 64 位逻辑地址的指针定位到`堆内或堆外的内存`，整个 Shuffle Write 排序的过程只需要对`指针进行排序`，并且无需反序列化，整个过程非常高效，对于内存访问效率和 CPU 使用效率带来了明显的提升.
+>
+> Spark 的存储内存和执行内存有着截然不同的管理方式：对于存储内存来说，Spark 用一个 LinkedHashMap 来集中管理所有的 Block，Block 由需要缓存的 RDD 的 Partition 转化而成；而对于执行内存，Spark 用 AppendOnlyMap 来存储 Shuffle 过程中的数据，在 Tungsten 排序中甚至抽象成为页式内存管理，开辟了全新的 JVM 内存管理机制。
+
+
+
