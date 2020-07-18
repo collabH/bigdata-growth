@@ -11,6 +11,8 @@
 * [HDFS生态学习](bigdata/hadoop/HDFS/HDFS生态学习.xmind)
 * [Hadoop文件系统](bigdata/hadoop/HDFS/Hadoop文件系统.xmind)
 * [HadoopCommon分析](bigdata/hadoop/HDFS/Common包解析.md)
+* [HDFS数据相关操作](bigdata/hadoop/HDFS/HDFS数据操作.md)
+* [HDFS集群相关管理](bigdata/hadoop/HDFS/HDFS集群管理.md)
 
 #### MapReduce
 
