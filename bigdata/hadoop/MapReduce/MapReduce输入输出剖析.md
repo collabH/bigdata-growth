@@ -293,11 +293,77 @@ public List<InputSplit> getSplits(JobContext job)
 ```
 默认的IntputFormat，每条记录都是一行输入，键是LongWritable类型，存储该行在整个文件中的字节偏移量。值是这一行的内容，不包括任何行终止符，它被打包成一个Text对象。
 ```
-### TextInputFormat切片格式
+#### TextInputFormat切片格式
 
 ![图片](https://uploader.shimo.im/f/owb4eVI6UTgKQNsp.png!thumbnail)
 
+### KeyValueTextInputFormat
 
+* 每一行均为一条记录，被分隔符分割为key，value。可以通过在驱动类中设置`conf.set(KeyValueLineRecordReader.KEY_VALUE_SEPERATOR,"\t");`来设定分隔符。默认分隔符是tab(\t)。
+
+* 通过设置key-value的间隔符来更便捷的获取key，value数据
+
+  ```java
+   # Driver设置
+   Configuration conf = getConf();
+          conf.set(KeyValueLineRecordReader.KEY_VALUE_SEPERATOR, " ");
+          Job job = Job.getInstance(conf);
+          job.setInputFormatClass(KeyValueTextInputFormat.class);
+  
+          //设置驱动类
+          job.setJarByClass(KVDriver.class);
+          //设置Mapper
+          job.setMapperClass(KVTextMapper.class);
+          job.setMapOutputKeyClass(Text.class);
+          job.setMapOutputValueClass(IntWritable.class);
+  
+          //设置Reduce
+          job.setReducerClass(KVReducer.class);
+          job.setOutputKeyClass(Text.class);
+          job.setOutputValueClass(IntWritable.class);
+  
+          job.setJobName("kvtext");
+          //设置输入输出路径
+          FileInputFormat.addInputPath(job, new Path(strings[0]));
+          FileOutputFormat.setOutputPath(job, new Path(strings[1]));
+          return job.waitForCompletion(true) ? 0 : 1;
+  ```
+
+### NLineInputFormat
+
+* 每个map进程处理的InputSplit不再按照Block块来划分，按照NlineInputFormat指定的函数N来划分。即输入文件的总函数/N=切片数，不整除，切片数=商+1。键和值和TextInputFormat一致为LongWritable和Text类型。
+
+#### 配置
+
+* 设置多少行以分片:NLineInputFormat.setNumLinesPerSplit(job,3)
+* 设置input格式:job.setInputFormatClass(NLineInputFormat.class)
+
+```java
+public int run(String[] strings) throws Exception {
+        Configuration conf = getConf();
+        Job job = Job.getInstance(conf);
+        NLineInputFormat.setNumLinesPerSplit(job, 3);
+        job.setInputFormatClass(NLineInputFormat.class);
+
+        //设置驱动类
+        job.setJarByClass(NLineDriver.class);
+        //设置Mapper
+        job.setMapperClass(NLineTextMapper.class);
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(IntWritable.class);
+
+        //设置Reduce
+        job.setReducerClass(NLineReducer.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(IntWritable.class);
+
+        job.setJobName("kvtext");
+        //设置输入输出路径
+        FileInputFormat.addInputPath(job, new Path(strings[0]));
+        FileOutputFormat.setOutputPath(job, new Path(strings[1]));
+        return job.waitForCompletion(true) ? 0 : 1;
+    }
+```
 
 ### SequenceFileInputFormat类
 
