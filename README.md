@@ -43,7 +43,8 @@
 
 ## 数据仓库
 
-*[数据建模](datawarehouse/DataModeler.md)
+* [数据建模](datawarehouse/DataModeler.md)
+* [数据仓库建模](datawarehouse/数据仓库建模.xmind)
 
 ## devops
 
