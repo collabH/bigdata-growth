@@ -371,6 +371,171 @@ public int run(String[] strings) throws Exception {
 Hadoop的允许文件格式存储二进制的键值对序列，由于它们是可分割的(它们有同步点，所以reader可以从文件中的任意一点与记录边界进行同步)，支持压缩，可以适应一些序列化类型存储任意类型。
 ```
 * 当顺序文件*.seq作为MapReduce的输入时，可以使用SequenceFileinputFormat。键和值是由顺序文件决定，只需要保证map输入的类型匹配集合。
+### 自定义InputFormat
+
+#### 实现方式
+
+`将多个小文件合并出一个SequenceFile`
+
+* 自定义类继承FileInputFormat
+
+  ```java
+  public class CustomInputFormat extends FileInputFormat<Text, BytesWritable> {
+  
+      /**
+       * 不允许文件切割合并小文件
+       *
+       * @param context
+       * @param filename
+       * @return
+       */
+      @Override
+      protected boolean isSplitable(JobContext context, Path filename) {
+          return false;
+      }
+  
+      /**
+       * 重写RecordReader，一次读取一个完整的文件封装到KV中
+       *
+       * @param inputSplit
+       * @param taskAttemptContext
+       * @return
+       * @throws IOException
+       * @throws InterruptedException
+       */
+      @Override
+      public RecordReader<Text, BytesWritable> createRecordReader(InputSplit inputSplit, TaskAttemptContext taskAttemptContext) throws IOException, InterruptedException {
+          CustomReader customReader = new CustomReader();
+          customReader.initialize(inputSplit, taskAttemptContext);
+          return customReader;
+      }
+  }
+  ```
+
+  
+
+* 重写RecordReader，实现一次读取一个完整的文件封装为KV
+
+  ```java
+  public class CustomReader extends RecordReader<Text, BytesWritable> {
+  
+      // 文件分片，根据输入指定
+      private FileSplit split = new FileSplit();
+      private Text k = new Text();
+      private Configuration configuration;
+      private BytesWritable v = new BytesWritable();
+      private boolean isProgress = true;
+  
+      @Override
+      public void initialize(InputSplit inputSplit, TaskAttemptContext taskAttemptContext) throws IOException, InterruptedException {
+          this.split = (FileSplit) inputSplit;
+          this.configuration = taskAttemptContext.getConfiguration();
+  
+      }
+  
+      /**
+       * 将切片里的信息放入BytesWritable里
+       *
+       * @return
+       * @throws IOException
+       * @throws InterruptedException
+       */
+      @Override
+      public boolean nextKeyValue() throws IOException, InterruptedException {
+          if (isProgress) {
+              // 获取fs对象
+              Path path = split.getPath();
+              // 根据切片的路径拿到fs
+              FileSystem fs = path.getFileSystem(configuration);
+              // 拿到输入流
+              FSDataInputStream inputStream = fs.open(path);
+  
+              byte[] buffer = new byte[(byte) split.getLength()];
+              // 拷贝数据至缓存文件
+              IOUtils.readFully(inputStream, buffer, 0, buffer.length);
+  
+              // 封装v
+              v.set(buffer, 0, buffer.length);
+  
+              // 封装k
+              k.set(path.toString());
+  
+              // 关闭资源
+              IOUtils.closeStream(inputStream);
+  
+              isProgress = false;
+              return true;
+          }
+          return false;
+  
+      }
+  
+      @Override
+      public Text getCurrentKey() throws IOException, InterruptedException {
+          return k;
+      }
+  
+      @Override
+      public BytesWritable getCurrentValue() throws IOException, InterruptedException {
+          return v;
+      }
+  
+      @Override
+      public float getProgress() throws IOException, InterruptedException {
+          return 0;
+      }
+  
+      @Override
+      public void close() throws IOException {
+  
+      }
+  }
+  ```
+
+  
+
+* 在输出时使用SequenceFileOutPutFormat输出合并文件。
+
+```java
+public class SmallFileMergeDriver extends Configured implements Tool {
+    @Override
+    public int run(String[] args) throws Exception {
+        Job job = Job.getInstance(getConf(), "smallFileMerge");
+
+        //设置Driver Class
+        job.setJarByClass(getClass());
+
+        //设置Mapper
+        job.setMapperClass(SmallFileMergeMapper.class);
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(BytesWritable.class);
+
+        //设置Reduce
+        job.setReducerClass(SmallFileMergeReducer.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(BytesWritable.class);
+
+        //输出类型
+        job.setInputFormatClass(CustomInputFormat.class);
+
+        job.setOutputFormatClass(SequenceFileOutputFormat.class);
+
+
+        FileInputFormat.addInputPath(job, new Path(args[0]));
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
+
+        return job.waitForCompletion(true) ? 0 : 1;
+    }
+
+    public static void main(String[] args) throws Exception {
+        int run = ToolRunner.run(new SmallFileMergeDriver(), args);
+        System.exit(run);
+    }
+}
+```
+
+* 实时上还是读取3个文件还是3个Split但是FileInputFormat不会在客户端分片。
+
 ### 多个输入
 
 ```
