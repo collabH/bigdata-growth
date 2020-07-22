@@ -20,7 +20,7 @@
 * [MapReduce调优](bigdata/hadoop/MapReduce/MapReduce调优.xmind)
 * [MapReduce数据相关操作](bigdata/hadoop/MapReduce/MapReduce数据操作.md)
 * [MapReduce输入输出剖析](bigdata/hadoop/MapReduce/MapReduce输入输出剖析.md)
-* [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作机制.md)
+* [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
 
 #### Yarn
 

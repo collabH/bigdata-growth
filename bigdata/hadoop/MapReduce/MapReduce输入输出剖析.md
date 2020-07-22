@@ -25,20 +25,19 @@
 ```
 # 输入格式
 
-## 输入切片
+## FileInputFormat类
 
-```plain
+### 输入切片
+
+```
 一个输入分片(split)就是一个单个map操作来处理的输入块。每一个map操作只处理一个输入分片，每个分片被划分为若干个记录，每条记录是一个键值对，map一个接一个地出来记录。
-Java中的输入分片表示InputSplit接口。它包含一个以字节为单位的长度和一组存储位置(主机名)，分片不包含数据本身，而是指向数据的引用。存储位置供MapReduce系统使用以便将map任务尽量放在分片数据附近，而分片大小用来排序分片，以便优先处理最大的分片，从而最小化作业运行时间
-```
-### FileInputFormat类
-
-```
+Java中的输入分片表示InputSplit接口。它包含一个以字节为单位的长度和一组存储位置(主机名)，分片不包含数据本身，而是指向数据的引用。存储位置供MapReduce系统使用以便将map任务尽量放在分片数据附近，而分片大小用来排序分片，以便优先处理最大的分片，从而最小化作业运行时间.
 FileInputFormat类是所有使用文件作为其数据源的InputFormat实现的基类。
 功能：
 1.用于指出作业的输入文件位置
 2.为输入文件生成分片的代码实现
 ```
+
 #### InputFormat的应用过程
 
 * 运行作业的客户端通过调用getSplits计算分片，然后将它们发送到AM上，AM使用其存储位置信息来调度map任务从而在集群上处理这些分片数据。map任务把输入分片传给InputFormat的createRecordReader方法来获得这个分片的RecordReader。RecordReader就像是记录上的迭代器。map任务用一个RecordReader来生成记录的键值对，然后再传递给map函数。
@@ -62,7 +61,7 @@ FileInputFormat只分割大文件，文件超过HDFS块的大小，分片通常�
 ```
 #### 分片大小的计算公式
 
-```
+```java
 /**
 * 计算分片大小
 * @param blockSize 块的大小
@@ -186,12 +185,102 @@ public List<InputSplit> getSplits(JobContext job) throws IOException {
 2.使用FileInputFormat具体子类，并且重写isSplitable方法将返回值设置为false
 ```
 
+## InputFormat类的结构
+
+![图片](https://uploader.shimo.im/f/ghcC1v4gusQuLy0r.png!thumbnail)
+
+### TextInputFormat
+
+```
+默认的IntputFormat，每条记录都是一行输入，键是LongWritable类型，存储该行在整个文件中的字节偏移量。值是这一行的内容，不包括任何行终止符，它被打包成一个Text对象。
+```
+#### TextInputFormat切片格式
+
+![图片](https://uploader.shimo.im/f/owb4eVI6UTgKQNsp.png!thumbnail)
+
+### KeyValueTextInputFormat
+
+* 每一行均为一条记录，被分隔符分割为key，value。可以通过在驱动类中设置`conf.set(KeyValueLineRecordReader.KEY_VALUE_SEPERATOR,"\t");`来设定分隔符。默认分隔符是tab(\t)。
+
+* 通过设置key-value的间隔符来更便捷的获取key，value数据
+
+  ```java
+   # Driver设置
+   Configuration conf = getConf();
+          conf.set(KeyValueLineRecordReader.KEY_VALUE_SEPERATOR, " ");
+          Job job = Job.getInstance(conf);
+          job.setInputFormatClass(KeyValueTextInputFormat.class);
+  
+          //设置驱动类
+          job.setJarByClass(KVDriver.class);
+          //设置Mapper
+          job.setMapperClass(KVTextMapper.class);
+          job.setMapOutputKeyClass(Text.class);
+          job.setMapOutputValueClass(IntWritable.class);
+  
+          //设置Reduce
+          job.setReducerClass(KVReducer.class);
+          job.setOutputKeyClass(Text.class);
+          job.setOutputValueClass(IntWritable.class);
+  
+          job.setJobName("kvtext");
+          //设置输入输出路径
+          FileInputFormat.addInputPath(job, new Path(strings[0]));
+          FileOutputFormat.setOutputPath(job, new Path(strings[1]));
+          return job.waitForCompletion(true) ? 0 : 1;
+  ```
+
+### NLineInputFormat
+
+* Key为LongWritable，Value为Text
+
+* 每个map进程处理的InputSplit不再按照Block块来划分，按照NlineInputFormat指定的函数N来划分。即输入文件的总函数/N=切片数，不整除，切片数=商+1。键和值和TextInputFormat一致为LongWritable和Text类型。
+
+#### 配置
+
+* 设置多少行以分片:NLineInputFormat.setNumLinesPerSplit(job,3)
+* 设置input格式:job.setInputFormatClass(NLineInputFormat.class)
+
+```java
+public int run(String[] strings) throws Exception {
+        Configuration conf = getConf();
+        Job job = Job.getInstance(conf);
+        NLineInputFormat.setNumLinesPerSplit(job, 3);
+        job.setInputFormatClass(NLineInputFormat.class);
+
+        //设置驱动类
+        job.setJarByClass(NLineDriver.class);
+        //设置Mapper
+        job.setMapperClass(NLineTextMapper.class);
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(IntWritable.class);
+
+        //设置Reduce
+        job.setReducerClass(NLineReducer.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(IntWritable.class);
+
+        job.setJobName("kvtext");
+        //设置输入输出路径
+        FileInputFormat.addInputPath(job, new Path(strings[0]));
+        FileOutputFormat.setOutputPath(job, new Path(strings[1]));
+        return job.waitForCompletion(true) ? 0 : 1;
+    }
+```
+
+### SequenceFileInputFormat类
+
+```
+Hadoop的允许文件格式存储二进制的键值对序列，由于它们是可分割的(它们有同步点，所以reader可以从文件中的任意一点与记录边界进行同步)，支持压缩，可以适应一些序列化类型存储任意类型。
+```
+* 当顺序文件*.seq作为MapReduce的输入时，可以使用SequenceFileinputFormat。键和值是由顺序文件决定，只需要保证map输入的类型匹配集合。
 ### CombineFileInputFormat
 
 ```
 Hadoop更适合少量的大文件，因为FileInputFormat生成的分块是一个文件或该文件的一部分。如果文件很小，并且文件数量很多，那么每次的map任务只处理很少的输入数据，一个文件就会有很多map任务，每次map操作都会造成额外的开销。
 CombineFileInputFormat可以缓解这个问题，它是针对小文件而设计的。FileInputFormat为每个文件产生一个分配，而CombineFileInputFormat把多个文件打包到一个分片中以便每个mapper可以处理更多的数据。关键在把哪些块放到同一个分片时，CombineFileInputFormat会考虑节点和机架的因素，所以在典型的MapReduce作业中处理输入的数据并不会下降
 ```
+
 * 虚拟存储切片最大值设置
 
   ```
@@ -284,93 +373,6 @@ public List<InputSplit> getSplits(JobContext job)
 
 
 
-## InputFormat类的结构
-
-![图片](https://uploader.shimo.im/f/ghcC1v4gusQuLy0r.png!thumbnail)
-
-### TextInputFormat
-
-```
-默认的IntputFormat，每条记录都是一行输入，键是LongWritable类型，存储该行在整个文件中的字节偏移量。值是这一行的内容，不包括任何行终止符，它被打包成一个Text对象。
-```
-#### TextInputFormat切片格式
-
-![图片](https://uploader.shimo.im/f/owb4eVI6UTgKQNsp.png!thumbnail)
-
-### KeyValueTextInputFormat
-
-* 每一行均为一条记录，被分隔符分割为key，value。可以通过在驱动类中设置`conf.set(KeyValueLineRecordReader.KEY_VALUE_SEPERATOR,"\t");`来设定分隔符。默认分隔符是tab(\t)。
-
-* 通过设置key-value的间隔符来更便捷的获取key，value数据
-
-  ```java
-   # Driver设置
-   Configuration conf = getConf();
-          conf.set(KeyValueLineRecordReader.KEY_VALUE_SEPERATOR, " ");
-          Job job = Job.getInstance(conf);
-          job.setInputFormatClass(KeyValueTextInputFormat.class);
-  
-          //设置驱动类
-          job.setJarByClass(KVDriver.class);
-          //设置Mapper
-          job.setMapperClass(KVTextMapper.class);
-          job.setMapOutputKeyClass(Text.class);
-          job.setMapOutputValueClass(IntWritable.class);
-  
-          //设置Reduce
-          job.setReducerClass(KVReducer.class);
-          job.setOutputKeyClass(Text.class);
-          job.setOutputValueClass(IntWritable.class);
-  
-          job.setJobName("kvtext");
-          //设置输入输出路径
-          FileInputFormat.addInputPath(job, new Path(strings[0]));
-          FileOutputFormat.setOutputPath(job, new Path(strings[1]));
-          return job.waitForCompletion(true) ? 0 : 1;
-  ```
-
-### NLineInputFormat
-
-* 每个map进程处理的InputSplit不再按照Block块来划分，按照NlineInputFormat指定的函数N来划分。即输入文件的总函数/N=切片数，不整除，切片数=商+1。键和值和TextInputFormat一致为LongWritable和Text类型。
-
-#### 配置
-
-* 设置多少行以分片:NLineInputFormat.setNumLinesPerSplit(job,3)
-* 设置input格式:job.setInputFormatClass(NLineInputFormat.class)
-
-```java
-public int run(String[] strings) throws Exception {
-        Configuration conf = getConf();
-        Job job = Job.getInstance(conf);
-        NLineInputFormat.setNumLinesPerSplit(job, 3);
-        job.setInputFormatClass(NLineInputFormat.class);
-
-        //设置驱动类
-        job.setJarByClass(NLineDriver.class);
-        //设置Mapper
-        job.setMapperClass(NLineTextMapper.class);
-        job.setMapOutputKeyClass(Text.class);
-        job.setMapOutputValueClass(IntWritable.class);
-
-        //设置Reduce
-        job.setReducerClass(NLineReducer.class);
-        job.setOutputKeyClass(Text.class);
-        job.setOutputValueClass(IntWritable.class);
-
-        job.setJobName("kvtext");
-        //设置输入输出路径
-        FileInputFormat.addInputPath(job, new Path(strings[0]));
-        FileOutputFormat.setOutputPath(job, new Path(strings[1]));
-        return job.waitForCompletion(true) ? 0 : 1;
-    }
-```
-
-### SequenceFileInputFormat类
-
-```
-Hadoop的允许文件格式存储二进制的键值对序列，由于它们是可分割的(它们有同步点，所以reader可以从文件中的任意一点与记录边界进行同步)，支持压缩，可以适应一些序列化类型存储任意类型。
-```
-* 当顺序文件*.seq作为MapReduce的输入时，可以使用SequenceFileinputFormat。键和值是由顺序文件决定，只需要保证map输入的类型匹配集合。
 ### 自定义InputFormat
 
 #### 实现方式
