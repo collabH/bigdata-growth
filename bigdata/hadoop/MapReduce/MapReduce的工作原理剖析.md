@@ -1,18 +1,32 @@
 # MapReduce详细工作流程
 
-## Map阶段工作流程
-
 ![map阶段](../../spark/源码分析/img/MRMap阶段流程.jpg)
 
-## Reduce阶段工作流程
-
 ![MRReduce阶段](../../spark/源码分析/img/MRReduce阶段.jpg)
+
+## MapTask工作机制
+
+![map阶段](../../spark/源码分析/img/MapTask工作机制.jpg)
+
+## ReduceTask工作机制
+
+![ReduceTask](../../spark/源码分析/img/ReduceTask工作机制.jpg)
 
 # Shuffle解析
 
 ```
 MapReduce确保每个reducer的输入都是按键排序的。系统执行排序、将map输出作为输入传给reducer的过程称为shuffle。
 ```
+
+## Shuffle机制
+
+### MapTask的Shuffle过程
+
+![MapTask的Shuffle过程](../../spark/源码分析/img/MapTask的Shuffle过程.jpg)
+
+### ReduceTask的Shuffle过程
+
+![ReduceTask的Shuffle过程](../../spark/源码分析/img/ReduceTask的Shuffle过程.jpg)
 
 ## 分区
 
@@ -145,6 +159,53 @@ map函数开始产生输出时并不是简单地将它写到磁盘，它利用�
 
 * 在Reduce端对key进行`分组排序`。
 
+* 添加排序对象
+
+```java
+   @Override
+    public int compareTo(OrderDetail o) {
+        int result;
+        if (o.getId() > id) {
+            result = -1;
+        } else if (o.getId() < id) {
+            result = 1;
+        } else {
+            if (o.getPrice() > price) {
+                result = 1;
+            } else {
+                result = -1;
+            }
+        }
+        return result;
+    }
+```
+
+* 添加分区排序类
+
+```java
+/**
+基于id分组排序
+public class OrderGroupingComparator extends WritableComparator {
+
+    public OrderGroupingComparator() {
+        // 设置为true 会去创建key对象
+        super(OrderDetail.class,true);
+    }
+
+    @Override
+    public int compare(WritableComparable a, WritableComparable b) {
+        OrderDetail aOrder = (OrderDetail) a;
+        OrderDetail bOrder = (OrderDetail) b;
+        return Integer.compare(aOrder.getId(), bOrder.getId());
+    }
+}
+## driver设置分组排序类
+ // 添加分组函数，基于某个id为key
+job.setGroupingComparatorClass(OrderGroupingComparator.class);
+```
+
+
+
 #### 二次排序
 
 * 在自定义排序过程中，如果compareTo中判断条件为两个即为`二次排序`。
@@ -216,7 +277,60 @@ public class Phone implements WritableComparable<Phone> {
 }
 ```
 
+## Combine
+
+* Combiner组件的父类是Reducer，Combiner是在每个MapTask所在的节点运行，Reducer是接收全局所有Mapper的输出结果。
+* Combiner是对每个MapTask的输出进行局部汇总，减少网络传输量。
+
+### 自定义Combine
+
+```java
+# 自定义
+public class CustomCombiner extends Reducer<Text, LongWritable, Text, LongWritable> {
+    /**
+     * reduce方法
+     *
+     * @param key     键
+     * @param values  值
+     * @param context 上下文
+     * @throws IOException
+     * @throws InterruptedException
+     */
+    @Override
+    protected void reduce(Text key, Iterable<LongWritable> values, Context context) throws IOException, InterruptedException {
+        long sum = 0;
+        for (LongWritable value : values) {
+            //计算key出现的次数总和
+            sum += value.get();
+        }
+        context.write(key, new LongWritable(sum));
+    }
+}
+
+# driver类设置
+  //通过job设置combiner处理类,其实逻辑上和reduce一摸一样
+  job.setCombinerClass(CustomCombiner.class);
+```
+
 # 配置调优
+
+## Reduce端
+
+### ReduceTask并行度设置
+
+* 通过driver端`job.setNumReduceTasks()`设置reduceTask个数，ReduceTask个数和MapTask一致性能最高
+* reduceTask=0，表示没有Reduce阶段，输出文件个数与Map个数一致
+* reduceTask默认值为1，输出文件为1
+* 如果数据分布不均匀，会导致数据倾斜，此时需要在`分区器中优化`。
+* 如果reduceTask为1，分区个数不为1不执行分区过程。
+
+### reduce端调优属性
+
+![图片](https://uploader.shimo.im/f/Q6GQX0aL4yYn8cCt.png!thumbnail)
+
+![图片](https://uploader.shimo.im/f/8R9c6XrhdxQreM2R.png!thumbnail)
+
+## Map端
 
 ### map端调优属性
 
@@ -231,12 +345,6 @@ public class Phone implements WritableComparable<Phone> {
 ```
 估算map输出大小，就可以合理设置mapreduce.task.io.sort.*属性来尽可能减少溢出写的次数。如果可以增加mapreduce.task.io.sort.mb的值，MapReduce计数器计算在作业运行整个阶段中溢出写磁盘的次数，包含map和reduce俩端的溢出写。
 ```
-
-### reduce端调优属性
-
-![图片](https://uploader.shimo.im/f/Q6GQX0aL4yYn8cCt.png!thumbnail)
-
-![图片](https://uploader.shimo.im/f/8R9c6XrhdxQreM2R.png!thumbnail)
 
 # 任务的执行
 
