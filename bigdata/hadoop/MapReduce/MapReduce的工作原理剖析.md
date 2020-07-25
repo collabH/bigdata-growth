@@ -672,6 +672,11 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 
 # 配置调优
 
+## 数据输入
+
+* 合并小文件:在执行MR任务前将小文件进行合并，大量的小文件会产生大量的Map任务，增大Map任务装载次数，而任务的装载比较耗时，导致MR运行较慢。
+* 使用`CombineTextInputFormat`作为输入，解决输入端大量小文件。
+
 ## Reduce端
 
 ### ReduceTask并行度设置
@@ -684,25 +689,80 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 
 ### reduce端调优属性
 
-![图片](https://uploader.shimo.im/f/Q6GQX0aL4yYn8cCt.png!thumbnail)
-
-![图片](https://uploader.shimo.im/f/8R9c6XrhdxQreM2R.png!thumbnail)
+* 合理设置Map和Reduce数:基于InputSplit设置
+* 设置Map、Reduce共存:调整`slowstart,completedmaps`参数，是Map运行到一定程度后，Reduce也开始运行，减少Reduce等待时间。
+* 规避使用Reduce:不需要Reduce可以设置ReduceTaskNum为0，这样就不会只想shuffle
+* 合理设置Reduce端的Buffer:默认情况下，数据达到一定阈值的时候，Buffer中的数据会写入磁盘，然后Reduce会从磁盘中获得所有磁盘。`mapred.job.reduce.input.buffer.percent`，默认为0.0.当值大于0时，会保留指定比例的内存读Buffer中的数据直接拿给Reduce使用。
 
 ## Map端
 
 ### map端调优属性
 
+* 减少溢写次数:估算map输出大小，就可以合理设置`mapreduce.task.io.sort.*`属性来尽可能减少溢出写的次数。如果可以增加`mapreduce.task.io.sort.mb`的值以及`mapreduce.map.sort.spill.percent`的阈值，MapReduce计数器计算在作业运行整个阶段中溢出写磁盘的次数，包含map和reduce俩端的溢出写。
+* 减少合并次数:通过调整`mapreduce.task.io.sort.factor`，增大Merge的文件数目，减少Merge的次数，从而缩短MR处理时间。
+* 在Map之后，不影响业务逻辑的前提下，先进行Combine处理，减少IO。
+
 ![图片](https://uploader.shimo.im/f/mezbGAcxtHwjN9Fh.png!thumbnail)
 
-```
-给shuffle过程尽量多提供内存空间，但是也要保证map函数和reduce函数由足够的内存运行。运行map和reduce的JVM大小由mapred.child.java.opts属性设置。
-```
+## I/O传输
 
-### map端避免多次溢出写磁盘
+* 采用数据压缩方式:减少网络Io的时间，设置Map端、输入端、reduce输出端的压缩编码器，按照业务使用。
+* 使用SequenceFile文件，支持按Block压缩
 
-```
-估算map输出大小，就可以合理设置mapreduce.task.io.sort.*属性来尽可能减少溢出写的次数。如果可以增加mapreduce.task.io.sort.mb的值，MapReduce计数器计算在作业运行整个阶段中溢出写磁盘的次数，包含map和reduce俩端的溢出写。
-```
+## 数据倾斜问题
+
+### 数据倾斜现象
+
+* 数据频率倾斜---某一区域的数据量远远大于其他区域
+* 数据大小倾斜---部分记录的大小远远大于平均值
+
+### 减少数据倾斜的方法
+
+* 抽样和范围分区
+  * 可以同原始数据进行抽样得到结果集来预设分区边界值。
+* 自定义分区器
+  * 自定义分区器，修改默认的key.hashCode&TaskNums
+* Combine
+  * 使用Combine可以大量减少数据倾斜，在Map端对数据进行整合
+* 采用Map Join,避免Reduce Join
+
+## 常用的调优参数
+
+* `mapreduce.map.memory.mb`:一个MapTask可使用的资源上限(单位MB)，默认为1024.如果MapTask实际使用的资源量超过该值，则会被强制杀死。
+* `mapreduce.reduce.memory.mb`:一个ReduceTask可使用的资源上限(单位MB)，默认1024.如果ReduceTask超过则会被杀死。
+* `mapreduce.map.cpu.vcores`:每个MapTask可使用最多cpu core数目，默认为1
+* `mapreduce.reduce.cpu.vcores`:每个ReduceTask可使用最多cpu core数目，默认为1
+* `mapreduce.reduce.shuffle.parallelcopies`:每个Reduce去Map中拷贝数据的并行度，默认为5.
+* `mapreduce.reduce.shuffle.input.merge.percent`:Buffer中的数据达到多少比例开始写入磁盘。默认为0.66
+* `mapreduce.reduce.shuffle.input.buffer.percent`:Buffer大小占用Reduce可用内存的比例。默认为0.7
+* `mapreduce.reduce.input.buffer.percent`:指定多少比例的内存用来存放Buffer中的数据，默认值是0.0
+
+### Yarn配置参数
+
+* `yarn.scheduler.minimum-allocation-mb`:给应用程序Contrainer分配的最小内存，默认1024MB
+* `yarn.scheduler.maximum-allocation-mb`:给应用程序Contrainer分配的最大内存，默认8192MB
+* `yarn.scheduler.minimum-allocation-cores`:给应用程序Contrainer分配的最小core数，默认1
+* `yarn.scheduler.maximum-allocation-cores`:给应用程序Contrainer分配的最大core数，默认32
+* `yarn.nodemanager.resource.memory.mb`:给Contrainer分配的最大物理内存,默认值:8192MB
+
+### 容错相关参数
+
+* `mapreduce.map.maxattempts`:每个Map Task最大重试次数，一旦超过该值，则任务Map Task运行失败，默认为4
+* `mapreduce.reduce.maxattempts`:每个Reduce Task最大重试次数，一旦超过该值，则任务Reduce Task运行失败，默认为4
+* `mapreduce.task.timeout`:当超过600000ms时会认为该task超时，会被容器杀死。
+
+## MapReduce跑的慢
+
+* 计算机性能
+  * CPU、磁盘、内存、网络
+* I/O操作优化
+  * 数据倾斜。 
+  * Map和Reduce数设置不合理。
+  * Map运行时间太长，导致Reduce等待过久。
+  * 小文件过多，NM内存压力大，会出现上报风暴
+  * 大量的不可分块的超大文件
+  * Spill次数过多
+  * Merge次数过多
 
 # MapReduce库类
 
