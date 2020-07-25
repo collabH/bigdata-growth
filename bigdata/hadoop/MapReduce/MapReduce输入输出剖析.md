@@ -562,292 +562,106 @@ public class MutilInputTest extends Configured implements Tool {
   * 不适用于多mapper方式，因为多链接可能打崩数据库
 # 输出格式
 
+* OutputFormat是MR输出的基类，所有MR输出都实现了OutputFormat接口。
+
 ![图片](https://uploader.shimo.im/f/zASpEms0qjszo18j.png!thumbnail)
 
-## 文本输出
+## TextOutputFormat
 
-* 默认输出格式为TextOutputFormat，它把条记录写成文本行，它的键和值可以是任意类型，因为TextOutputFormat调用toString方法把它们转换为字符串，每个键-值对由制表符进行分割。
+* 默认输出格式为TextOutputFormat，它把条记录写成`文本行`，它的键和值可以是`任意类型`，因为TextOutputFormat`调用toString方法把它们转换为字符串`，每个键-值对由制表符进行分割。
 * 通过 `mapreduce.output.textoutputformat.separator`属性改变默认分隔符
-## 二进制输出
+## SequenceFileOutputFormat
 
 ![图片](https://uploader.shimo.im/f/8ZJcvh7vqZkyJMRB.png!thumbnail)
 
-## 多个输出
+## MultipleoutputFormat
 
 ```
 FileOutputFormat及其子类产生的文件放在输出目录下，每个reducer一个文件并且文件由分区号命名：part-r-00000，part-r-00001。多文件输出使用MultipleoutputFormat
-```
-### MultipleOutput类
-
-```
 MultipleOutput可以将数据写到多个文件，这个写文件名称源于输出的键和值或者任意字符串。这允许每个reducer创建多个文件，采用name-m-nnnnn形式命名用于map输出，name-r-nnnnn形式的文件名用于reduce输出。
 ```
-## 延迟输出
+## 自定义OutputFormat
+
+### 自定义OutputFormat
+
+```java
+public class CustomOutputFormat extends FileOutputFormat<Text, NullWritable> {
+    @Override
+    public RecordWriter<Text, NullWritable> getRecordWriter(TaskAttemptContext taskAttemptContext) throws IOException, InterruptedException {
+        return new FilterRecordWriter(taskAttemptContext);
+    }
+}
+```
+
+### 自定义RecordWriter
+
+```java
+public class FilterRecordWriter extends RecordWriter<Text, NullWritable> {
+    private FSDataOutputStream fsMy;
+    private FSDataOutputStream fsOther;
+
+    public FilterRecordWriter(TaskAttemptContext context) throws IOException {
+        // 获取文件系统
+        FileSystem fs = FileSystem.get(context.getConfiguration());
+        fsMy = fs.create(new Path("/Users/babywang/Desktop/output/my.log"));
+
+        fsOther = fs.create(new Path("/Users/babywang/Desktop/input/other.log"));
+    }
+
+    @Override
+    public void write(Text text, NullWritable nullWritable) throws IOException, InterruptedException {
+        boolean isExist = text.toString().contains("wy") || text.toString().contains("hsm");
+        if (isExist) {
+            fsMy.write(text.getBytes());
+            return;
+        }
+        fsOther.write(text.getBytes());
+    }
+
+    @Override
+    public void close(TaskAttemptContext taskAttemptContext) throws IOException, InterruptedException {
+        IOUtils.closeStream(fsMy);
+        IOUtils.closeStream(fsOther);
+    }
+}
+
+# Driver
+public class FilterDriver extends Configured implements Tool {
+    @Override
+    public int run(String[] strings) throws Exception {
+        Job job = Job.getInstance(getConf());
+
+
+        job.setJarByClass(getClass());
+
+
+        job.setMapOutputKeyClass(Text.class);
+        job.setMapOutputValueClass(NullWritable.class);
+        job.setMapperClass(FilterMapper.class);
+
+
+        job.setReducerClass(FilterReducer.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(NullWritable.class);
+
+        job.setOutputFormatClass(CustomOutputFormat.class);
+
+        FileInputFormat.addInputPath(job, new Path("/Users/babywang/Desktop/input/text.txt"));
+
+        // 虽然自定义了outputformat，但是outputformat继承fileoutputformat，而fileoutputformat要输出一个_SUCCESS文件，所以这里还需要指定一个输出目录
+        FileOutputFormat.setOutputPath(job, new Path("/Users/babywang/Desktop/output"));
+        return job.waitForCompletion(true) ? 0 : 1;
+    }
+
+    public static void main(String[] args) throws Exception {
+        int run = ToolRunner.run(new FilterDriver(), args);
+        System.exit(run);
+    }
+}
+```
+
+## LazyoutputFormat
 
 ```
 FileOutputFormat的子类会产生输出文件(part-r-nnnnn),即使文件为空。有些应用不需要创建文件，这是就需要LazyoutputFormat，保证分区第一条记录输出时才真正创建文件。通过JobConf的setOutputFormatClass来使用
 ```
-
-# MapReduce的特性
-
-# 计数器
-
-![图片](https://uploader.shimo.im/f/eUAgm022PGo8nJzC.png!thumbnail)
-
-## 任务计数器
-
-```
-任务执行过程中，任务计数器采集task相关信息，并且关联任务维护，定期发送给AM，因此任务计数器能够被全局地聚集。任务计数器的值每次都是完整的传输的，而非传输自上次传输后的计数值，从而避免由于消息丢失而引发的错误，如果一个任务在作业执行期间失败，而相关计数器的值会减少。
-```
-
-### 内置MapReduce任务计数器
-
-![图片](https://uploader.shimo.im/f/tbrGhSVVFN8Pu0kD.png!thumbnail)
-
-![图片](https://uploader.shimo.im/f/AcYEIc9cA3MEseH1.png!thumbnail)
-
-### 内置的文件系统任务计数器
-
-![图片](https://uploader.shimo.im/f/vUwNNcrhEUIGQ93X.png!thumbnail)
-
-### 内置的FileinputFormat任务计数器
-
-![图片](https://uploader.shimo.im/f/lr1hqwy6uWU4Tbip.png!thumbnail)
-
-### 内置的FileOutputFormat任务计数器
-
-![图片](https://uploader.shimo.im/f/P82Gnsu6Cz48QqLa.png!thumbnail)
-
-## 作业计数器
-
-```
-作业计数器由AM维护，因此无需在网络间传输数据，这一点与包括"用户定义的计数器"在内的其他计数器不同。这些计数器都是作业级别的统计量，其值不会随着任务运行而改变。
-```
-
-### 内置作业计数器
-
-![图片](https://uploader.shimo.im/f/rpvhYviQIzIrO8Ks.png!thumbnail)
-
-![图片](https://uploader.shimo.im/f/0PRRzKVorWEfdQWz.png!thumbnail)
-
-## 用户定义的Java计数器
-
-```
-计数器的值可以在mapper或reducer中增加，计数器由一个Java枚举来定义，以便对有关的计数器分组。一个作业可以定义的枚举类型数量不限，各个枚举所包含的字段数量也不限。枚举类型的名称即为组的名称，枚举类型的字段就是计数器名称。计数器是全聚德。
-
-/**
- * @fileName: CustomCounterMapper.java
- * @description: CustomCounterMapper.java类说明
- * @author: by echo huang
- * @date: 2020-03-26 17:29
- */
-public class CustomCounterMapper extends Mapper<LongWritable, Text, Text, Text> {
-    enum Counter {
-        HELLO,
-        WORLD;
-    }
-
-    @Override
-    protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-        context.getCounter(Enum.valueOf(Counter.class, Counter.HELLO.name())).increment(1);
-        context.write(new Text(key.toString()), value);
-    }
-}
-```
-
-# 排序
-
-## 利用SequenceFileOutputFormat排序
-
-```
-@Override
-public int run(String[] args) throws Exception {
-    Job job = Job.getInstance(getConf(), "sort-job");
-    FileSystem fs = FileSystem.get(URI.create("/user/sort"), getConf());
-    if (fs.exists(new Path("/user/sort"))) {
-        fs.delete(new Path("/user/sort"), true);
-    }
-
-    job.setJarByClass(SortApp.class);
-    job.setOutputFormatClass(SequenceFileOutputFormat.class);
-    job.setMapperClass(SortMapper.class);
-    job.setOutputKeyClass(LongWritable.class);
-    job.setOutputValueClass(Text.class);
-
-    FileInputFormat.addInputPath(job, new Path("/user/air.txt"));
-    SequenceFileOutputFormat.setOutputPath(job, new Path("/user/sort"));
-    return job.waitForCompletion(true) ? 0 : 1;
-}
-```
-
-## 部分排序
-
-* 根据默认的Hash分区设置对应的reduce任务数，这样就可以根据键来分区排序
-
-## 全排序
-
-* 设置一个分区，也就是设置一个reduce，处理大文件时效率低
-* 通过抽样器
-
-## 辅助排序
-
-```
-MapReduce在记录到达reducer之前按键对记录进行排序，但键锁对应的值并没有排序。甚至在不同的执行轮次中，这些值的排序也是不固定的。
-```
-
-* 创建键值组合实现键值的排序
-
-# 连接
-
-* MR能够执行大型数据集间的连接操作，但是原生的MR程序相对复杂，可以利用Spark、Hive来完成。
-* 如果存在数据集A、B，如果A数据集不大，可以根据B关联的ID查询A数据集，从而将数据集合输出到一个表中。
-  * 连接操作如果从mapper执行，则称为map端连接，从reducer端执行则称为reduce端连接
-
-## map端连接
-
-```
-在两个大规模输入数据集之前的map端连接会在数据到达map函数之前就连接连接操作。为达到该目的，各map的输入数据必须先分区并且以特定方式排序。各个输入数据集被划分为相同数量的分区，并且均按相同的键(连接键)排序。同一个键的所有记录均会放在同一个分区中。
-```
-
-* Map端连接操作可以连接多个作业的输出，只要这些作业的reducer数量相同、键相同并且输出文件是不可切分的。
-* 利用CompositeInputFormat类来运行一个map端连接。CompositeInputFormat的输入源和连接类型(内连接或外连接)可以通过一个连接表达式进行配置，连接表达式的语法简单。
-
-## reduce端连接
-
-```
-reduce端连接并不要求输入数据集符合特定结构，reduce端连接比map端连接更为常用。但是俩个数据集都需要shffle过程(map端输出数据->copy->mrege->reduce过程)，所以reduce端连接效率会低一些。
-```
-
-### 基本连接思路
-
-* mapper为各个记录标记源，并且使用连接键作为输出键，使键相同的记录放在同一个reducer中。
-
-### 多输入
-
-* 数据集的输入源往往存在多种格式，因此可以使用MultipleInputs来方便地解析和标注各个源。
-
-### 辅助排序
-
-```
-reducer将从俩个源中选出键相同的记录，这些记录不保证是经过排序的。为了更好的执行连接操作，一个源的数据排列在另一个源的数据前是非常重要的。
-```
-
-# 边数据分布
-
-* "边数据"(side data)是作业所需的额外的只读数据，以辅助处理主数据集。
-
-## 利用JobConf来配置作业
-
-```
-Configuration类(或者旧版MapReduce API的JobConf类)的各种setter方法能够方便地配置作业的任意键值对，如果仅需向任务传递少量元数据则非常有用。
-在任务中，用户可以通过Context类的getConfiguration()方法获得配置信息。
-复杂对象时，用户需要自定义处理序列化工作，或者使用Hadoop提供的Stringifier类。DefaultStringifier使用Hadoop的序列化框架来序列化对象。
-```
-
-### 存在的问题
-
-* 这种方式使用的时MapReduce组件的JVM内存，所以回增大内存的开销，因此不适合传输几千字节的数据量。作业配置总是由客户端、AM和任务JVM读取，每次读取配置，所有项都被读取到内存，因此造成NM的内存开销。
-
-## 分布式缓存
-
-* 在任务运行过程中及时地将文件和存档复制到任务节点以供使用。
-* 为了节约网络带宽，在每个作业中，各个文件通常只需要复制到一个节点一次。
-
-### 用法
-
-```
-对于使用GenericOptionsParser的工具来说，用户可以使用-files选项指定待分发的文件，文件内包含以逗号隔开的URI列表。文件可以存放在本地文件系统、HDFS或其他Hadoop可读文件系统中，如果尚未指定文件系统，则这些文件被默认是本地的。即使默认文件并非本地文件系统。
-用户可以使用-archives选项向自己的任务中复制存档文件(JAR文件、ZIP文件、tar文件和gzipped tar文件)，这些文件会被解档到任务节点。-libjars选项会把JAR文件添加到mapper和reducer任务的类路径中。
-```
-
-### 使用Reducer的setup方法
-
-```
-public class DistributedCacheDriver extends Configured implements Tool {
-
-    static class StationTemperatureMapper extends Mapper<LongWritable, Text, Text, IntWritable> {
-        @Override
-        protected void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
-            String[] tokens = new String(value.getBytes(), Charsets.UTF_8).split(",");
-            context.write(new Text(tokens[0]), new IntWritable(Integer.valueOf(tokens[1])));
-        }
-    }
-
-    static class CacheReducer extends Reducer<Text, IntWritable, Text, IntWritable> {
-        private Integer a;
-
-        /**
-         * 该方式缓存side data
-         *
-         * @param context
-         * @throws IOException
-         * @throws InterruptedException
-         */
-        @Override
-        protected void setup(Context context) throws IOException, InterruptedException {
-            a = 10;
-        }
-
-        @Override
-        protected void reduce(Text key, Iterable<IntWritable> values, Context context) throws IOException, InterruptedException {
-            int minTemp = a;
-            for (IntWritable value : values) {
-                minTemp = Math.max(value.get(), minTemp);
-            }
-            context.write(key, new IntWritable(minTemp));
-        }
-    }
-
-    @Override
-    public int run(String[] args) throws Exception {
-        Job job = Job.getInstance(getConf());
-        String outpath = "/user/cache";
-        FileSystem fs = FileSystem.get(URI.create(outpath), getConf());
-        if (fs.exists(new Path(outpath))) {
-            fs.delete(new Path(outpath), true);
-        }
-        job.setOutputKeyClass(Text.class);
-        job.setOutputValueClass(IntWritable.class);
-
-        job.setMapperClass(StationTemperatureMapper.class);
-        job.setReducerClass(CacheReducer.class);
-
-        FileInputFormat.addInputPath(job, new Path("/cache/air.txt"));
-        FileOutputFormat.setOutputPath(job, new Path(outpath));
-
-        return job.waitForCompletion(true) ? 1 : 0;
-    }
-
-    public static void main(String[] args) throws Exception {
-        int exit = ToolRunner.run(new DistributedCacheDriver(), args);
-        System.exit(exit);
-    }
-}
-```
-
-### 工作机制
-
-* 当用户启动一个作业，Hadoop会把-files、-archives、libjars等选项所指定的文件复制到分布式文件系统之中，在任务运行之前，NM将文件从分布式文件系统拷贝到本地磁盘使任务能够文件。此时这些文件就被视为“本地化”。
-* 高性能原因，任务角度文件夹已经存在，以符号连接的方式指向任务的工作目录，-libjars指定的文件会在任务启动前添加到任务的classpath中
-  * NM为缓存中的文件各维护一个计数器来统计这些文件的被使用情况。当任务即将运行时，该任务所使用的所有文件的对应计数器值增1；当任务执行完毕之后，这些计数器值减1。仅当文件不在使用时(此计数器达到0)，才有资格删除。当节点缓存的容量超过一定范围(默认10G)时，根据最少使用原则 删除文件以腾出空间来装在新文件。缓存大小阈值配置通过`yarn.nodemanager.localizer.cache.target-size-mb`来配置
-
-### 分布式缓存API
-
-* 通过GenericOptionsParser间接使用分布式缓存
-* 通过Job中使用分布式缓存
-
-![图片](https://uploader.shimo.im/f/zgSfbcRrVpUo25zz.png!thumbnail)
-
-```
-在缓存汇总可以存放两类对象:文件和存档，文件被直接放置在任务的节点上，而存档则会被解档之后再将具体文件放置在任务节点上。每种对象类型都包含三种方法:addCachexxxx()、setCachexxxx()和addxxxxTOClassPath()。
-addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一次性向分布式缓存中添加一组文件或文档(之后调用生成的集合将被替换)，addXXXToClassPath将文件或存储添加到MapReduce任务下的类路径。
-```
-
-### 与GenericOptionsParser对比
-
-![图片](https://uploader.shimo.im/f/ky9yHlAplA0zhzTU.png!thumbnail)
-
-# MapReduce库类
-
-![图片](https://uploader.shimo.im/f/O1vapVOcvz00EiJl.png!thumbnail)
-
