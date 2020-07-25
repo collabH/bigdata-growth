@@ -220,17 +220,24 @@ public class DeCompressFile {
 ```java
 Configuration conf = getConf();
 conf.setBoolean("mapreduce.map.output.compress", true);
-conf.set("mapreduce.map.output.compress.codec", DefaultCodec.class.getName());
+conf.setClass("mapreduce.map.output.compress.codec", DefaultCodec.class, CompressionCodec.class);
 Job job = Job.getInstance(conf);
+
+return job.waitForCompletion(true) ? 0 : 1;
 ```
 
 #### Reduce输出采用压缩
 
 ```java
 Configuration conf = getConf();
+// reduce输出端压缩
 conf.setBoolean("mapreduce.output.fileoutputformat.compress", true);
-conf.set("mapreduce.output.fileoutputformat.compress.codec", DefaultCodec.class.getName());
+conf.setClass("mapreduce.output.fileoutputformat.compress.codec", DefaultCodec.class, CompressionCodec.class);
 Job job = Job.getInstance(conf);
+// reduce端输出压缩
+FileOutputFormat.setCompressOutput(job, true);
+FileOutputFormat.setOutputCompressorClass(job, DefaultCodec.class);
+return 0;
 ```
 
 # 序列化

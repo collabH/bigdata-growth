@@ -23,6 +23,7 @@
 * [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
 
 #### Yarn
+* [Yarn快速入门](bigdata/hadoop/Yarn/YARN快速入门.md)
 
 ### Hive
 
