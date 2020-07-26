@@ -42,6 +42,13 @@
 * [SparkStreaming](bigdata/spark/Spark%20Steaming.xmind)
 * [Spark大数据处理读书笔记](bigdata/spark/Spark大数据处理BookNote.xmind)
 
+### Zookeeper
+
+* [Zookeeper原理和参数配置](bigdata/zookeeper/Zookeeper原理和参数配置.md)
+* [Zookeeper操作与部署](bigdata/zookeeper/Zookeeper操作与部署.md)
+
+
+
 ## 数据仓库
 
 * [数据建模](datawarehouse/DataModeler.md)
