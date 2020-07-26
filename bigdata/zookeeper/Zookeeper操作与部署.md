@@ -438,3 +438,160 @@ public class ZkNodeOperator implements Watcher {
 
 ```
 
+### 节点查询和监听
+
+```java
+public class QueryAndWatch{
+    private static final CountDownLatch LATCH = new CountDownLatch(1);
+     private static final Stat stat = new Stat();
+    
+     /**
+         * 查询
+         *
+         * @param path
+         * @param stat
+         * @return
+         */
+        public byte[] queryNode(String path, boolean watch, Stat stat) {
+            byte[] data = new byte[0];
+            try {
+                /**
+                 * 参数
+                 * path:节点路径
+                 * watch:true或false 注册一个watch事件
+                 * stat:状态
+                 */
+                data = zk.getData(path, watch, stat);
+                log.warn(new String(data, Charset.defaultCharset()));
+                log.warn("version :{}", stat.getVersion());
+                LATCH.await();
+    
+            } catch (KeeperException e) {
+                e.printStackTrace();
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+    
+            return data;
+        }
+    
+        @Override
+        public void process(WatchedEvent watchedEvent) {
+            log.warn("event:{}", watchedEvent);
+            try {
+                switch (watchedEvent.getType()) {
+                    case NodeDataChanged:
+                        byte[] bytes = zk.getData("/name", false, stat);
+                        log.warn(new String(bytes, Charset.defaultCharset()));
+                        log.warn("version变化:{}", stat.getVersion());
+                        LATCH.countDown();
+                        break;
+                    case NodeCreated:
+                        break;
+                    case NodeDeleted:
+                        break;
+                    case NodeChildrenChanged:
+                        break;
+                    default:
+                        break;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+}
+    
+```
+
+### 子节点查询和监听
+
+```java
+public class ZKGetChildrenList implements Watcher {
+
+    private ZooKeeper zookeeper = null;
+
+    public static final String zkServerPath = "localhost:2181";
+    public static final Integer timeout = 5000;
+
+    public ZKGetChildrenList() {
+    }
+
+    public ZKGetChildrenList(String connectString) {
+        try {
+            zookeeper = new ZooKeeper(connectString, timeout, new ZKGetChildrenList());
+        } catch (IOException e) {
+            e.printStackTrace();
+            if (zookeeper != null) {
+                try {
+                    zookeeper.close();
+                } catch (InterruptedException e1) {
+                    e1.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private static CountDownLatch countDown = new CountDownLatch(1);
+
+    public static void main(String[] args) throws Exception {
+
+        ZKGetChildrenList zkServer = new ZKGetChildrenList(zkServerPath);
+
+        /**
+         * 参数：
+         * path：父节点路径
+         * watch：true或者false，注册一个watch事件
+         */
+//		List<String> strChildList = zkServer.getZookeeper().getChildren("/name", true);
+//		for (String s : strChildList) {
+//			System.out.println(s);
+//		}
+
+        // 异步调用
+        String ctx = "{'callback':'ChildrenCallback'}";
+//		zkServer.getZookeeper().getChildren("/name", true, new ChildrenCallBack(), ctx);
+        zkServer.getZookeeper().getChildren("/name", true, (i, s, o, s1) -> {
+            log.warn("{},{},{},{}", i, s, o, s1);
+        }, ctx);
+
+        countDown.await();
+    }
+
+    @Override
+    public void process(WatchedEvent event) {
+        try {
+            //监听子节点变化
+            if (event.getType() == EventType.NodeChildrenChanged) {
+                System.out.println("NodeChildrenChanged");
+                ZKGetChildrenList zkServer = new ZKGetChildrenList(zkServerPath);
+                List<String> strChildList = zkServer.getZookeeper().getChildren(event.getPath(), false);
+                for (String s : strChildList) {
+                    System.out.println(s);
+                }
+                countDown.countDown();
+            } else if (event.getType() == EventType.NodeCreated) {
+                System.out.println("NodeCreated");
+            } else if (event.getType() == EventType.NodeDataChanged) {
+                System.out.println("NodeDataChanged");
+            } else if (event.getType() == EventType.NodeDeleted) {
+                System.out.println("NodeDeleted");
+            }
+        } catch (KeeperException e) {
+            e.printStackTrace();
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public ZooKeeper getZookeeper() {
+        return zookeeper;
+    }
+
+    public void setZookeeper(ZooKeeper zookeeper) {
+        this.zookeeper = zookeeper;
+    }
+
+}
+
+```
+
