@@ -56,22 +56,189 @@ FileSystem checksummedFS=new ChecksumFileSystem(FileSystem.get(path));
 1.减少存储文件所需要的磁盘空间
 2.加速数据在网络和磁盘上的传输。
 ```
+## 基本原则
+
+* 运算密集型的job，少用压缩，CPU密集型
+* IO密集型的JOB多用压缩。
+
 ## Hadoop支持的压缩算法
 
 ![图片](https://uploader.shimo.im/f/YEnZZzbIx5MKTsYC.png!thumbnail)
 
-## codec
+* Codec是压缩-解压缩算法的一种实现。Hadoop中，一个对CompressionCodec接口的实现就代表一个codec。
 
-```
-Codec是压缩-解压缩算法的一种实现。Hadoop中，一个对CompressionCodec接口的实现就代表一个codec。
-```
 ![图片](https://uploader.shimo.im/f/pUTHtygN9p0vjPy2.png!thumbnail)
 
-## 应该使用那种压缩格式？
+## 压缩方式选择
+
+### Gzip
+
+* 优点:压缩率比较高，而且压缩/解压缩速度比较快，Hadoop自带的压缩格式，处理数据和处理文本一样，Linux自带的压缩格式。
+* 缺点:不支持Split
+
+#### 适用场景
+
+* 每个文件压缩之后在`130M之内的(1块之内)`，都可以考虑Gzip。
+
+### Bzip2
+
+* 优点:支持Split，高压缩率，系统自带。
+* 缺点:压缩/解压缩速度慢
+
+#### 适用场景
+
+* 适合对速度要求不高，但对文件大小要求比较高的场景，并且适合于数据存档时使用。
+
+### Lzo
+
+* 优点:压缩/解压缩速度比较快，合理的压缩率，使用建立Index时支持Split，是Hadoop流行的压缩格式，可以在linux下通过lzop命令按照
+* 缺点:压缩率比Gzip低，Hadoop本身不支持，需要安装;应用中需要对Lzo格式的文件做处理(支持Split需要建立索引，需要支持InputFormat格式为LZO格式)
+
+#### 适用场景
+
+* 适合大的文本文件，压缩之后还大于200M的可以考虑，单个文件越大，优势越大。
+
+### Snappy
+
+* 优点:高压缩速度和合理的压缩率
+* 缺点:不支持Split，压缩率比Gzip要低；Hadoop本身不支持，需要安装。
+
+#### 适用场景
+
+* 当MR作业的MapTask输出端适合使用，作为Map到Reduce的中间数据压缩格式，以及MR作业的输出和另一个MR作业的输入，这种关联JOB，但是压缩完的数据不能过大，因为Snappy不支持切分。
 
 ![图片](https://uploader.shimo.im/f/RkonoKV497sq3Bmp.png!thumbnail)
 
-![图片](https://uploader.shimo.im/f/6oOZR5VnLzUw2jzd.png!thumbnail)
+## 压缩位置选择
+
+![压缩位置的选择](../../spark/源码分析/img/压缩位置的选择.jpg)
+
+## 压缩参数配置
+
+* core-site.xml `io.compression.codecs` 默认值:`org.apache.hadoop.io.compress.DefaultCodec,org.apache.hadoop.io.compress.GzipCodec,org.apache.hadoop.io.compress.BZip2Codec`输入阶段配置压缩
+* mapred-site.xml `mapreduce.map.output.compress`  默认值`false`,mapper输出阶段是否开启压缩
+* mapped-site.xml `mapreduce.map.output.compress.codec` 默认值:`org.apche.hadoop.io.compress.DefaultCodec`  mapper输出阶段使用的压缩格式
+* mapred-site.xml `mapreduce.output.fileoutputformat.compress` 默认为`false`，reduce输出阶段是否开启压缩
+* mapred-site.xml `mapreduce.output.fileoutputformat.compress.codec` 默认值:`org.apche.hadoop.io.compress.DefaultCodec`  reduce输出阶段使用的压缩格式
+* mapred-site.xml `mapreduce.output.fileoutputformat.compress.type` 默认值:`RECORD` Reduce输出压缩类型，SequenceFile输出使用的压缩类型，支持Record和NONE以及Block格式
+
+## 压缩使用
+
+### 压缩案例
+
+* 使用createOutputStream(OutputStream)方法创建一个CompressionOutputStream将以压缩格式写入底层的流
+
+```java
+public class CompressFile {
+
+    private static String compressFile = "/Users/babywang/Desktop/input/order.txt";
+
+    public void defleateCompress() throws IllegalAccessException, InstantiationException, IOException {
+        FileInputStream fis = new FileInputStream(new File(compressFile));
+
+        DefaultCodec codec = ReflectionUtils.newInstance(DefaultCodec.class, new Configuration());
+        CompressionOutputStream cos = codec.createOutputStream(new FileOutputStream(new File(compressFile + codec.getDefaultExtension())));
+        IOUtils.copyBytes(fis, cos, 1024 * 1024 * 5, false);
+        IOUtils.closeStream(fis);
+        IOUtils.closeStream(cos);
+    }
+
+    public void gzipCompress() throws Exception {
+        FileInputStream fis = new FileInputStream(new File(compressFile));
+
+        GzipCodec codec = ReflectionUtils.newInstance(GzipCodec.class, new Configuration());
+        CompressionOutputStream cos = codec.createOutputStream(new FileOutputStream(new File(compressFile + codec.getDefaultExtension())));
+        IOUtils.copyBytes(fis, cos, 1024 * 1024 * 5, false);
+        IOUtils.closeStream(fis);
+        IOUtils.closeStream(cos);
+
+    }
+
+    public void bzip2Compress() throws Exception {
+        FileInputStream fis = new FileInputStream(new File(compressFile));
+
+        BZip2Codec codec = ReflectionUtils.newInstance(BZip2Codec.class, new Configuration());
+        CompressionOutputStream cos = codec.createOutputStream(new FileOutputStream(new File(compressFile + codec.getDefaultExtension())));
+        IOUtils.copyBytes(fis, cos, 1024 * 1024 * 5, false);
+        IOUtils.closeStream(fis);
+        IOUtils.closeStream(cos);
+    }
+
+    public static void main(String[] args) throws Exception {
+        CompressFile compressFile = new CompressFile();
+        compressFile.bzip2Compress();
+        compressFile.defleateCompress();
+        compressFile.gzipCompress();
+
+    }
+}
+```
+
+
+
+### 解压缩案例
+
+* 调用createInputStream(InputStream)方法创建一个CompressionInputFormat从底层的压缩流读取数据。
+
+```java
+public class DeCompressFile {
+
+    private static String compressFilePath = "/Users/babywang/Desktop/input/order.txt";
+    private static String compressFile = "/Users/babywang/Desktop/input/order.txt.deflate";
+
+    public void defleateDeCompress() throws IllegalAccessException, InstantiationException, IOException {
+        //拿到压缩工程
+        CompressionCodecFactory factory = new CompressionCodecFactory(new Configuration());
+
+        CompressionCodec codec = factory.getCodec(new Path(compressFile));
+        if (codec == null) {
+            System.out.println("该文件压缩格式不存在");
+            return;
+        }
+
+        CompressionInputStream cis = codec.createInputStream(new FileInputStream(new File(compressFilePath + codec.getDefaultExtension())));
+
+        FileOutputStream fos = new FileOutputStream(new File(compressFilePath + ".decoded"));
+
+        IOUtils.copyBytes(cis, fos, 1024 * 1024 * 5, false);
+        IOUtils.closeStream(cis);
+        IOUtils.closeStream(fos);
+    }
+
+
+    public static void main(String[] args) throws Exception {
+        DeCompressFile compressFile = new DeCompressFile();
+        compressFile.defleateDeCompress();
+    }
+}
+```
+
+### MapReduce启用压缩
+
+#### Map输出端采用压缩
+
+```java
+Configuration conf = getConf();
+conf.setBoolean("mapreduce.map.output.compress", true);
+conf.setClass("mapreduce.map.output.compress.codec", DefaultCodec.class, CompressionCodec.class);
+Job job = Job.getInstance(conf);
+
+return job.waitForCompletion(true) ? 0 : 1;
+```
+
+#### Reduce输出采用压缩
+
+```java
+Configuration conf = getConf();
+// reduce输出端压缩
+conf.setBoolean("mapreduce.output.fileoutputformat.compress", true);
+conf.setClass("mapreduce.output.fileoutputformat.compress.codec", DefaultCodec.class, CompressionCodec.class);
+Job job = Job.getInstance(conf);
+// reduce端输出压缩
+FileOutputFormat.setCompressOutput(job, true);
+FileOutputFormat.setOutputCompressorClass(job, DefaultCodec.class);
+return 0;
+```
 
 # 序列化
 

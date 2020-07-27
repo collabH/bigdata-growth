@@ -23,6 +23,7 @@
 * [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
 
 #### Yarn
+* [Yarn快速入门](bigdata/hadoop/Yarn/YARN快速入门.md)
 
 ### Hive
 
@@ -40,6 +41,13 @@
 * [SparkSQL](bigdata/spark/Spark%20SQL.xmind)
 * [SparkStreaming](bigdata/spark/Spark%20Steaming.xmind)
 * [Spark大数据处理读书笔记](bigdata/spark/Spark大数据处理BookNote.xmind)
+
+### Zookeeper
+
+* [Zookeeper原理和参数配置](bigdata/zookeeper/Zookeeper原理和参数配置.md)
+* [Zookeeper操作与部署](bigdata/zookeeper/Zookeeper操作与部署.md)
+
+
 
 ## 数据仓库
 
