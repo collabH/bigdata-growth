@@ -50,8 +50,12 @@
 
 * [shell命令](devops/Shell学习.xmind)
 * [Linux命令](devops/Linux学习.xmind)
-* [maven骨架制作](devops/制作maven骨架.md)
 * [openshift基础命令](devops/k8s-openshift客户端命令使用.md)
+
+## maven
+
+* [maven骨架制作](devops/maven/制作maven骨架.md)
+* [maven命令](devops/maven/Maven命令.md)
 
 ## 实时计算
 

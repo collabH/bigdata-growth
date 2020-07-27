@@ -13,7 +13,7 @@
 
 `mvn archetype:create-from-project`
 
-![img1](../img/img1.jpg)
+![img1](../../img/img1.jpg)
 
 # 进入generated-sources/archetype
 
