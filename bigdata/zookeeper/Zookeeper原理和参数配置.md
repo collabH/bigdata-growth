@@ -104,3 +104,7 @@
 
 ![Zookeeper写数据流程](./img/Zookeeper写数据流程.jpg)
 
+# 面试题
+
+* Zookeeper选举机制
+* Zookeeper监听原理
