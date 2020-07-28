@@ -224,5 +224,63 @@ flume-ng agent -n a1 -c $FLUME_HOME/conf -f file-flume-hdfs.conf
 
 * 使用Spooling Directory Source
 
+```properties
+a1.sources = s1
+a1.sinks = k1
+a1.channels = c1
 
+# sources
+a1.sources.s1.type = TAILDIR
+a1.sources.s1.positionFile = /Users/babywang/Documents/reserch/studySummary/module/flume-1.9.0/job/taildir_position.json
+a1.sources.s1.filegroups = f1 f2
+a1.sources.s1.filegroups.f1 = /Users/babywang/Documents/reserch/studySummary/module/test/file1.txt
+a1.sources.s1.filegroups.f2 = /Users/babywang/Documents/reserch/studySummary/module/test/file2.txt
+
+# sink
+a1.sinks.k1.type = logger
+
+# channels
+a1.channels.c1.type = memory
+a1.channels.c1.capacity = 1000
+a1.channels.c1.transactitionCapacity = 100
+
+# binds
+a1.sources.s1.channels = c1
+a1.sinks.k1.channel = c1
+```
+
+* 启动脚本
+
+```shell
+flume-ng agent -n a1 -c $FLUME_HOME/conf -f dir-flume-hdfs.conf
+```
+
+### 实时监控目录下多个追加文件
+
+* 无法使用Exec source因为Exec无法保证数据不丢失，Spooldir Source能够保证数据不丢失，且能够实现断点续传，存在延迟，不能实时监控；Taildir Source支持断点续传，也可以保证数据不丢失并且低延迟支持实时监控。
+
+#### Taildir Source配置
+
+# 高级特性
+
+## 事务和可靠性
+
+### 原理
+
+![flume事务原理](../zookeeper/img/flume事务原理.jpg)
+
+* Flume使用`两个独立的事务`分别负责从`source到channel`以及从`channel到sink`的事件传递
+* 一旦事务中的所有事件全部传递到channel且提交成功，那么source就将该文件标记为已完成。如果`事件失败就会回滚保存在channel中等待重新传递`。
+
+### Flume的channel类型
+
+* file channel，`具有持久性，只要事件被写入channel，即使代理重新启动，事件也不会丢失`
+* memory channel，`事件缓冲在存储器中，不具有持久存储能力`。
+
+### 批量处理
+
+* Flume在有可能的情况下尽量以`事务为单位来批量处理事件`，而不是`逐个事件进行处理`。`批量处理有利于提高file channel的性能，因为每个事务只需要写一次本地磁盘和调用一次fsync函数`。
+* `批量的大小取决于组件的类型，并且大多数情况下是配置的`。
+
+## Flume Agent原理
 
