@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 
+cluster01=10.16.18.131
+cluster02=10.16.18.133
+cluster03=10.16.18.134
+cluster04=10.16.18.135
+
+targetPath=$2
+
 # 多服务器配置同步脚本
 #1 获取输入参数个数，如果没有参数，直接退出
-paramCount=$#
-if (($paramCount == 0)); then
-    echo no args;
-    exit
-fi
+#paramCount=$#
+#if (($paramCount == 0)); then
+#    echo no args;
+#    exit
+#fi
 
 #2 获取文件名称
 p1=$1
@@ -22,8 +29,8 @@ echo pdir=${pdir}
 user=`whoami`
 
 #5 循环
-for (( host = 123; host < 126; host ++ )); do
-    echo ---------hadoop$host-------------
-    rsync -rvl ${pdir}/${fileName} ${user}@hadoop${host}:${pdir}
-done
 
+scp ${pdir}/${fileName} ${user}@${cluster01}:${targetPath}
+scp ${pdir}/${fileName} ${user}@${cluster02}:${targetPath}
+scp ${pdir}/${fileName} ${user}@${cluster03}:${targetPath}
+scp ${pdir}/${fileName} ${user}@${cluster04}:${targetPath}
