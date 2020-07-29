@@ -15,7 +15,7 @@
 ​        ![img](https://uploader.shimo.im/f/Fd3AS12j9EIw9fEl.png!thumbnail)      
 
 * 使用Flume需要`运行Flume代理`，Flume代理是由`持续运行的source`、`sink`以及`channel`(用于连接source和sink)构成的Java进程
-* Flume的`source产生事件`，并将其`传输给channel`，`channel存储这些事件直至转发给sink`。
+* Flume的`sourcgite产生事件`，并将其`传输给channel`，`channel存储这些事件直至转发给sink`。
 * 可以把source-channel-sink的组合视为基本的Flume构件。
 
 ## 基础架构
@@ -284,3 +284,166 @@ flume-ng agent -n a1 -c $FLUME_HOME/conf -f dir-flume-hdfs.conf
 
 ## Flume Agent原理
 
+![Agent原理流程图](../zookeeper/img/Agent原理流程图.jpg)
+
+### Multiplexing Channel Selector
+
+```properties
+a1.sources = r1
+a1.channels = c1 c2 c3 c4
+a1.sources.r1.selector.type = multiplexing
+a1.sources.r1.selector.header = state
+# 如果header中包含state CZ选择c1channel，包含state US选择c2 c3默认选择c4
+a1.sources.r1.selector.mapping.CZ = c1
+a1.sources.r1.selector.mapping.US = c2 c3
+a1.sources.r1.selector.default = c4
+```
+
+## Flume拓扑结构
+
+### 简单串联
+
+![Two agents communicating over Avro RPC](https://flume.apache.org/_images/UserGuide_image03.png)
+
+* 这种模式是将多个flume顺序连接起来，从最初的source开始到最终sink传送的目的存储系统。不适合桥接过多的flume数量，flume数量过多会导致传送速度变慢和系统稳定性。
+
+### 复制和多路复用
+
+![Agent原理流程图](../zookeeper/img/复制和多路复用.jpg)
+
+* Flume支持将事件流向一个或多个目的地。这种模式可以将相同数据复制到多个channel中，或者将不同数据分发到不同channel中，sink可以选择传送到不同的目的地。
+
+#### single-source-mutil-sink
+
+```properties
+flume-1.sources = s1
+flume-1.sinks = k1 k2
+flume-1.channels = c1 c2
+
+# source
+flume-1.sources.s1.type = TAILDIR
+flume-1.sources.s1.positionFile = /Users/babywang/Documents/reserch/studySummary/module/flume-1.9.0/job/position.json
+flume-1.sources.s1.filegroups = f1
+flume-1.sources.s1.filegroups.f1 = /Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/logs/hadoop-babywang-namenode-research.log
+
+
+# sinks
+## k1
+flume-1.sinks.k1.type = avro
+flume-1.sinks.k1.hostname = hadoop
+flume-1.sinks.k1.port = 4545
+## k2
+flume-1.sinks.k2.type = avro
+flume-1.sinks.k2.hostname = hadoop
+flume-1.sinks.k2.port = 4546
+
+# channels 
+## c1
+flume-1.channels.c1.type = memory
+flume-1.channels.c1.capacity = 1000
+flume-1.channels.c1.transactitionCapacity = 100
+
+## c2
+flume-1.channels.c2.type = memory
+flume-1.channels.c2.capacity = 1000
+flume-1.channels.c2.transactitionCapacity = 100
+
+# 将数据流复制给所有channel
+flume-1.sources.s1.selector.type = replicating
+
+# bind
+flume-1.sinks.k1.channel = c1
+flume-1.sinks.k2.channel = c2
+flume-1.sources.s1.channels = c1 c2
+```
+
+#### avro-logger
+
+```properties
+flume-2.sources = s1
+flume-2.sinks = k1
+flume-2.channels = c1
+
+# source
+flume-2.sources.s1.type = avro
+flume-2.sources.s1.bind = hadoop
+flume-2.sources.s1.port = 4546
+
+
+# sinks
+flume-2.sinks.k1.type = logger
+
+# channels 
+flume-2.channels.c1.type = memory
+flume-2.channels.c1.capacity = 1000
+flume-2.channels.c1.transactitionCapacity = 100
+
+# bind
+flume-2.sinks.k1.channel = c1
+flume-2.sources.s1.channels = c1
+```
+
+
+
+#### avro-hdfs
+
+```properties
+flume-3.sources = s1
+flume-3.sinks = k1
+flume-3.channels = c1
+
+# source
+flume-3.sources.s1.type = avro
+flume-3.sources.s1.bind = hadoop
+flume-3.sources.s1.port = 4545
+
+
+# sinks
+flume-3.sinks.k1.type = hdfs
+flume-3.sinks.k1.hdfs.path = hdfs://hadoop:8020/hadoop/logs/%y-%m-%d/%H%M/%S
+# 上传文件前缀
+flume-3.sinks.k1.hdfs.filePrefix = namenode-
+# 上传文件后缀
+flume-3.sinks.k1.hdfs.fileSuffix = log
+# 是否按照实际滚动文件夹
+flume-3.sinks.k1.hdfs.round = true
+# 多少时间单位创建一个新的文件夹
+flume-3.sinks.k1.hdfs.roundValue = 1
+flume-3.sinks.k1.hdfs.roundUnit = hour
+# 是否使用本地时间戳
+flume-3.sinks.k1.hdfs.useLocalTimeStamp = true
+# 积攒多少个Event才flush到HDFS一次
+flume-3.sinks.k1.hdfs.batchSize = 100
+# 设置文件类型，可支持压
+flume-3.sinks.k1.hdfs.fileType = DataStream
+# 多久生成一个文件
+flume-3.sinks.k1.hdfs.rollInterval = 60
+# 设置每个文件的滚动大小 
+flume-3.sinks.k1.hdfs.rollSize = 134217700
+# 文件的滚动与Event数量无关
+flume-3.sinks.k1.hdfs.rollCount = 0
+
+
+# channels 
+flume-3.channels.c1.type = memory
+flume-3.channels.c1.capacity = 1000
+flume-3.channels.c1.transactitionCapacity = 200
+
+# bind
+flume-3.sinks.k1.channel = c1
+flume-3.sources.s1.channels = c1
+```
+
+* 先启动下游Flume Ng，在启动上游Flume-Ng
+
+### 负载均衡和故障转移
+
+![Agent原理流程图](../zookeeper/img/负载均衡和故障转移.jpg)
+
+* 将多个sink逻辑上分到一个sink组，sink组配合不同的SinkProcessor可以实现负载均衡和故障转移。
+
+### 聚合
+
+![A fan-in flow using Avro RPC to consolidate events in one place](https://flume.apache.org/_images/UserGuide_image02.png)
+
+* 收集web应用日志分布式方式手机多个web服务器的日志然后汇总到一台最终sink到存储系统。
