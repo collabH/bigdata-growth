@@ -27,6 +27,8 @@
 
 ### Hive
 
+* [HiveOverwrite](bigdata/hive/HiveOverwrite.md)
+* [Hive SQL](bigdata/hive/Hive%20SQL.xmind)
 * [Hive线上问题方案](bigdata/hive/Hive线上问题方案.md)
 * [Hive调优指南](bigdata/hive/Hive调优指南.xmind)
 * [Hive踩坑解决方案](bigdata/hive/Hive踩坑解决方案.xmind)
