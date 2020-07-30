@@ -442,8 +442,240 @@ flume-3.sources.s1.channels = c1
 
 * 将多个sink逻辑上分到一个sink组，sink组配合不同的SinkProcessor可以实现负载均衡和故障转移。
 
+#### single-source-failover-sink
+
+```properties
+# flume1
+a1.sources = s1
+a1.sinks = k1 k2
+a1.channels = c1
+a1.sinkgroups = g1
+# sources
+a1.sources.s1.type=netcat
+a1.sources.s1.bind=hadoop
+a1.sources.s1.port=9999
+# sinks
+a1.sinks.k1.type=avro
+a1.sinks.k1.hostname=hadoop
+a1.sinks.k1.port=4000
+a1.sinks.k2.type=avro
+a1.sinks.k2.hostname=hadoop
+a1.sinks.k2.port=4001
+# sink groups
+a1.sinkgroups.g1.sinks = k1 k2
+a1.sinkgroups.g1.processor.type = failover
+a1.sinkgroups.g1.processor.priority.k1 = 5
+a1.sinkgroups.g1.processor.priority.k2 = 10
+a1.sinkgroups.g1.processor.maxpenalty = 10000
+# channels
+a1.channels.c1.type=memory
+a1.channels.c1.capacity=1000
+a1.channels.c1.transactionCapacity=100
+# bind
+a1.sources.s1.channels=c1
+a1.sinks.k1.channel=c1
+a1.sinks.k2.channel=c1
+
+# sink1-flume2
+a2.sources = s2
+a2.sinks = k2
+a2.channels = c2
+# sources
+a2.sources.s2.type=avro
+a2.sources.s2.bind=hadoop
+a2.sources.s2.port=4000
+# sinks
+a2.sinks.k2.type=logger
+# channels
+a2.channels.c2.type=memory
+a2.channels.c2.capacity=1000
+a2.channels.c2.transactionCapacity=100
+# bind
+a2.sources.s2.channels=c2
+a2.sinks.k2.channel=c2
+
+# sink2-flume3
+a3.sources = s3
+a3.sinks = k3
+a3.channels = c3
+# sources
+a3.sources.s3.type=avro
+a3.sources.s3.bind=hadoop
+a3.sources.s3.port=4001
+# sinks
+a3.sinks.k3.type=logger
+# channels
+a3.channels.c3.type=memory
+a3.channels.c3.capacity=1000
+a3.channels.c3.transactionCapacity=100
+# bind
+a3.sources.s3.channels=c3
+a3.sinks.k3.channel=c3
+```
+
+#### Load_balancing_sinks
+
+```properties
+# source端
+a1.sources = s1
+a1.sinks = k1 k2
+a1.channels = c1
+a1.sinkgroups = g1
+
+# sources
+a1.sources.s1.type=netcat
+a1.sources.s1.bind=hadoop
+a1.sources.s1.port=9999
+
+# sinks
+a1.sinks.k1.type=avro
+a1.sinks.k1.hostname=hadoop
+a1.sinks.k1.port=4000
+
+a1.sinks.k2.type=avro
+a1.sinks.k2.hostname=hadoop
+a1.sinks.k2.port=4001
+
+# sink groups
+a1.sinkgroups.g1.sinks = k1 k2
+a1.sinkgroups.g1.processor.type = load_balance
+a1.sinkgroups.g1.processor.backoff = true
+a1.sinkgroups.g1.processor.selector = round_robin
+
+# channels
+a1.channels.c1.type=memory
+a1.channels.c1.capacity=1000
+a1.channels.c1.transactionCapacity=100
+
+# bind
+a1.sources.s1.channels=c1
+a1.sinks.k1.channel=c1
+a1.sinks.k2.channel=c1
+
+# sink1
+a2.sources = s2
+a2.sinks = k2
+a2.channels = c2
+# sources
+a2.sources.s2.type=avro
+a2.sources.s2.bind=hadoop
+a2.sources.s2.port=4000
+# sinks
+a2.sinks.k2.type=logger
+# channels
+a2.channels.c2.type=memory
+a2.channels.c2.capacity=1000
+a2.channels.c2.transactionCapacity=100
+# bind
+a2.sources.s2.channels=c2
+a2.sinks.k2.channel=c2
+
+# sink2
+a3.sources = s3
+a3.sinks = k3
+a3.channels = c3
+# sources
+a3.sources.s3.type=avro
+a3.sources.s3.bind=hadoop
+a3.sources.s3.port=4001
+# sinks
+a3.sinks.k3.type=logger
+# channels
+a3.channels.c3.type=memory
+a3.channels.c3.capacity=1000
+a3.channels.c3.transactionCapacity=100
+# bind
+a3.sources.s3.channels=c3
+a3.sinks.k3.channel=c3
+```
+
+
+
 ### 聚合
 
 ![A fan-in flow using Avro RPC to consolidate events in one place](https://flume.apache.org/_images/UserGuide_image02.png)
 
 * 收集web应用日志分布式方式手机多个web服务器的日志然后汇总到一台最终sink到存储系统。
+
+## 自定义Interceptor
+
+* 实现`org.apache.flume.interceptor.Interceptor`接口
+
+```java
+/**
+ * @fileName: TypeInterceptor.java
+ * @description: 自定义Flume拦截器
+ * @author: by echo huang
+ * @date: 2020-07-31 00:12
+ */
+public class TypeInterceptor implements Interceptor {
+    /**
+     * 添加过头的事件
+     */
+    private List<Event> addHeaderEvents;
+
+    @Override
+    public void initialize() {
+        this.addHeaderEvents = Lists.newArrayList();
+    }
+
+    /**
+     * 单个事件拦截
+     *
+     * @param event
+     * @return
+     */
+    @Override
+    public Event intercept(Event event) {
+        Map<String, String> headers = event.getHeaders();
+        String body = new String(event.getBody());
+        //如果event的body包含hello则向header添加一个标签
+        if (body.contains("hello")) {
+            headers.put("type", "yes");
+        } else {
+            headers.put("type", "no");
+        }
+        return event;
+    }
+
+    /**
+     * 批量事件拦截
+     *
+     * @param list
+     * @return
+     */
+    @Override
+    public List<Event> intercept(List<Event> list) {
+        this.addHeaderEvents.clear();
+
+        list.forEach(event -> addHeaderEvents.add(intercept(event)));
+
+        return this.addHeaderEvents;
+    }
+
+    @Override
+    public void close() {
+
+    }
+
+    public static class InterceptorBulder implements Builder {
+
+        @Override
+        public Interceptor build() {
+            return new TypeInterceptor();
+        }
+
+        /**
+         * 传递配置，可以将外部配置传递至内部
+         *
+         * @param context 配置上下文
+         */
+        @Override
+        public void configure(Context context) {
+
+        }
+    }
+}
+```
+
+* 打包将jar包上传至flume的lib下
