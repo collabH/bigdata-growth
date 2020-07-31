@@ -5,6 +5,7 @@
 * Flume是向Hadoop批量导入基于事件的海量数据，例如利用Flume从一组Web服务器中搜集日志文件，然后把这些文件转移到一个新的HDFS汇总文件中以做进一步处理，其终点(或者sink)通常为HDFS。
 * Flume也支持导入其他系统比如HBase或Solr。
 * 基于流式架构，灵活简单。
+* 支持动态配置，定时拉取flume-ng配置，配置热更新。
 
 ## Flume适合场景
 
@@ -679,3 +680,24 @@ public class TypeInterceptor implements Interceptor {
 ```
 
 * 打包将jar包上传至flume的lib下
+
+* 添加flume配置[interceptors](https://flume.apache.org/releases/content/1.9.0/FlumeUserGuide.html#flume-interceptors)
+
+```properties
+# interceptor
+a2.sources.s1.interceptors = i1
+a2.sources.s1.interceptors.i1.type = org.research.flume.interceptor.TypeInterceptor$InterceptorBulder
+
+# channel selector
+a2.sources.s1.selector.type=multiplexing
+a2.sources.s1.selector.header=type
+a2.sources.s1.selector.mapping.yes=c1
+a2.sources.s1.selector.mapping.no=c2
+```
+
+## 自定义Source
+
+* 继承`AbstractSource`类，实现`Configurable`和`PollableSource`接口
+
+## 自定义Sink
+
