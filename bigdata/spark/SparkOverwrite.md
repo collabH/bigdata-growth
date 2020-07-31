@@ -286,3 +286,49 @@ worker3
 
 # Spark编程模型
 
+## RDD弹性分布式数据集
+
+### 数据处理模型
+
+* Iterative Algorithms、Relational Queries、Map-Reduce、Stream Procesing。Hadoop MapReduce使用了MapReduce，Storm使用了Stream Processing模型。
+* Spark的RDD使用了4种模型。
+
+### 简介
+
+* RDD是一个容错的、并行的数据结构，可以让用户显式地出将数据存储到磁盘或内存中，并控制数据的分区。RDD是Spark的核心，通过RDD的`依赖关系形成Spark的调度顺序`。
+
+### 深入理解RDD
+
+* RDD从直观上看是一个数组，本质上是逻辑分区记录的集合，在集群中，RDD可以包含多个分布在不同节点上的分区，每个分区是一个dataset片段。
+
+![RDD分区结构](./源码分析/img/RDD分区结构.jpg)
+
+#### RDD依赖
+
+* RDD可以相互依赖，如果RDD的每个分区最多只能被一个Child RDD的分区使用，则为窄依赖(narrow dependency);若多个Child RDD分区都可以依赖，则称之为宽依赖(wide dependency)。
+
+#### RDD容错性
+
+* 常用容错方式为日志记录和数据复制，这种方式都比较昂贵。
+* RDD因为本身是不变的数据集，天然支持容错，RDD之间可以通过lineage产生依赖，RDD能够记住它的DAG图，当worker执行失败时，直接通过操作图获得之前执行的操作，重新计算。
+
+#### RDD高效性
+
+* RDD提供persistence和partitioning，用户可以通过persist与partitionBy控制这两个特性。RDD的分区特性与并行计算能力使得Spark可以更好的利用可伸缩硬件资源。
+
+### RDD特性
+
+* RDD是不变的数据结构存储
+* RDD将数据存储内存中，从而提供了低延迟性。
+* RDD是支持跨集群的分布式数据结构。
+* RDD可以根据记录的key对结构分区。
+* RDD提供粗粒度的操作，并且都支持分区。
+
+## Spark的程序模型
+
+![RDD分区结构](./源码分析/img/Spark的程序模型.jpg)
+
+* 对RDD的操作都会造成RDD的变换，其中RDD的每个逻辑分区Partition都应用BlockManager中的物理数据块Block。RDD核心是元数据结构，保存了逻辑分区与物理数据块之间的映射关系，以及父辈RDD的依赖转换。
+
+# Spark机制原理
+
