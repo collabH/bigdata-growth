@@ -55,7 +55,11 @@
 
 ### Kafka
 
-* * [kafka概览](bigdata/kafka/KafkaOverView.xmind)
+* [kafka概览](bigdata/kafka/KafkaOverView.xmind)
+* [基本概念](bigdata/kafka/基本概念.md)
+* [生产者源码剖析](bigdata/kafka/生产者源码剖析.md)
+* [消费者源码剖析](bigdata/kafka/消费者源码剖析.md)
+* [kafkaShell](bigdata/kafka/KafkaShell.xmind)
 * [kafka权威指南读书笔记](bigdata/kafka/kafka权威指南)
 
 
