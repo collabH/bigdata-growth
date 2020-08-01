@@ -699,5 +699,294 @@ a2.sources.s1.selector.mapping.no=c2
 
 * 继承`AbstractSource`类，实现`Configurable`和`PollableSource`接口
 
+```java
+public class OssSource extends AbstractSource implements Configurable, PollableSource {
+
+    private String prefix;
+    private String suffix;
+
+    @Override
+    public void configure(Context context) {
+        this.prefix = context.getString("prefix");
+        this.suffix = context.getString("suffix", "suffix");
+
+    }
+
+    /**
+     * 1.接受数据(读取OSS数据)
+     * 2.封装事件
+     * 3.将事件传递给Channel
+     *
+     * @return
+     * @throws EventDeliveryException
+     */
+    @Override
+    public Status process() throws EventDeliveryException {
+        Status status = null;
+        try {
+            for (int i = 0; i < 5; i++) {
+                SimpleEvent event = new SimpleEvent();
+                event.setBody((prefix + "--" + i + "--" + suffix).getBytes());
+                //传递数据给Channel
+                getChannelProcessor().processEvent(event);
+                status = Status.READY;
+            }
+            Thread.sleep(2000);
+        } catch (Exception e) {
+            status = Status.BACKOFF;
+        }
+        return status;
+    }
+
+    @Override
+    public long getBackOffSleepIncrement() {
+        return 0;
+    }
+
+    @Override
+    public long getMaxBackOffSleepInterval() {
+        return 0;
+    }
+}
+```
+
+* 配置自定义source
+
+```properties
+a1.sources = s1
+a1.sinks =k1
+a1.channels=c1
+
+# source
+a1.sources.s1.type=org.research.flume.source.OssSource
+a1.sources.s1.prefix=hello
+a1.sources.s1.suffix=world
+
+# sinks
+a1.sinks.k1.type=logger
+
+# channels
+a1.channels.c1.type=memory
+a1.channels.c1.capacity=1000
+a1.channels.c1.transactionCapacity=100
+# bind
+a1.sources.s1.channels=c1
+a1.sinks.k1.channel=c1
+```
+
 ## 自定义Sink
 
+* 继承`AbstractSink`实现`Configurable`接口，Sink是完全事务性的，从Channel批量删除数据之前，每个SInk用Channel启动一个事务，批量事件一旦成功写出则利用Channel提交事务。`事务一旦提交，该Channel从自己的内部缓冲区删除事件。`
+
+```java
+public class CustomSink extends AbstractSink implements Configurable {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(CustomSink.class);
+
+    private String prefix;
+    private String suffix;
+
+    @Override
+    public Status process() throws EventDeliveryException {
+        Status status = null;
+        Channel channel = getChannel();
+        //拿到channel事务
+        Transaction transaction = channel.getTransaction();
+        transaction.begin();
+        try {
+            Event take = channel.take();
+
+            String body = new String(take.getBody(), Charsets.UTF_8);
+            LOGGER.info("result:{}", prefix + body + suffix);
+            transaction.commit();
+            status = Status.READY;
+        } catch (Exception e) {
+            transaction.rollback();
+            status = Status.BACKOFF;
+        } finally {
+            transaction.close();
+        }
+        return status;
+    }
+
+    @Override
+    public void configure(Context context) {
+        this.prefix = context.getString("prefix");
+        this.suffix = context.getString("suffix", "on the road");
+    }
+}
+```
+
+* flume配置
+
+```properties
+a1.sources = s1
+a1.sinks =k1
+a1.channels=c1
+
+# source
+a1.sources.s1.type = netcat
+a1.sources.s1.bind = hadoop
+a1.sources.s1.port = 9999
+
+# sinks
+a1.sinks.k1.type=org.research.flume.sink.CustomSink
+a1.sinks.k1.prefix=hello
+a1.sinks.k1.suffix=world
+
+# channels
+a1.channels.c1.type=memory
+a1.channels.c1.capacity=1000
+a1.channels.c1.transactionCapacity=100
+# bind
+a1.sources.s1.channels=c1
+a1.sinks.k1.channel=c1
+```
+
+## Flume数据流监控
+
+### Ganglia的安装与部署
+
+* 替换yum源
+
+```shell
+mv /etc/yum.repos.d/CentOS-Base.repo /etc/yum.repos.d/CentOS-Base.repo.backup
+curl -o /etc/yum.repos.d/CentOS-Base.repo http://mirrors.aliyun.com/repo/Centos-7.repo
+sed -i -e ‘/mirrors.cloud.aliyuncs.com/d‘ -e ‘/mirrors.aliyuncs.com/d‘ /etc/yum.repos.d/CentOS-Base.repo
+```
+
+* 安装httpd服务与php
+
+```shell
+sudo yum -y install httpd php	
+```
+
+* 安装其他依赖
+
+```shell
+sudo yum -y install rrdtool perl-rrdtool rrdtool-devel
+sudo yum -y install apr-devel
+```
+
+* 安装ganglia
+
+```shell
+mv /etc/yum.repos.d/epel.repo /etc/yum.repos.d/epel.repo.backup
+mv /etc/yum.repos.d/epel-testing.repo /etc/yum.repos.d/epel-testing.repo.backup
+curl -o /etc/yum.repos.d/epel.repo http://mirrors.aliyun.com/repo/epel-7.repo
+
+sudo yum -y install ganglia-gmetad
+sudo yum -y install ganglia-web
+sudo yum -y install ganglia-gmond
+```
+
+### 配置启动
+
+* ganglia配置
+
+```shell
+sudo vim /etc/httpd/conf.d/ganglia.conf
+```
+
+```xml
+Alias /ganglia /usr/share/ganglia
+
+<Location /ganglia>
+  # Options Indexes FollowSymLinks
+  # AllowOverride None
+  Require all granted
+  # Order deny,allow
+  # Deny from all
+ Allow from all
+  # Require local
+  # Require ip 10.1.2.3
+  # Require host example.org
+</Location>
+```
+
+* gmetad配置修改数据源
+
+```shell
+sudo vim /etc/ganglia/gmetad.conf
+```
+
+```properties
+# A list of machines which service the data source follows, in the 
+# format ip:port, or name:port. If a port is not specified then 8649
+# (the default gmond port) is assumed.
+# default: There is no default value
+#
+# data_source "my cluster" 10 localhost  my.machine.edu:8649  1.2.3.5:8655
+# data_source "my grid" 50 1.3.4.7:8655 grid.org:8651 grid-backup.org:8651
+# data_source "another source" 1.3.4.7:8655  1.3.4.8
+
+data_source "hadoop" 192.168.1.12
+```
+
+* 修改/etc/ganglia/gmond.conf
+
+```properties
+cluster {
+  name = "hadoop"
+  owner = "unspecified"
+  latlong = "unspecified"
+  url = "unspecified"
+}
+
+/* The host section describes attributes of the host, like the location */
+host {
+  location = "unspecified"
+}
+
+/* Feel free to specify as many udp_send_channels as you like.  Gmond
+   used to only support having a single channel */
+udp_send_channel {
+  #bind_hostname = yes # Highly recommended, soon to be default.
+                       # This option tells gmond to use a source address
+                       # that resolves to the machine‘s hostname.  Without
+                       # this, the metrics may appear to come from any
+                       # interface and the DNS names associated with
+                       # those IPs will be used to create the RRDs.
+  # mcast_join = 239.2.11.71
+  host = 192.168.1.12
+  port = 8649
+  ttl = 1
+}
+
+/* You can specify as many udp_recv_channels as you like as well. */
+udp_recv_channel {
+  # mcast_join = 239.2.11.71
+  port = 8649
+  bind = 192.168.1.12
+  retry_bind = true
+  # Size of the UDP buffer. If you are handling lots of metrics you really
+  # should bump it up to e.g. 10MB or even higher.
+  # buffer = 10485760
+}
+```
+
+* 关闭selinux，临时关闭
+
+```shell
+sudo setenforce 0	
+```
+
+* 修改ganglia权限
+
+```shell
+sudo chmod -R 777 /var/lib/ganglia
+```
+
+* 启动ganglia
+
+```
+stytemctl start httpd
+stytemctl start gmetad
+stytemctl start gmond
+```
+
+* 访问ganglia页面
+
+```
+http://locahost/ganglia
+```
