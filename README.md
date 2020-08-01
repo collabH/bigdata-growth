@@ -53,6 +53,11 @@
 
 * [Flume快速入门](bigdata/flume/FlumeOverwrite.md)
 
+### Kafka
+
+* [kafka权威指南分析](bigdata/kafka/kafka权威指南)
+
+
 ## 数据仓库
 
 * [数据建模](datawarehouse/DataModeler.md)
