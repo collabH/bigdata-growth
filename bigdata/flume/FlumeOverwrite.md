@@ -990,3 +990,48 @@ stytemctl start gmond
 ```
 http://locahost/ganglia
 ```
+
+# 面试题
+
+## 如果实现Flume数据传输的监控？
+
+* 使用ganglia实时监控，或者修改源码通过pushgateway将数据push至普罗米修斯中，通过granfa来监控。
+
+## FLume的Source、Sink、Channel的作用？你们Source是什么类型？
+
+### Source
+
+* 收集数据，可以处理各种类型、各种格式的日志数据。
+
+### Channel
+
+* 采集到的数据进行缓存，可以存放到Memory或File中。
+
+### SInk
+
+* 用于将数据发送到目的地的组件，目的地包括HDFS、Logger、avro等
+
+### 采用Source类型
+
+* 监控后台日志:tairDir(支持多文件监控、支持断点续传、支持position容错checkpoint)、exec
+* 监控后台产生日志端口:netcat、exec、tairDir
+
+## Flume的Channel Selectors
+
+* Replicating Channel Selector（default）和Multiplexing Channel Selectors（通过映射选择将不同的 header数据传输到不同的channel）
+
+## 参数调优
+
+* Source端增加BatchSize批次大小
+* channel增大event容量并且增大事务容量，根据业务选择memory方式。
+* Sink使用负载均衡的方式，增大batchSize个数，一次处理多条消息。
+
+## Flume事务机制
+
+* Flume使用两个独立的事务分别负责从Source到Channel(put事务)，以及从channel到SInk的事务(task事务)。
+
+## FLume数据丢失问题
+
+* Source到Channel不会丢失数据，Channel到Sink也不会丢失数据，但是如果channel是memory类型的会丢失数据，并且agent宕机导致数据丢失或者channel存储数据已满导致SOurce不可写入，未写入的数据丢失。
+* `Flume会导致数据重复，因为FLume保证的语义为at least once`，比如因为网络原因导致source发送数据到channel一直没有响应，但是数据已经写出了，此时source重发就会导致数据重复。
+
