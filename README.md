@@ -55,7 +55,8 @@
 
 ### Kafka
 
-* [kafka权威指南分析](bigdata/kafka/kafka权威指南)
+* * [kafka概览](bigdata/kafka/KafkaOverView.xmind)
+* [kafka权威指南读书笔记](bigdata/kafka/kafka权威指南)
 
 
 ## 数据仓库
