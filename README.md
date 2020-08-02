@@ -52,6 +52,7 @@
 ### Flume
 
 * [Flume快速入门](bigdata/flume/FlumeOverwrite.md)
+* [Flume对接Kafka](bigdata/flume/Flume对接Kafka.md)
 
 ### Kafka
 
