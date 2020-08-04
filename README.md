@@ -64,6 +64,11 @@
 * [kafkaShell](bigdata/kafka/KafkaShell.xmind)
 * [kafka权威指南读书笔记](bigdata/kafka/kafka权威指南)
 
+### HBase
+
+* [HBase概览](bigdata/hbase/HBaseOverview.md)
+* [HBaseShell](bigdata/hbase/HBase%20Shell.xmind)
+* [HBaseJavaAPI](bigdata/hbase/HBase%20Java%20API.xmind)
 
 ## 数据仓库
 
