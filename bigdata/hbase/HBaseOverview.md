@@ -260,3 +260,23 @@ hbase-daemon.sh start regionserver
   * 一个抖动比例上一个参数设置是7天进行一次合并，也可以有50的抖动比例
 * `hbase.hstore.compactionThreshold`
   * 一个store里面运行存的hfile的个数，超过这个个数会被写到一个新的hfile里面，也即时每个region的每个列族对应的memstore在flush为hfile的时候，默认情况下当达到3个hfile的时候就会对这些文件进行合并重写为一个新文件，设置个数越大可以减少触发合并的时间，每次合并的时间就会越长。
+
+## 真正的数据删除时间
+
+### Major Compaction
+
+* 大合并会将Delete标识删除
+
+### flush将memstore数据刷写成HFile
+
+* 不会删除Delete标识的数据，但是会删除过期数据。
+
+## Region Split
+
+* 默认情况下，每个Table起初只有一个Region，随着数据的不断写入，Region会自定进行拆分。刚拆分时，两个子Region都位于当前的Region Server，但处于负载均衡的考虑，HMaster有可能会将某个Region转移给其他的Region Server。
+* **Region Split时机:**
+  * 当1个region中的某个Store下所有StoreFile的总大小超过`hbase.hregion.max.filesize`，默认10G,该Region就会进行拆分(0.94版本之前)
+  * 当1个region中的某个Store下所有StoreFile的总大小超过`Min(R^2*"hbase.hregion.memstore.flush.size(默认128MB)",hbase.hregion.max.filesie"(默认10G))`，该Region就会进行拆分，其中R为当前Region Server中属于该Table的个数(0.94版本之后)
+
+![Region Split](./img/Region Split.jpg)
+
