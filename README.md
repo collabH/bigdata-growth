@@ -69,6 +69,7 @@
 * [HBase概览](bigdata/hbase/HBaseOverview.md)
 * [HBaseShell](bigdata/hbase/HBase%20Shell.xmind)
 * [HBaseJavaAPI](bigdata/hbase/HBase%20Java%20API.xmind)
+* [HBase整合MapReduce](bigdata/hbase/HBase整合第三方组件.md)
 
 ## 数据仓库
 
