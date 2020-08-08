@@ -280,3 +280,199 @@ hbase-daemon.sh start regionserver
 
 ![Region Split](./img/Region Split.jpg)
 
+# HBase优化
+
+## 高可用
+
+* HBase是主从架构，基于HMaster和HRegionServer，因此需要保证HMaster的高可用，在HBase集群中启动多个HMaster即可形成HMaster的高可用，第一个启动的为active Master，其余都为BackUpMaster。
+* 配置backup-masters
+
+```shell
+hadoop1
+hadoop2
+```
+
+## 预分区
+
+* 每个region维护着StartRow与EndRow，如果加入的数据符合某个Region维护的RowKey范围，则该数据交给这个Region维护。
+* 每台机器上放2-3个Region
+
+### 手动设置预分区
+
+```shell
+create 'stu1','info','partitional',SPLITS =>['1000','2000','3000','4000']
+```
+
+### 生成16进制序列预分区
+
+```shell
+create 'stu2','info','partitional2',SPLITS =>[NUMREGIONS=>15,SPLITALGO=>'HexStringSplit']
+```
+
+### 文件分区
+
+```shell
+create 'stu3','info','partitional',SPLITS_FILE=>'splits.txt'
+```
+
+### Java API
+
+```java
+    public static void createTableName(String tableName) throws IOException {
+        ColumnFamilyDescriptor student = ColumnFamilyDescriptorBuilder.newBuilder(ColumnFamilyDescriptorBuilder.of("student"))
+                .setMaxVersions(1000)
+                .build();
+        TableDescriptor test = TableDescriptorBuilder.newBuilder(TableName.valueOf(tableName))
+                .setColumnFamily(student)
+                .setSplitEnabled(true)
+                .build();
+        byte[][] splits = new byte[5][5];
+        connection.getAdmin().createTable(test);
+    }
+```
+
+
+
+## RowKey设计
+
+* 一条数据的唯一标识就是RowKey，这条数据存储在那个分区，取决于RowKey处于那个分区的区间内，设计Rowkey主要为了让数据均匀分布在每个region中。
+
+### 设计原则
+
+* 散列性、唯一性、长度原则(70-100)
+
+### 设计方式
+
+* 生成随机数、hash、散列值
+
+```shellshe l
+原本rowKey为1001的，SHA1后变为xxxxxxxxxxxx1
+原本rowKey为3001的，SHA1后变为xxxxxxxxxxxx2
+
+根据数据集中的样本来选择rowKey的Hash后作为每个分区的临界值。
+```
+
+* 字符串反转
+
+```shell
+202008081201为102180800202
+202008081202为202180800202
+```
+
+* 字符串拼接
+
+```shell
+2020080800001_Xxxs
+2020080800001_Xxxe
+```
+
+### 分区设计
+
+### 分区键设计
+
+```shell
+# 300个分区
+000|
+001|
+...
+298|
+
+|的ASC码大于_
+# RowKey
+000_
+001_
+...
+298_
+
+# 对手机号mod 299 然后拼接对应的rowKey
+```
+
+## 内存优化
+
+* HBase操作过程需要大量的内存开销，Table是会换成在内存中的，一般会分配整个可用内存的70%给HBase的Java堆。但是不建议分配非常大的对内存，因为GC过程会持续太久导致RegionServer处于长期不可用状态，一般16～48G即可。
+
+## 基础优化
+
+### 运行在HDFS的文件中追加内容
+
+* 修改hdfs-site.xml、hbase-site.xml
+
+```shell
+# 开启HDFS追加同步，可以优秀的配合HBase的数据同步和持久化。默认值为true
+dfs.support.append
+```
+
+### 优化DataNode允许的最大文件打开数
+
+```shell
+# HBase一般都会同一时间操作大量的文件，根据集群的数量和规模以及数据动作，设置为4096或者更高，默认值为4096.
+dfs.datanode.max.transfer.threads
+```
+
+### 优化延迟高的数据操作的等待时间
+
+* hdfs-site.xml
+
+```shell
+# 如果对于某一次数据操作来讲，延迟非常高，socket需要等待更长时间。建议设大timeout不会让socket被timeout，但是会阻塞其他操作，默认60000毫秒。
+dfs.image.transfer.timeout
+```
+
+### 优化数据的写入效率
+
+* mapped-site.xml
+
+```shell
+# 开启这两个数据可以大大提高文件的写入效率，减少写入时间。文件压缩
+mapreduce.map.output.compress
+mapreduce.map.output.compress.codec
+```
+
+### 设置RPC监听数量
+
+* hbase-site.xml
+
+```shell
+# 默认值为30，用于指定RPC监听的数量，可以根据客户端的请求数进行调整，读写请求比较多时增加
+hbase.regionserver.handler.count
+```
+
+### 优化HStore文件大小
+
+* hbase-site.xml
+
+```shell
+# 默认值10GB，如果需要允许Hbase的MR任务，需要减少此值，因为一个region对应一个map任务，如果的那个region过大，会导致map任务执行时间过长。如果HFile的大小达到这个数值，则这个region会被切分成俩个Hfile
+hbase.hregion.max.filesize
+```
+
+### 优化Hbase客户端缓存
+
+* hbase-site.xml
+
+```shell
+# 用于指定hbase客户端缓存，增大该值可以减少RPC调用次数，但会消耗更多内存。
+hbase.client.write.buffer
+```
+
+### 指定scan.next扫描hbase所获取的行数
+
+* hbase-site.xml
+
+```shell
+# 用于指定scan.next方法获取的默认行数，值越大，消耗内存越大
+hbase.client.scanner.caching
+```
+
+### flush、compact、spilit机制
+
+* 当MemStore达到阈值，将Memstore中的数据Flush进Storefile；compact机制则是把flush出来的小文件合并成一个大的Storefile文件。split则是当region达到阈值会将Region一分为二。
+
+```shell
+# 128M就是Memstore的默认阈值，当单个HRegion内所有的MemStore大小总和超过指定值时，flush该HRegion的所有memstore。RegionServer的flush时通过将请求添加一个队列，模拟生产消费模型来异步处理。如果队列来不及消费，产生大量积压请求时，会导致OOM。
+hbase.hregion.memstore.flush.size: 134217728
+# 当Memstore使用总理达到upperLimit指定值时，将会有多个MemStore flush(RegionServer Flush)到文件中，Memstore flush顺序按照大小降序执行的，直到刷新到Memstore使用内存小于lowerLimit。
+hbase.regionserver.global.memstore.upperLimit:0.4
+hbase.regionserver.global.memstore.lowerLimit:0.38
+```
+
