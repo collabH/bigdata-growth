@@ -25,6 +25,10 @@
 #### Yarn
 * [Yarn快速入门](bigdata/hadoop/Yarn/YARN快速入门.md)
 
+#### 高可用配置
+
+* [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
+
 ### Hive
 
 * [HiveOverwrite](bigdata/hive/HiveOverwrite.md)
