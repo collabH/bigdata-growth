@@ -3,7 +3,7 @@
 ## 定义
 
 * Hbase是一个在HDFS上开发的面向列的分布式、可扩展支持海量数据存储的NoSQL数据库，如果需要实时访问超大规模数据集可以使用。
-* 自底向上地进行构建，能够简单地通过增加节点来达到线性扩展。概念
+* 自底向上地进行构建，能够简单地通过增加节点来达到线性扩展。
 
 ## 数据模型
 
@@ -45,7 +45,7 @@
 
 #### Cell
 
-* 由{rowdy,column Family:column Qualifier,time Stamp}唯一确定的单元。cell中的数据时没有类型的，全部是字节码形式存储。
+* 由{rowdy,column Family:column Qualifier,timeStamp}唯一确定的单元。cell中的数据时没有类型的，全部是字节码形式存储。
 
 ## Hbase的基本架构
 
@@ -232,7 +232,7 @@ hbase-daemon.sh start regionserver
 ### MemStore刷写时机
 
 * 当某个memstore的大小达到`hbase.hregion.memstore.flush.size(默认值128M)`,其所在region的所有memstore都会刷写。当memstore的大小达到`hbase.hregion.memstore.block.multiplier(默认4)`时会阻止继续往memstore写数据。
-* 当region server中memstore的总大小达到java_heapsize、`hbase.regionserver.global.memstore.size(默认0.4,regionServer的0.4)`、`hbase.regionserver.global.memstore.size.lower.limit(默认值0.95，regionServer的0.4*0.95)`，region会按照其所有memstore的大小顺序(由大到小)依次进行刷写。知道region server中所有memstore的总大小减少到上述值以下。
+* 当region server中memstore的总大小达到java_heapsize、`hbase.regionserver.global.memstore.size(默认0.4,regionServer的0.4)`、`hbase.regionserver.global.memstore.size.lower.limit(默认值0.95，regionServer的0.4*0.95)`，region会按照其所有memstore的大小顺序(由大到小)依次进行刷写。直到region server中所有memstore的总大小减少到上述值以下。
 * `hbase.regionserver.optionalcacheflushinterval`memstore内存中的文件在自动刷新之前能够存活的最长时间，默认是1h(最后一次的编辑时间)
 * `老版本:`当WAL文件的数量超过`hbase.regionserver.max.logs`,region会按照时间顺序依次进行刷写，直到WAL文件数量减小到`hbase.regionser.max.log`以下。先已经废弃，默认32。
 
@@ -243,13 +243,13 @@ hbase-daemon.sh start regionserver
 * Client先访问zk，获取hbase:meta表位于哪个Region Server
 * 访问对应的Region Server，获取hbase:meta表，根据读请求的namespace:table/rowkey,查询出目标数据位于哪个Region Server中的哪个Region中，并将该table的region信息以及meta表的位置信息缓存在客户端的meta cache中。
 * 与目标region Server通信
-* 分别在Block Cache(读缓存)，memstore和store file(HFile)中查询目标数据，并肩查到的数据进行合并。此处所有数据都指向同一条数据的不同版本(timestamp)或者不同的类型(put/Delete)
+* `分别在Block Cache(读缓存)，memstore和store file(HFile)中查询目标数据，并将查到的数据进行合并。`此处所有数据都指向同一条数据的不同版本(timestamp)或者不同的类型(put/Delete)
 * 将从文中查询的数据块(Block，HFile数据存储单元，默认大小64KB)缓存到Block Cache。
 * 将合并后的结果返回客户端。
 
 ## StoreFile Compaction
 
-* 由于memstore每次刷写都会产生一个新的Hfile，且同一个字段的不同版本和不同类型有可能会分布在不同的Hfile中，因此查询时需要遍历所有的HFile。为了减少HFile的个数，以及清理掉过期和删除的数据，会进行StoreFile Compaction
+* 由于memstore每次刷写都会产生一个新的Hfile，`且同一个字段的不同版本和不同类型有可能会分布在不同的Hfile中，因此查询时需要遍历所有的HFile`。为了减少HFile的个数，以及清理掉过期和删除的数据，会进行StoreFile Compaction
 * Compaction为两种，分别是`Minor Compaction`和`Major Compaction`。Minor Compaction会将临近的若干个较小的HFile合并成一个较大的HFile，但`不会清理过期和删除的数据`。Major Compaction会将一个Store下的所有HFile合并成一个大HFile，并且`会清理掉过期和删除的数据`。
 
 ![StoreFile Compaction](./img/StoreFile Compaction.jpg)
@@ -259,7 +259,7 @@ hbase-daemon.sh start regionserver
 * `hbase.hregion.majorcompaction.jitter`
   * 一个抖动比例上一个参数设置是7天进行一次合并，也可以有50的抖动比例
 * `hbase.hstore.compactionThreshold`
-  * 一个store里面运行存的hfile的个数，超过这个个数会被写到一个新的hfile里面，也即时每个region的每个列族对应的memstore在flush为hfile的时候，默认情况下当达到3个hfile的时候就会对这些文件进行合并重写为一个新文件，设置个数越大可以减少触发合并的时间，每次合并的时间就会越长。
+  * 一个store里面运行存的hfile的个数，超过这个个数会被写到一个新的hfile里面，也即是每个region的每个列族对应的memstore在flush为hfile的时候，默认情况下当达到3个hfile的时候就会对这些文件进行合并重写为一个新文件，设置个数越大可以减少触发合并的时间，每次合并的时间就会越长。
 
 ## 真正的数据删除时间
 

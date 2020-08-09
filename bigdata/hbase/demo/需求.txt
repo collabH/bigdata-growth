@@ -1,0 +1,28 @@
+# 微博案例
+1. 微博内容的浏览
+2. 用户设计体现:关注，取关
+3. 拉取关注的人的微博内容
+
+
+# 表设计
+
+## 微博内容表
+
+rowKey       info
+        content   ...
+uid+ts1
+uid+ts2
+
+# 微博关系表
+
+rowKey attends  fans
+
+uid  uid|uid, uid|uid
+
+
+# 微博收件箱表
+
+rowKey      info
+         uid1
+uid
+       uid1 ts(5)
