@@ -332,3 +332,57 @@ worker3
 
 # Spark机制原理
 
+## Spark应用执行机制分析
+
+* Spakr允许方式分为Cluster模式和Client模式
+
+### 基础组件
+
+#### Spark基础概念
+
+* SparkContext:Spark应用程序的入口，负责调度各个运算资源，协调各个Worker Node上Executor
+* Driver Program:运行Application的main()函数并创建SparkContext。
+* RDD:Spark的核心数据结构，可以通过一系列算子进行操作，当RDD遇到Action算子时，将之前的所有算子形成一个有向无环图(DAG)。然后在Spark中转换为Job，提交到集群执行。
+* Worker Node:集群中任何可以运行Application代码的节点，运行一个或多个Executor进程。
+* Executor:为Application运行在Worker Node的一个进程，该进程负责运行Task，并且负责将数据存在内存或磁盘上。每个Application都会申请各自的Executor来处理任务。
+
+#### Spark Application执行组件
+
+* Task: RDD中的一个分区对应一个Task，Task是单个分区的最小处理流程但愿。
+* TaskSet:一组关联的，但相互之间没有Shuffle依赖关系的Task集合。
+* Stage:一个TaskSet对应的调度阶段，每个Job会根据RDD的宽依赖关系被切分成很多Stage，每个Stage都包含一个TaskSet。
+* Job:由Action算子触发生成的由一个或多个Stage组成的计算作业。
+* Application:用户编写的Spark的应用程序，由一个或多个Job组成。提交到Spark之后，Spark为Application分配资源，将程序转换并执行。
+* DAGScheduler:根据Job构建基于Stage的DAG，并提交Stage给TaskScheduler。
+* TaskScheduler:将Taskset提交给Worker Node集群运行并返回结果。
+
+### Client模式
+
+* Driver进程运行在Client端，对应用进行管理监控
+* 用户启动Client端，在Client端启动Driver进程。在Driver中启动或实例化DAGScheduler等组件
+  * Driver向Master注册
+  * Worker向Master注册，Master通过指令让那个Worker启动Executor。
+  * Worker通过创建ExecutorRunner线程，进而ExecutorRunner现场启动ExecutBackend进程。
+  * ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进行就可以发现计算资源。
+  * Driver的DAGScheduler解析应用中的RDD DAG并生成Stage，每个Stage包含的Taskset通过TaskScheduler分配给Executor。在Executor内部启动线程池并行化启动Task。
+
+### Cluster模式
+
+* Master节点指定某个Worker节点启动Driver进程，负责监控整个应用的执行。
+
+1. Master调度应用，指定一个Worker节点启动Driver，即Schduler-Backend
+2. Worker接收到Master命令后创建DriverRunner线程，在DriverRunner线程内创建SchedulerBackend进程。Driver充当整个作业主控进程。
+3. Master指定其他Worker节点启动Executor。
+4. Worker通过创建ExecutorRunner线程，进而ExecutorRunner现场启动ExecutBackend进程。
+5. ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进行就可以发现计算资源。
+6. Driver的DAGScheduler解析应用中的RDD DAG并生成Stage，每个Stage包含的Taskset通过TaskScheduler分配给Executor。在Executor内部启动线程池并行化启动Task。
+
+### Job的调度
+
+* Job的提交都是在Action算子中隐式完成，最终会调用DAGScheduler中的Job提交接口。
+
+![Spark Job调度流程](./源码分析/img/Spark Job调度流程.jpg)
+
+* 详细调度流程
+
+![Spark Job调度详细流程](./源码分析/img/Spark Job调度详细流程.jpg)
