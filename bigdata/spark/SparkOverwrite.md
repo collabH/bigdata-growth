@@ -386,3 +386,68 @@ worker3
 * 详细调度流程
 
 ![Spark Job调度详细流程](./源码分析/img/Spark Job调度详细流程.jpg)
+
+### stage和TaskSetManager调度
+
+* 当Job提交后，DAGScheduler会从RDD依赖链的末端触发，遍历整个RDD依赖链，根据SHuffleDependency划分Stage。
+
+#### stage调度
+
+* 执行Action算子的RDD所在的Stage称为Final Stage，提交Stage，DAGScheduler会先判断该Stage的父Stage的执行结果是否可用，如果所有父Stage的执行结果可用，则提交该Stage。如果存在任意一个父Stage的结果不可用，则尝试迭代提交该父Stage。`不可用的Stage将会加入到waiting队列,等待执行`。
+
+![Stage执行顺序](./源码分析/img/Stage执行顺序.jpg)
+
+#### TaskSetManager
+
+* DAGScheduler会将Stage转换成Taskset，最后提交给TaskScheduler，在taskScheduler内部创建`taskSetManager`来管理TaskSet的生命周期。可以说每个`stage`对应一个`taskManager`。taskScheduler在得到集群计算资源时，taskSetManager会分配task到具体worker节点执行。
+
+## Spark存储与IO
+
+### 存储概览
+
+![Spark存储系统概览](./源码分析/img/Spark存储系统概览.png)
+
+* 通信层:用于Master与Slave之间传递控制指令、状态等信息，通信层在架构也采用Master-Slave架构
+* 存储层:用于保存数据块到内存、磁盘、或远端复制数据块。
+
+#### 存储功能模块
+
+* BlockManager:Spark提供操作Storage的统一接口类。
+* BlockManagerMasterActor:Master创建，Slave利用该模块向Master传递信息。
+* BlockManagerSlaveActor:Slave创建，Master利用该模块向Slave节点传递控制命令，控制Slave节点对block的读写。
+* BlockManagerMaster:管理Actor通信。
+* DiskStore:支持以文件方式读写的方式操作block
+* MemoryStore:支持内存中的block读写。
+* BlockManagerWorker:对远端异步传输进行管理。
+* ConnectionManager:支持本地节点与远端节点数据block的传输。
+
+### BlockManager通信
+
+* BlockManager之间的通信由`Actor`来实现。
+* Master节点上的BlockManagerMaster包含内容
+  * BlockManagerManagerActor的Actor引用
+  * BlockManagerSlaveActor的Ref引用
+* Slave节点上的BlockManagerMaster包含内容
+  * BlockManagerMasterActor的Ref引用
+  * BlockManagerSlaveActor的Actor引用
+
+## 容错机制及依赖
+
+### 分布式系统数据集容错方案
+
+* 数据检查点(Checkpoint机制)
+* 记录数据的更新(Lineage血统机制)
+
+### Spark容错性保证
+
+* Spark为了降低容错操作成本，使用记录数据更新并且为了防止记录粒度过细，`RDD只支持粗粒度转换，即只记录单个块上执行的单个操作。`
+
+#### Lineage机制
+
+* RDD除了包含分区信息外，还包含父辈RDD变换过来的步骤，以及如何重建某一块数据的信息，RDD这种容错机制称为血统机制。
+* RDD的Lineage记录是粗粒度的特定数据Transformation操作。当RDD的部分数据丢失，可以通过Lineage获取足够的信息重新计算和恢复丢失的数据分区。
+
+### Shuffle机制
+
+
+
