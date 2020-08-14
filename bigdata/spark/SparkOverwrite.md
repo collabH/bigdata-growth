@@ -1,4 +1,4 @@
-# 架构和环境
+#          架构和环境
 ## 概述
 
 * Spark基于内存计算，整合了内存计算的单元，并且启用了分布式数据集，能够提供交互式查询和优化迭代工作负载。
@@ -447,7 +447,38 @@ worker3
 * RDD除了包含分区信息外，还包含父辈RDD变换过来的步骤，以及如何重建某一块数据的信息，RDD这种容错机制称为血统机制。
 * RDD的Lineage记录是粗粒度的特定数据Transformation操作。当RDD的部分数据丢失，可以通过Lineage获取足够的信息重新计算和恢复丢失的数据分区。
 
-### Shuffle机制
+## Shuffle机制
 
+* Spark Shuffle机制是将一组无规则的数据转换为一组有一定规则的过程。Shuffle产生的经过排序的或者有规则的数据分片会溢写到磁盘，每个分片对应一个文件或所有分片放到一个数据文件中，在通过索引文件来记录每个分片在数据文件中的offset（类比Kafka存储的数据）。
 
+### 基于key的Hash方式
 
+![Spark Shuffle](./源码分析/img/Spark Shuffle.jpg)
+
+* 每个MapTask会根据ReduceTask的数量创建出相应的bucket，bucket的数量是M x R，其中M是Map的个数，R是Reduce的个数。
+* MapTask产生的结果会根据`partition算法`填充到每个bucket中,ReduceTask启动时会根据task的id和所依赖的Mapper的id从远端或本地的block manager中取得响应的bucket作为Reducer的输入进行处理。
+
+#### Spark Shuffle过程
+
+* 将数据分成bucket，并将其写入磁盘的过程称为Shuffle Write
+* 在存储Shuffle数据的节点Fetch数据，并执行用户定义的聚集操作，这个过程为Shuffle Fetch。
+
+#### 存在的问题
+
+* 容易形成过多的文件，假设MapperTask有1K，ReduceTask有1K那么最终就会生成1M个bucket文件。
+
+### Shuffle consolidation
+
+### 基本原理
+
+![Spark Shuffle](./源码分析/img/shuffle consolidation.jpg)
+
+* 在Shuffle consolidation中，每个bucket并非对应一个文件，而对应文件中的一个segement。同时Shuffle consolidation产生的Shuffle文件数量与Spark core的个数有关系。
+* 假设job有4个Mapper和4个Reduce，有2个core能并行运行两个task，那么spark shuffle write需要16个bucket，也就是16个write handler。job中有4个Mapper分为两批运行，在第一批2个Mapper运行时会生成时会申请8个bucket，产生8个SHuffle文件。
+* 理论上Shuffle consolidation产生的Shuffle文件数量为C X R，C时spark的core number数，R时Reduce的个数。如果core数和Mapper个数相同就和基于Hash的方式没太大区别了。
+
+### Shuffle Fetch
+
+![Spark Shuffle](./源码分析/img/Shuffle Fetch.jpg)
+
+* Shuffle fetch过来的数据会进行归并排序，根据相同key下不同的value会发送到同一个reducer使用，Aggregator本质是HashMap，它以map output的key为key，以仁义所要的combine的类型为value的hashmap。shuffle fetch到的每一个key-value对更新或插入hashmap中，这样就不需要预先把所有的key-value进行merge sort，而是来一个处理一个省去外部排序的阶段。
