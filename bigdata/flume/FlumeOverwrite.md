@@ -1006,6 +1006,7 @@ http://locahost/ganglia
 ### Channel
 
 * 采集到的数据进行缓存，可以存放到Memory或File中。
+* 使用`file channel`可以设置多个dataDirs目录，checkpoint和backcheckpoint可以放在不同的磁盘上。
 
 ### SInk
 

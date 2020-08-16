@@ -88,7 +88,7 @@
 
 * [数据建模](datawarehouse/DataModeler.md)
 * [数据仓库建模](datawarehouse/数据仓库建模.xmind)
-* [数据仓库](datawarehouse/数据仓库.md)
+* [数据仓库](datawarehouse/数据仓库实战.md)
 
 ## devops
 
@@ -106,3 +106,7 @@
 
 ## 服务监控
 * [Prometheus](servicemonitor/Prometheus/Prometheus实战.md)
+
+## mac
+
+* [iterm2](mac/iterm2)
