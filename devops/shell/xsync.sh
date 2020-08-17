@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
 
-cluster01=10.16.18.131
-cluster02=10.16.18.133
-cluster03=10.16.18.134
-cluster04=10.16.18.135
-
 targetPath=$2
 
 # 多服务器配置同步脚本
@@ -30,7 +25,7 @@ user=`whoami`
 
 #5 循环
 
-scp ${pdir}/${fileName} ${user}@${cluster01}:${targetPath}
-scp ${pdir}/${fileName} ${user}@${cluster02}:${targetPath}
-scp ${pdir}/${fileName} ${user}@${cluster03}:${targetPath}
-scp ${pdir}/${fileName} ${user}@${cluster04}:${targetPath}
+for server in flink-cluster-01 flink-cluster-02 flink-cluster-03 flink-cluster-04 flink-cluster-05; do
+    echo '----------'${server}'---------'
+    scp ${pdir}/${fileName} ${user}@${server}:${targetPath}
+done

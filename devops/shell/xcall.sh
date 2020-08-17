@@ -4,7 +4,7 @@
 shell=$1
 
 
-ssh flink-cluster-02 ${shell}
-ssh flink-cluster-03 ${shell}
-ssh flink-cluster-04 ${shell}
-ssh flink-cluster-05 ${shell}
+for server in flink-cluster-01 flink-cluster-02 flink-cluster-03 flink-cluster-04 flink-cluster-05; do
+    echo '----------'${server}'---------'
+    ssh ${server} ${shell}
+done
