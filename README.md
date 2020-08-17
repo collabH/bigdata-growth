@@ -81,8 +81,12 @@
 
 ### DolphinScheduler
 
-* [DolphinScheduler快速开始](bigdata/DolphinScheduler/DolphinScheduler快速开始.md)
+* [DolphinScheduler快速开始](bigdata/dolphinScheduler/DolphinScheduler快速开始.md)
 
+
+### Flink
+
+* [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
 
 ## 数据仓库
 
@@ -100,11 +104,6 @@
 
 * [maven骨架制作](devops/maven/制作maven骨架.md)
 * [maven命令](devops/maven/Maven命令.md)
-
-## 实时计算
-
-* [Flink踩坑指南](realtimecomputation/Flink踩坑.xmind)
-
 
 ## 服务监控
 * [Prometheus](servicemonitor/Prometheus/Prometheus实战.md)
