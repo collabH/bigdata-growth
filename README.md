@@ -103,6 +103,8 @@
 
 ## 实时计算
 
+* [Flink踩坑指南](realtimecomputation/Flink踩坑.xmind)
+
 
 ## 服务监控
 * [Prometheus](servicemonitor/Prometheus/Prometheus实战.md)
