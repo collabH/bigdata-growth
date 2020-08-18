@@ -238,22 +238,3 @@ hdfs dfs -put tez-0.9.2/ /tez
 
 
 * Hive在加载数据的过程中不会对数据做任何处理，甚至不会对数据进行扫描，因此也没有对数据的某些key建立索引。Hive要访问数据中满足条件的特定值时，需要暴力扫描整个目录的数据。但是Hive可以基于Spark、MR做并行访问数据，因此可以支持大量数据访问。Hive支持BitMap和Compact索引。 
-# 加载数据的方式 
-
-## 加载本地数据 
-
-
-* load data local inpath 'pat' into table tablename; 
-* hdfs dfs -put tes.txt path; 
-```plain
-hdfs dfs -put text.txt /user/hive/warehouse/test/a.txt;  
-```
-
-* hdfs dfs -copyFromLocal text.txt path; 
-```shell
-hdfs dfs -copyFromLocal text.txt /user/hive/warehouse/test/b.txt; 
-```
-## 远程加载数据 
-
-
-* load data inpath 'path' into table tablename; 
