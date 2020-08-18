@@ -40,6 +40,7 @@
 
 * [Spark基础入门](bigdata/spark/Spark基础入门.xmind)
 * [SparkCore](bigdata/spark/Spark%20Core.xmind)
+* [SparkOnYarn](bigdata/spark/SparkOnYarn.md)
 * [SparkOperator](bigdata/spark/Spark%20Operator.xmind)
 * [SparkConnector](bigdata/spark/Spark%20Connector.xmind)
 * [SparkSQLAPI](bigdata/spark/Spark%20SQL%20API.xmind)
