@@ -180,7 +180,7 @@ export HIVE_AUX_JARS_PATH=/Users/babywang/Documents/reserch/studySummary/module/
 </property>
 ```
 
-## 配置tez
+## 配置Hive On tez
 
 ### tez-site.xml
 
@@ -215,6 +215,9 @@ hdfs dfs -mkdir /tez
 # 上传tez
 hdfs dfs -put tez-0.9.2/ /tez
 ```
+
+## 配置Hive On Spark
+
 
 # Hive的运行机制 
 
