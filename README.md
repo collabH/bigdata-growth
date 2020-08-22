@@ -83,6 +83,7 @@
 ### Sqoop
 
 * [SqoopOverview](bigdata/sqoop/SqoopOverview.md)
+* [Sqoop实战操作](bigdata/sqoop/Sqoop实战操作.md)
 
 ### DolphinScheduler
 
