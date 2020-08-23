@@ -87,7 +87,7 @@
 
 ### DolphinScheduler
 
-* [DolphinScheduler快速开始](bigdata/dolphinScheduler/DolphinScheduler快速开始.md)
+* [DolphinScheduler快速开始](bigdata/scheduler/DolphinScheduler快速开始.md)
 
 
 ### Flink

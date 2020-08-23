@@ -163,3 +163,59 @@ case $1 in
 esac
 ```
 
+# HDFS to MYSQL
+
+## 命令格式
+
+```shell
+sqoop export  --connect <jdbc-uri> \
+--username <username> \
+--password <password> \
+-m,--num-mappers <n> \
+--table <table-name> \
+--update-mode <mode> \
+--export-dir \
+--input-fields-terminated-by\
+--input-null-string '\\N' \
+--input-null-non-string '\\N'
+```
+
+* --update-mode：\
+  * updateonly  只更新，无法插入新数据
+  * allowinsert  允许新增 
+* --update-key：允许更新的情况下，指定哪些字段匹配视为同一条数据，进行更新而不增加。多个字段用逗号分隔。
+*  --input-null-string和--input-null-non-string：分别表示，将字符串列和非字符串列的空串和“null”转换成'\\N'。
+
+```
+Hive中的Null在底层是以“\N”来存储，而MySQL中的Null在底层就是Null，为了保证数据两端的一致性。在导出数据时采用--input-null-string和--input-null-non-string两个参数。导入数据时采用--null-string和--null-non-string。
+```
+
+[Sqoop export文档](https://sqoop.apache.org/docs/1.4.7/SqoopUserGuide.html#_literal_sqoop_export_literal)
+
+```
+#!/bin/bash
+
+db_name=gmall
+
+export_data() {
+/opt/module/sqoop/bin/sqoop export \
+--connect "jdbc:mysql://hadoop102:3306/${db_name}?useUnicode=true&characterEncoding=utf-8"  \
+--username root \
+--password 000000 \
+--table $1 \
+--num-mappers 1 \
+--export-dir /user/hive/warehouse/bussines_ads.db/$1 \
+--input-fields-terminated-by "\t" \
+--update-mode allowinsert \
+--update-key "tm_id,category1_id,stat_mn,stat_date" \
+--input-null-string '\\N'    \
+--input-null-non-string '\\N'
+}
+
+case $1 in
+  "ads_uv_count")
+     export_data "ads_uv_count"
+;;
+esac
+```
+
