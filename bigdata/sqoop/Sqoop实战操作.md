@@ -192,7 +192,7 @@ Hive中的Null在底层是以“\N”来存储，而MySQL中的Null在底层就�
 
 [Sqoop export文档](https://sqoop.apache.org/docs/1.4.7/SqoopUserGuide.html#_literal_sqoop_export_literal)
 
-```
+```shell
 #!/bin/bash
 
 db_name=gmall
@@ -219,19 +219,28 @@ case $1 in
 esac
 ```
 
-## 踩坑
+# Sqoop踩坑
 
-### java.security.AccessControlException: access denied ("javax.management.MBeanTrustPermission" "register")
+## Sqoop导入导出Null存储一致性问题
+
+* Hive中的Null在底层是以`“\N”来存储`，而`MySQL中的Null在底层就是Null，为了保证数据两端的一致性。`在导出数据时采用`--input-null-string和--input-null-non-string两个参数。导入数据时采用--null-string和--null-non-string。`
+
+## Sqoop数据导出一致性问题
+
+* 如Sqoop在导出到Mysql时，使用4个Map任务，过程中有2个任务失败，那此时MySQL中存储了另外两个Map任务导入的数据，如果此时重跑会有数据不一致问题
+  * 使用--staging-table先导出到一个临时表，全部成功后才会放入最终的表
+  * 使用--clear-staging-table会先情况staging的临时表，再写入临时表。
+
+## java.security.AccessControlException: access denied ("javax.management.MBeanTrustPermission" "register")
 
 ```text
  ERROR Could not register mbeans java.security.AccessControlException: access denied ("javax.management.MBeanTrustPermission" "register")
 ```
 
 * 修改$JAVA_HOME/jre/lib/security/java.policy
-```text
+```json
 # 添加
 grant {
 	permission javax.management.MBeanTrustPermission "register";
 }
 ```
-
