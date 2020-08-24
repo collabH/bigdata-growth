@@ -219,3 +219,19 @@ case $1 in
 esac
 ```
 
+## 踩坑
+
+### java.security.AccessControlException: access denied ("javax.management.MBeanTrustPermission" "register")
+
+```text
+ ERROR Could not register mbeans java.security.AccessControlException: access denied ("javax.management.MBeanTrustPermission" "register")
+```
+
+* 修改$JAVA_HOME/jre/lib/security/java.policy
+```text
+# 添加
+grant {
+	permission javax.management.MBeanTrustPermission "register";
+}
+```
+

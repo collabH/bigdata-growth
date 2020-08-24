@@ -2,14 +2,6 @@
 
 targetPath=$2
 
-# 多服务器配置同步脚本
-#1 获取输入参数个数，如果没有参数，直接退出
-#paramCount=$#
-#if (($paramCount == 0)); then
-#    echo no args;
-#    exit
-#fi
-
 #2 获取文件名称
 p1=$1
 fileName=`basename ${p1}`
