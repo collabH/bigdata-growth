@@ -26,3 +26,4 @@ hs_err_pid*
 .idea
 repository.iml
 
+!/devops/shell/sqoop-test.sh
