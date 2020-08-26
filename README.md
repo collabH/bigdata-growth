@@ -6,6 +6,20 @@
 
 ![roadMap](./roadmap/roadmap.jpg)
 
+## 基础能力
+
+### Scala
+
+* [ScalaOverView](./base/scala/ScalaOverView.md)
+
+
+### Java
+
+#### JVM
+#### JDK源码
+#### todo
+
+
 ## BigData
 ### Hadoop
 #### HDFS
