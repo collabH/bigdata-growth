@@ -212,3 +212,23 @@ var list2 : MyList[Any] = null
 list2 = list1 // OK 
 ```
 
+## 函数值和闭包
+
+### curry化
+
+* curry化可以把函数从接收多个函数转换成接收多个参数列表。
+
+```scala
+object CurryFunction extends App {
+
+  def sum(a: Int, b: Int) = a + b
+
+  println(sum(2, 3))
+
+  //curry函数 spark sql dataflow中使用，将原来接受俩个参数的函数转换为2
+  def sum2(a: Int)(b: Int) = a + b
+
+  println(sum2(2)(3))
+}
+```
+
