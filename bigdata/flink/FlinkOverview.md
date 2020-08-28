@@ -79,7 +79,181 @@ hadoop2
 
 * bin/taskmanager.sh start|start-foreground|stop|stop-all
 
+## Yarn模式
 
+### 前置条件
 
+```shell
+# 环境变量中配置HADOOP_CLASSPATH
+export HADOOP_CLASSPATH=/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/etc/hadoop:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/common/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/common/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/yarn/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/yarn/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/mapreduce/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/mapreduce/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/contrib/capacity-scheduler/*.jar:/Users/babywang/Documents/reserch/studySummary/module/hbase/hbase-1.6.0/lib
+```
 
+### Session模式
+
+* 启动Flink Session
+
+```shell
+yarn-session.sh
+Usage:
+   Optional
+     -D <arg>                        Dynamic properties 动态参数
+     -d,--detached                   Start detached # 后台进程
+     -jm,--jobManagerMemory <arg>    Memory for JobManager Container with optional unit (default: MB) 
+     -nm,--name                      Set a custom name for the application on YARN 自定义applicationName
+     -at,--applicationType           Set a custom application type on YARN 自定义Yarn的应用类型
+     -q,--query                      Display available YARN resources (memory, cores) 查看可用YARN的资源
+     -qu,--queue <arg>               Specify YARN queue. 指定YARN队列
+     -s,--slots <arg>                Number of slots per TaskManager 指定TaskManager可用的slot数
+     -tm,--taskManagerMemory <arg>   Memory per TaskManager Container with optional unit (default: MB)
+     -z,--zookeeperNamespace <arg>   Namespace to create the Zookeeper sub-paths for HA mode 高可用zookeeper的ZNODE名称
+     
+# 通过—D动态参数方式覆盖flink-conf.yaml中的默认值
+yarn-session.sh -Dfs.overwrite-files=true -Dtaskmanager.memory.network.min=536346624.
+```
+
+* 提交任务
+
+```
+flin run 
+	-c classname 启动的driver主类
+	-C url 
+	-d 指定运行job的模式为后台模式
+	-n 不能重新执行savepoint的时候允许跳过
+	-p 程序执行并行度
+	-s 指定从某个savepoint路径恢复
+	-t 执行模式， "collection", "remote", "local","kubernetes-session", "yarn-per-job", "yarn-session","yarn-application" and "kubernetes-application"
+```
+
+* yarn.per-job-cluster.include-user-jar 用户jar包
+
+### application模式
+
+```shell
+# 运行WordCount
+flink run-application -t yarn-application -Djobmanager.memory.process.size=2048m -Dtaskmanager.memory.process.size=4096m  ./examples/batch/WordCount.jar
+```
+
+* `yarn.provided.lib.dirs`提前在应用运行前提交的jar包
+
+```shell
+flink run-application -t yarn-application \
+-Dyarn.provided.lib.dirs="hdfs://myhdfs/my-remote-flink-dist-dir" \
+hdfs://myhdfs/jars/my-application.jar
+```
+
+* `yarn.application.priority`:设置提交顺序
+
+## HA配置
+
+### Standalone Cluster模式
+
+* masters配置
+
+```
+hadoop:8081
+hadoop:8082
+```
+
+* flink-conf.yaml配置
+
+```yaml
+# 高可用配置，默认是随机选择的
+high-availability.jobmanager.port: 50000-50025
+# 高可用模式配置
+high-availability: zookeeper
+# zookeeper配置
+high-availability.zookeeper.quorum: hadoop:2181
+# 高可用flink jobmanager存储zk ZNODE配置
+high-availability.zookeeper.path.root: /flink
+# jobManager元数据将保留在文件系统storageDir中，并且只有指向此状态的指针存储在ZooKeeper中。
+high-availability.storageDir: hdfs:///flink1.11.1/ha/
+```
+
+* start-cluster.sh启动集群
+
+### Yarn Cluster高可用
+
+* yarn-site.xml
+
+```xml
+# 配置am的最大重试时间
+<property>
+  <name>yarn.resourcemanager.am.max-attempts</name>
+  <value>4</value>
+  <description>
+    The maximum number of application master execution attempts.
+  </description>
+</property>
+```
+
+* flink-conf.yaml
+
+```yaml
+# application最大重试时间
+yarn.application-attempts: 10
+```
+
+* 启动yarn cluster
+
+```shell
+yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
+```
+
+## 容错与状态
+
+### Checkpoint
+
+* checkpoint默认情况下`仅用于恢复失败的作业，并不保留，当程序取消时checkpoint就会被删除`。可以通过配置来保留checkpoint，保留的checkpoint在作业失败或取消时不会被清除。
+
+```java
+CheckpointConfig config = env.getCheckpointConfig();
+config.enableExternalizedCheckpoints(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+```
+
+* **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
+* **`ExternalizedCheckpointCleanup.DELETE_ON_CANCELLATION`**：当作业取消时，删除作业的 checkpoint。仅当作业失败时，作业的 checkpoint 才会被保留。
+
+#### checkpoint配置
+
+* checkpoint由元数据文件、数据文件组成。通过`statecheckpoints.dir`配置元数据文件和数据文件存储路径，也可以在代码中设置。
+
+```
+/user-defined-checkpoint-dir
+    /{job-id}
+        |
+        + --shared/
+        + --taskowned/
+        + --chk-1/
+        + --chk-2/
+        + --chk-3/
+        ...
+```
+
+* 其中 **SHARED** 目录保存了可能被多个 checkpoint 引用的文件，**TASKOWNED** 保存了不会被 JobManager 删除的文件，**EXCLUSIVE** 则保存那些仅被单个 checkpoint 引用的文件。
+
+* 从保留的checkpoint中恢复状态
+
+```shell
+$ bin/flink run -s :checkpointMetaDataPath [:runArgs]
+```
+
+* 容错配置
+
+```yaml
+state.backend: rocksdb
+state.checkpoints.dir: hdfs://hadoop:8020/flink1.11.1/checkpoints
+state.savepoints.dir: hdfs://hadoop:8020/flink1.11.1/savepoints
+state.backend.incremental: true
+# 故障转移策略，默认为region，按照区域恢复
+jobmanager.execution.failover-strategy: region
+```
+
+### savepoint
+
+* Savepoint 由两部分组成：稳定存储上包含二进制文件的目录（通常很大），和元数据文件（相对较小）。 稳定存储上的文件表示作业执行状态的数据镜像。 Savepoint 的`元数据文件以（绝对路径）的形式包含（主要）指向作为 Savepoint 一部分的稳定存储上的所有文件的指针`。
+
+#### 与checkpoint的区别
+
+* **checkpoint**类似于恢复日志的概念(redolog), Checkpoint 的主要目的是`为意外失败的作业提供恢复机制`。 Checkpoint 的生命周期由 Flink 管理，即 Flink 创建，管理和删除 Checkpoint - 无需用户交互。 作为一种恢复和定期触发的方法，Checkpoint 实现有两个设计目标：`i）轻量级创建和 ii）尽可能快地恢复`。
+* Savepoint 由用户创建，拥有和删除。 他们的用例是计划的，手动备份和恢复,恢复成本相对于checkpoint会更高一些，相对checkpoint更重量一些。
 
