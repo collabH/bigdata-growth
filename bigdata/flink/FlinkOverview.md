@@ -334,13 +334,23 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 
 ### TaskManger和Slots
 
+#### task和slot的关系
+
 * Flink中每一个TaskManager都是一个JVM进程，它坑会在独立的线程上运行一个或多个subtask
 * 为了控制一个taskmanager能接受多个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)
 
 ![A TaskManager with Task Slots and Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_slots.svg)
 
+#### slot共享
+
 * 默认情况下，flink允许字任务共享slot，即使是不同任务的字任务，这样的结果是一个slot可以保存作业的整个管道。
 * 如果是同一步操作的并行subtask需要放到不同的slot，如果是先后发生的不同的subtask可以放在同一个slot中，实现slot的共享。
+* 自定义slot共享组
+
+```java
+# 该算子之后的操作都放到一个共享的slot组里
+.slotSharingGroup("a")
+```
 
 ![TaskManagers with shared Task Slots](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/slot_sharing.svg)
 
@@ -378,3 +388,17 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 * `并行度相同，并且是one-to-one`操作，可以将俩个task合并。
 
 ![执行图](./img/任务链.jpg)
+
+* 禁止合并任务链优化
+
+```java
+# 全局任务链切段
+env.disableOperatorChaining()
+# 切断算子任务链
+datasource.uid("network-source").map(new WordCountMapFunction())
+                .uid("map-id")
+                .keyBy((KeySelector<Tuple2<String, Integer>, Object>) stringIntegerTuple2 -> stringIntegerTuple2.f0)
+                .timeWindow(Time.seconds(30))
+                .reduce(new SumReduceFunction()).disableChaining()
+```
+
