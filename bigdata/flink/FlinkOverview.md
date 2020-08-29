@@ -88,9 +88,12 @@ hadoop2
 export HADOOP_CLASSPATH=/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/etc/hadoop:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/common/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/common/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/yarn/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/yarn/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/mapreduce/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/mapreduce/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/contrib/capacity-scheduler/*.jar:/Users/babywang/Documents/reserch/studySummary/module/hbase/hbase-1.6.0/lib
 ```
 
+* 下载`flink-shaded-hadoop-2-uber-2.8.3-10.0.jar`放在lib下
+
 ### Session模式
 
-* 启动Flink Session
+* Session-Cluster模式需要先启动集群，然后再提交作业，接着会向yarn申请一块空间后，资源永远保持不变。如果资源满了，下个作业就无法提交类似于standalone模式。
+* 所有作业共享Dispatcher和RM，共享资源，适合小规模执行时间短的作业。
 
 ```shell
 yarn-session.sh
@@ -113,7 +116,7 @@ yarn-session.sh -Dfs.overwrite-files=true -Dtaskmanager.memory.network.min=53634
 
 * 提交任务
 
-```
+```shell
 flin run 
 	-c classname 启动的driver主类
 	-C url 
@@ -125,6 +128,15 @@ flin run
 ```
 
 * yarn.per-job-cluster.include-user-jar 用户jar包
+
+### Pre-Job-Cluster模式
+
+* 耦合Job会对应一个集群，每提交一个作业会根据自身的情况，都会单独向yarn申请资源，直到作业执行完成，一个作业的失败与否不会影响下一个作业的正常提交和运行。
+* 独享Dispatcher和RM，按需接受资源申请，适合规模大长时间运行的作业。
+
+```shell
+flink run -t yarn-per-job -c dev.learn.flink.base.StreamingJob -d -yat flink -yjm 1024m -ytm 2048m -ynm test -ys 10 -p 2 -n flink-learn-1.0-SNAPSHOT.jar 
+```
 
 ### application模式
 
@@ -257,3 +269,112 @@ jobmanager.execution.failover-strategy: region
 * **checkpoint**类似于恢复日志的概念(redolog), Checkpoint 的主要目的是`为意外失败的作业提供恢复机制`。 Checkpoint 的生命周期由 Flink 管理，即 Flink 创建，管理和删除 Checkpoint - 无需用户交互。 作为一种恢复和定期触发的方法，Checkpoint 实现有两个设计目标：`i）轻量级创建和 ii）尽可能快地恢复`。
 * Savepoint 由用户创建，拥有和删除。 他们的用例是计划的，手动备份和恢复,恢复成本相对于checkpoint会更高一些，相对checkpoint更重量一些。
 
+#### 分配算子ID
+
+* 通过`uid(String)`方法手动指定算子ID，算子ID用于恢复每个算子的状态。
+
+```java
+datasource.uid("network-source").map(new WordCountMapFunction())
+                .uid("map-id")
+                .keyBy((KeySelector<Tuple2<String, Integer>, Object>) stringIntegerTuple2 -> stringIntegerTuple2.f0)
+                .timeWindow(Time.seconds(30))
+                .reduce(new SumReduceFunction())
+                .uid("reduce-id")
+                .print().setParallelism(1);
+```
+
+#### savepoint操作
+
+* 触发savepoint,`flink savepoint :jobId [:targetDirctory]`
+* 使用YARN触发Savepoint,`flink savepoint :jobId [:targetDirctory] -yid :yarnAppId`
+* 使用savepoint取消作业,`flink cancel -s [:targetDirectory] :jobId`
+* 从savepoint恢复,`flink run -s :savepointPath [:runArgs]`
+  * --allowNoRestoredState 跳过无法映射到新程序的状态
+* 删除savepoint,`flink savepoint -d :savepointPath`
+
+# 原理剖析
+
+## 运行时架构
+
+### 运行时组件
+
+* JobManager,作业管理器
+  * 控制应用程序的主进程，每个应用程序会被一个不同的JobManager所控制执行。
+  * JobManger会先接收到执行的应用程序，这个应用程序包含：作业图(JobGrap)、逻辑数据流图(logic dataflow graph)和打包了所有的累、库和其他资源的jar包。
+  * jobManager会把JobGraph转换成一个物理层面的数据流图，这个图被叫做“执行图”（ExecutionGraph），包含了所有可以并行执行的任务。
+  * JobManager会向RM请求执行任务必要的资源，就是tm所需的slot。一旦获取足够的资源，就会将执行图分发到真正运行它们的tm上。运行过程中，Jm负责所需要中央协调的操作，比如checkpoint、savepoint的元数据存储等。
+* TaskManager，任务管理器
+  * 任务管理器中资源调度的最小单元是任务槽。任务管理器中的任务槽数表示并发处理任务的数量。
+  * flink的工作进程，存在多个每个存在多个slot，slot的个数限制了tm执行任务的数量。
+  * 启动后tm会想rm注册它的slot，收到rm的指令后，tm会将一个或多个slot提供给jm调用。dm可以向slot分配tasks来执行。
+  * 执行的过程中，一个tm可以跟其他运行同一个应用程序的tm交换数据。
+* ResourceManager，资源管理器
+  * ResourceManager负责Flink集群中的资源取消/分配和供应-它管理任务插槽，这些任务插槽是Flink集群中资源调度的单位（请参阅TaskManagers）。 Flink为不同的环境和资源提供者（例如YARN，Mesos，Kubernetes和独立部署）实现了多个ResourceManager。 在独立设置中，ResourceManager只能分配可用TaskManager的插槽，而不能自行启动新的TaskManager。
+* Dispatcher，分发器
+  * 可以跨作业运行，它为应用提交提供了REST接口。
+  * 当一个应用被提交执行时，分发器就会启动并将应用移交给一个JM。
+  * Dispatcher会启动一个Web UI，用来方便的展示和监听作业执行的信息。
+
+### 作业提交流程
+
+* 任务调度
+
+![The processes involved in executing a Flink dataflow](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/processes.svg)
+
+* Yarn提交流程
+
+![Yarn任务提交流程](./img/任务提交流程(yarn).jpg)
+
+### 任务和算子调用链
+
+* 对于分布式执行，Flink将操作符子任务连接到一起，形成多个任务。每个任务由一个线程执行。将操作符链接到任务中是一种有用的优化:它减少了线程到线程的切换和缓冲开销，提高了总体吞吐量，同时减少了延迟。
+* 一个特定算子的子任务(subtask)的个数被称之为其并行度(parallelism)。一般情况下，一个stream的并行度，可以任务就是其所有算子中的最大并行度（`因为slot共享的原因`）。
+
+![Operator chaining into Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_chains.svg)
+
+### TaskManger和Slots
+
+* Flink中每一个TaskManager都是一个JVM进程，它坑会在独立的线程上运行一个或多个subtask
+* 为了控制一个taskmanager能接受多个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)
+
+![A TaskManager with Task Slots and Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_slots.svg)
+
+* 默认情况下，flink允许字任务共享slot，即使是不同任务的字任务，这样的结果是一个slot可以保存作业的整个管道。
+* 如果是同一步操作的并行subtask需要放到不同的slot，如果是先后发生的不同的subtask可以放在同一个slot中，实现slot的共享。
+
+![TaskManagers with shared Task Slots](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/slot_sharing.svg)
+
+### 并行子任务的分配
+
+![并行子任务的分配](./img/并行子任务的分配.jpg)
+
+## Flink执行分析
+
+### 数据流(DataFlow)
+
+* 运行时Flink上运行的程序会被映射成"逻辑数据流"(dataflows)，它包含了三个部分，sources、sink以及transformations。
+
+### 执行图(ExecutionGraph)
+
+* Flink的执行度分为4层:StreamGraph->JobGraph->ExecutionGraph->物理执行图
+* **StreamGraph**:是根据用户通过 Stream API 编写的代码生成的最初的图。用来表示程序的拓扑结构。
+* **JobGraph**：StreamGraph经过优化后生成了 JobGraph，提交给 JobManager 的数据结构。主要的优化为，将多个符合条件的节点 **chain 在一起作为一个节点**，这样可以减少数据在节点之间流动所需要的序列化/反序列化/传输消耗。
+* **ExecutionGraph**：JobManager 根据 JobGraph 生成ExecutionGraph。**ExecutionGraph是JobGraph的并行化版本**，是调度层最核心的数据结构。
+* **物理执行图**：JobManager 根据 ExecutionGraph 对 Job 进行调度后，在各个TaskManager 上部署 Task 后形成的“图”，并不是一个具体的数据结构。
+
+![执行图](./img/执行图.jpg)
+
+### 数据传输形式
+
+* 一个程序中，不同的算子可能具有不同的并行度。
+* 算子之间传输数据的形式可以是`one-to-one(forwarding)的模式`也可以是`redistributing`的模式，具体是哪种形式取决于算子的种类。
+  * one-to-one:stream维护着分区以及元素的顺序(比如source和map之间)。这意味着map算子的子任务看到的元素的个数以顺序跟source算子的subtask产生的元素的个数、顺序相同。map、filter、flatMap等算子都是one-to-one的对应关系，类似于Spark的map、flatmap、filter等同样类似于窄依赖。
+  * redistributing:stream的分区会发生改变。每个算子的subtask根据所选择的trasnsformation发送数据到不同的目标任务。例如keyBy基于hashCode重分区、而broadcast和rebalance会随机重新分区，这些算子都会引起redistributing过程，而redistribute过程就类似于spark中的shuffle过程。
+
+### 任务链(operator chains)
+
+* Flink采用一种称为任务链的优化技术，可以在特定条件下减少本地通信的开销。为了满足任务链的要求，必须将两个或多个算子设为相同的并行度，并通过本地转发(local forward)的方式进行连接。
+* `相同的并行度`的one-to-one操作，flink这样相连的算子链接在一起形成一个task，原来的算子成为里面的subtask。
+* `并行度相同，并且是one-to-one`操作，可以将俩个task合并。
+
+![执行图](./img/任务链.jpg)
