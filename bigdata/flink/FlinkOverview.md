@@ -5,7 +5,6 @@
 * Apache Flink 是一个分布式大数据处理引擎，可对有限数据流和无限数据流进行有状态或无状态的计算，能够部署在各种集群环境，对各种规模大小的数据进行快速计算。
 * 有状态的计算，状态容错性依赖于checkpoint机制做状态持久化存储。
 * 多层API(Table/SQL API、DataStream/DataSet API、ProcessFunction API)
-* 三种事件事件
 * exactly-once语义，状态一致性保证
 * 低延迟，每秒处理数百万个事件，毫秒级别延迟。
 
