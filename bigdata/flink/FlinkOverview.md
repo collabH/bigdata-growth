@@ -217,8 +217,30 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 * checkpoint默认情况下`仅用于恢复失败的作业，并不保留，当程序取消时checkpoint就会被删除`。可以通过配置来保留checkpoint，保留的checkpoint在作业失败或取消时不会被清除。
 
 ```java
-CheckpointConfig config = env.getCheckpointConfig();
-config.enableExternalizedCheckpoints(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+// 每 1000ms 开始一次 checkpoint
+env.enableCheckpointing(1000);
+
+// 高级选项：
+
+// 设置模式为精确一次 (这是默认值)
+env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+
+// 确认 checkpoints 之间的时间会进行 500 ms
+env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
+
+// Checkpoint 必须在一分钟内完成，否则就会被抛弃
+env.getCheckpointConfig().setCheckpointTimeout(60000);
+
+// 同一时间只允许一个 checkpoint 进行
+env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+
+// 开启在 job 中止后仍然保留的 externalized checkpoints
+env.getCheckpointConfig().enableExternalizedCheckpoints(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+
+// 允许在有更近 savepoint 时回退到 checkpoint
+env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
 ```
 
 * **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
@@ -252,16 +274,28 @@ $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
 
 ```yaml
 state.backend: rocksdb
+# 异步checkpoint
+state.backend.async: true
 state.checkpoints.dir: hdfs://hadoop:8020/flink1.11.1/checkpoints
 state.savepoints.dir: hdfs://hadoop:8020/flink1.11.1/savepoints
 state.backend.incremental: true
 # 故障转移策略，默认为region，按照区域恢复
 jobmanager.execution.failover-strategy: region
+# checkpoint文件最小值
+state.backend.fs.memory-threshold: 20kb
+# 写到文件系统的检查点流的写缓冲区的默认大小。实际的写缓冲区大小被确定为这个选项和选项'state.backend.fs.memory-threshold'的最大值。
+state.backend.fs.write-buffer-size: 4096
+# 本地恢复当前仅涵盖键控状态后端。 当前，MemoryStateBackend不支持本地恢复，请忽略此选项。
+state.backend.local-recovery: true
+# 要保留的已完成检查点的最大数量。
+state.checkpoints.num-retained: 1
+# 定义根目录的配置参数，用于存储用于本地恢复的基于文件的状态。本地恢复目前只覆盖键控状态后端。目前，MemoryStateBackend不支持本地恢复并忽略此选项
+taskmanager.state.local.root-dirs: hdfs://hadoop:8020/flink1.11.1/tm/checkpoints
 ```
 
 ### savepoint
 
-* Savepoint 由两部分组成：稳定存储上包含二进制文件的目录（通常很大），和元数据文件（相对较小）。 稳定存储上的文件表示作业执行状态的数据镜像。 Savepoint 的`元数据文件以（绝对路径）的形式包含（主要）指向作为 Savepoint 一部分的稳定存储上的所有文件的指针`。
+* Savepoint 由俩部分组成：稳定存储上包含二进制文件的目录（通常很大），和元数据文件（相对较小）。 稳定存储上的文件表示作业执行状态的数据镜像。 Savepoint 的`元数据文件以（绝对路径）的形式包含（主要）指向作为 Savepoint 一部分的稳定存储上的所有文件的指针`。
 
 #### 与checkpoint的区别
 

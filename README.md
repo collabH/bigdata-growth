@@ -27,7 +27,7 @@
 * [Hadoop快速入门](bigdata/hadoop/Hadoop快速开始.xmind)
 * [HDFSOverView](bigdata/hadoop/HDFS/HDFSOverView.xmind)
 * [Hadoop广义生态系统](bigdata/hadoop/Hadoop广义生态系统.xmind)
-* [Hadoop文件系统](bigdata/hadoop/HDFS/Hadoop文件系统.xmind)
+* [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
 * [HadoopCommon分析](bigdata/hadoop/HDFS/Common包解析.md)
 * [HDFS集群相关管理](bigdata/hadoop/HDFS/HDFS集群管理.md)
 
@@ -107,6 +107,8 @@
 ### Flink
 
 * [FlinkOverView](bigdata/flink/FlinkOverview.md)
+* [DataStream API](bigdata/flink/FlinkDataStream%20API.xmind)
+* [ProcessFunction API](bigdata/flink/ProcessFunction%20API.xmind)
 * [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
 
 
