@@ -214,7 +214,53 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 
 ### Checkpoint
 
+#### 一致性检查点
+
+![一致性检查点](./img/一致性检查点.jpg)
+
+* Flink故障恢复机制的核心，就是应用状态的一致性检查点
+* 有状态流应用的一只检查点，其实就是所有任务的状态，在某个时间点的一份拷贝；这个时间点，`应该是所有任务恰好处理完一个相同的输入数据的时候,如果各个算子单独处理对应的offset，`就会存在source端和算子端checkpoint的offset存在异常，导致数据无法恢复。
+
+#### 从检查点恢复
+
+* 重启应用程序，从上次保存的checkpoint恢复，当所有checkpoint恢复到各个算子中，然后开始消费并处理checkpoint到发生故障之间的所有数据，这种checkpoint的保存和恢复机制可以为程序提供"exactly-once"的一致性，所有算子都会保存checkpoint并恢复其所有状态，这样就保证了状态的最终一致性。
+
+#### 检查点算法
+
+* 一种简单的想法
+
+  * 暂停应用，保存状态到检查点，再重新恢复应用。
+
+* Flink实现方式
+
+  * 基于Chandy-Lamport算法的分布式快照
+  * 将检查点的保存和数据处理分离开，不暂停整个应用，对Source进行checkpoint barrier控制
+
+* 检查点屏障(Checkpoint Barrier)
+
+  * Flink的检查点算法用到一种称为屏障(barrier)的特殊数据形式，用来把一条流上数据按照不同的检查点分开。
+  * Barrier之前到来的数据导致的状态更改，都会被包含在当前分界线所属的检查点中；基于barrier之后的数据导致的所有更改，就会被包含在之后的检查点中。
+
+* **检查点屏障流程**
+
+  * 有两个输入流的应用程序，并行的两个Source任务来读取，JobManager会向每个Source任务发送一个带有新checkpoint ID的消息，通过这种方式来启动checkpoint。
+  * 数据源将它们的状态写入checkpoint，并发出一个checkpointbarrier，状态后端在状态存入checkpoint之后，会返回通知给source任务，source任务就会向JobManager确认checkpoint完成。
+  * **barrier对齐**：barrier向下游传递，sum任务会等待所有输入分区的barrier达到，对于barrier已经到达的分区，继续到达的数据会被缓存，而barrier尚未到达的分区，数据会被正常处理。
+  * 当收到所有输入分区的barrier时，任务就将其状态保存到状态后端的checkpoint中，然后将barrier继续向下游转发，下游继续正常处理数据。
+  * Sink任务向JobManager确认状态保存到checkpoint完毕，当所有任务都确认已成功将状态保存到checkpoint时，checkpoint完毕。
+
+  ![checkpoint1](./img/checkpoint1.jpg)
+
+  ![checkpoint1](./img/checkpoint2.jpg)
+
+  ![checkpoint1](./img/checkpoint3.jpg)
+
+#### checkpoint配置
+
 * checkpoint默认情况下`仅用于恢复失败的作业，并不保留，当程序取消时checkpoint就会被删除`。可以通过配置来保留checkpoint，保留的checkpoint在作业失败或取消时不会被清除。
+
+* **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
+* **`ExternalizedCheckpointCleanup.DELETE_ON_CANCELLATION`**：当作业取消时，删除作业的 checkpoint。仅当作业失败时，作业的 checkpoint 才会被保留。
 
 ```java
 StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
@@ -243,10 +289,13 @@ env.getCheckpointConfig().enableExternalizedCheckpoints(ExternalizedCheckpointCl
 env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
 ```
 
-* **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
-* **`ExternalizedCheckpointCleanup.DELETE_ON_CANCELLATION`**：当作业取消时，删除作业的 checkpoint。仅当作业失败时，作业的 checkpoint 才会被保留。
+* **设置重启策略**
+  * noRestart
+  * fallBackRestart:回滚
+  * fixedDelayRestart: 固定延迟时间重启策略，在固定时间间隔内重启
+  * failureRateRestart: 失败率重启
 
-#### checkpoint配置
+##### checkpoint存储目录
 
 * checkpoint由元数据文件、数据文件组成。通过`statecheckpoints.dir`配置元数据文件和数据文件存储路径，也可以在代码中设置。
 
@@ -270,7 +319,7 @@ env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
 $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
 ```
 
-* 容错配置
+##### flink-conf容错配置
 
 ```yaml
 state.backend: rocksdb
@@ -457,4 +506,79 @@ datasource.uid("network-source").map(new WordCountMapFunction())
                 .timeWindow(Time.seconds(30))
                 .reduce(new SumReduceFunction()).disableChaining()
 ```
+
+## 状态一致性剖析
+
+### 什么事状态一致性
+
+* 有状态的流处理，内部每个算子任务都可以有自己的状态，对于流处理器内部来说，所谓的状态一致性，就是计算结果要保证准确。
+* 一条数据不应该丢失也不应该重复计算，再遇到故障时可以恢复状态，恢复以后可以重新计算，结果应该也是完全正确的。
+
+### 一致性分类
+
+* AT-MOST-ONCE 最多一次
+  * 当任务故障时，最简单的做法是什么都不敢，即不恢复丢失的状态，也不重播丢失的数据。
+* AT-LEAST-ONCE 至少一次
+* EXACTLY-ONCE 精准一次
+
+### 一致性检查点(Checkpoints)
+
+* Flkink使用轻量级快照机制-检查点(checkpoint)来保证exactly-once语义
+* 有状态流应用的一致检查点，其实就是所有任务的状态，在某个时间点的一份拷贝，这个时间点，应该是所有任务都恰好处理完一个相同的输入数据的时候，应用状态的一致检查点事flink故障恢复机制的核心。
+
+### 端到端状态一致性
+
+* 前提条件Source端可以重置偏移量
+* 目前flink保证了状态的一致性，但是外部的数据源和输出到持久化系统也需要保证一致性
+* 端到端的一致性保证，意味着结果的正确性贯穿了整个流处理应用的始终，每个组件都需要保证自己的一致性
+* 整个端到端一致性级别取决于所有组件中一致性最弱的组件
+
+### source端
+
+* 可重设数据的读取位置
+
+### 内部保证
+
+* checkpoint
+
+### sink端
+
+* 从故障恢复时，数据不会重复写入外部系统
+* 幂等写入
+* 事务写入
+  * Write-Ahead-Log WAL
+    * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性携入sink系统
+    * 简单已于实现，由于数据提前在状态后端中做了缓存，所以无论什么sink系统，都能一批搞定
+    * DataStream API提供一个模版类:GenericWriteAheadSink来实现。
+    * 存在的问题，延迟性大，如果存在批量写入失败时需要考虑回滚重放。
+  * 2PAC（Two-Phase-Commit）
+    * 对于每个checkpoint，sink任务会启动一个事务，并将接下来所有接受的数据添加到事务里。
+    * 然后将这些数据写入外部sink系统，但不提交它们--这时只是"预提交"
+    * 当它收到checkpoint完成的通知时，它才正式提交事务，实现结果真正写入（参考checkpoint barrier sink端写入完成后的ack checkpoint通知）
+    * Flink提供TwoPhaseCommitSinkFunction接口,参考`FlinkKafkaProducer`
+    * 对外部sink系统的要求
+      * 外部sink系统提供事务支持，或者sink任务必须能够模拟外部系统上的事务
+      * 在checkpoint的间隔期间，必须能够开启一个事务并接收数据写入
+      * 在收到checkpoint完成的通知之前，事务必须时“等待提交”的状态。在故障恢复情况下，可能需要一些时间。如果这个时候sink系统关闭了食物，那么未提交的数据就丢失了。
+      * sink任务必须能在进程失败后恢复事务，提交事务时幂等操作。
+
+### Flink+Kafka端到端一致性保证
+
+* 内部--利用checkpoint机制，把状态存盘，故障时可以恢复，保证内部状态一致性
+* Source端---提供source端offset可以重置，checkpoint存储kafka consumer offset
+* sink端---基于Flink提供的2PC机制，保证Exactly-Once
+
+### Exactly-once两阶段提交
+
+* JobManager协调各个TaskManager进行checkpoint存储
+* checkpoint保存在StateBackend中，默认StateBackend时内存级，可以修改为文件级别的持久化保存。
+
+#### 预提交阶段
+
+* 当checkpoint启动时，jobmanager会将checkpoint barrier注入数据流，进过barrier对齐然后barrier会在算子间传递到下游。
+* 每个算子会对当前的状态做个快照，保存到状态后端，barrier最终sink后会给JobManger一个ack checkpoint完成。
+* 每个内部的transform任务遇到barrier时，都会把状态存到checkpoint里，sink任务首先把数据写入到外部kafka，这些数据都属于预提交的事务；遇到barrier时，把状态保存到状态后端，并开启新的预提交事务。
+* 当所有算子任务的快照完成，也就是checkpoint完成时，jobmanager会向所有任务发送通知，确认这次checkpoint完成，sink任务收到确认通知，正式提交事务，kafka中未确认数据改为"已确认"
+
+![kafka](./img/kafka俩阶段提交.jpg)
 
