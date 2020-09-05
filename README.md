@@ -109,6 +109,10 @@
 * [FlinkOverView](bigdata/flink/FlinkOverview.md)
 * [DataStream API](bigdata/flink/FlinkDataStream%20API.xmind)
 * [ProcessFunction API](bigdata/flink/ProcessFunction%20API.xmind)
+* [Data Source](bigdata/flink/Data%20Source.xmind)
+* [Table API](bigdata/flink/TABLE%20API.xmind)
+* [Flink SQL](bigdata/flink/FlinkSQL.xmind)
+* [TableSQLOverview](bigdata/flink/TableSQLOverview.md)
 * [DataSource API](bigdata/flink/Data%20Source.xmind)
 * [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
 
