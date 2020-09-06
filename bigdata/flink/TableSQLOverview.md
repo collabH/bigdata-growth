@@ -86,3 +86,207 @@ table.executeInsert()
 - **Upsert 流:** upsert 流包含两种类型的 message： *upsert messages* 和*delete messages*。转换为 upsert 流的动态表需要(可能是组合的)唯一键。通过将 `INSERT` 和 `UPDATE` 操作编码为 upsert message，将 `DELETE` 操作编码为 delete message ，将具有唯一键的动态表转换为流。消费流的算子需要知道唯一键的属性，以便正确地应用 message。与 retract 流的主要区别在于 `UPDATE` 操作是用单个 message 编码的，因此效率更高。下图显示了将动态表转换为 upsert 流的过程。
 
 ![Dynamic tables](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/redo-mode.png)
+
+# Catalogs
+
+* Catalog 提供了元数据信息，例如数据库、表、分区、视图以及数据库或其他外部系统中存储的函数和信息。、
+
+## Catalog类型
+
+### GenericInMemoryCatalog
+
+* `GenericInMemoryCatalog` 是基于内存实现的 Catalog，所有元数据只在 session 的生命周期内可用。
+
+### JdbcCatalog
+
+* `JdbcCatalog` 使得用户可以将 Flink 通过 JDBC 协议连接到关系数据库。`PostgresCatalog` 是当前实现的唯一一种 JDBC Catalog。
+
+### HiveCatalog
+
+* `HiveCatalog` 有两个用途：作为原生 Flink 元数据的持久化存储，以及作为读写现有 Hive 元数据的接口。
+
+### 用户自定义 Catalog
+
+* Catalog 是可扩展的，用户可以通过实现 `Catalog` 接口来开发自定义 Catalog。 想要在 SQL CLI 中使用自定义 Catalog，用户除了需要实现自定义的 Catalog 之外，还需要为这个 Catalog 实现对应的 `CatalogFactory` 接口。
+* `CatalogFactory` 定义了一组属性，用于 SQL CLI 启动时配置 Catalog。 这组属性集将传递给发现服务，在该服务中，服务会尝试将属性关联到 `CatalogFactory` 并初始化相应的 Catalog 实例。
+
+## 创建Flink表注册到Catalog中
+
+### 使用SQL DDL
+
+```java
+// Create a HiveCatalog 
+Catalog catalog = new HiveCatalog("myhive", null, "<path_of_hive_conf>");
+
+// Register the catalog
+tableEnv.registerCatalog("myhive", catalog);
+
+// Create a catalog database
+tableEnv.executeSql("CREATE DATABASE mydb WITH (...)");
+
+// Create a catalog table
+tableEnv.executeSql("CREATE TABLE mytable (name STRING, age INT) WITH (...)");
+
+tableEnv.listTables(); 
+```
+
+### 使用Java
+
+```java
+// Create a catalog database
+catalog.createDatabase("mydb", new CatalogDatabaseImpl(...));
+
+// Create a catalog table
+TableSchema schema = TableSchema.builder()
+    .field("name", DataTypes.STRING())
+    .field("age", DataTypes.INT())
+    .build();
+
+catalog.createTable(
+        new ObjectPath("mydb", "mytable"),
+        new CatalogTableImpl(
+            schema,
+            new Kafka()
+                .version("0.11")
+                ....
+                .startFromEarlist()
+                .toProperties(),
+            "my comment"
+        ),
+        false
+    );
+
+List<String> tables = catalog.listTables("mydb");
+```
+
+## Catalog API
+
+### 数据库操作
+
+```java
+/ create database
+catalog.createDatabase("mydb", new CatalogDatabaseImpl(...), false);
+
+// drop database
+catalog.dropDatabase("mydb", false);
+
+// alter database
+catalog.alterDatabase("mydb", new CatalogDatabaseImpl(...), false);
+
+// get databse
+catalog.getDatabase("mydb");
+
+// check if a database exist
+catalog.databaseExists("mydb");
+
+// list databases in a catalog
+catalog.listDatabases("mycatalog");
+```
+
+### 表操作
+
+```java
+// create table
+catalog.createTable(new ObjectPath("mydb", "mytable"), new CatalogTableImpl(...), false);
+
+// drop table
+catalog.dropTable(new ObjectPath("mydb", "mytable"), false);
+
+// alter table
+catalog.alterTable(new ObjectPath("mydb", "mytable"), new CatalogTableImpl(...), false);
+
+// rename table
+catalog.renameTable(new ObjectPath("mydb", "mytable"), "my_new_table");
+
+// get table
+catalog.getTable("mytable");
+
+// check if a table exist or not
+catalog.tableExists("mytable");
+
+// list tables in a database
+catalog.listTables("mydb");
+```
+
+### 视图操作
+
+```java
+// create view
+catalog.createTable(new ObjectPath("mydb", "myview"), new CatalogViewImpl(...), false);
+
+// drop view
+catalog.dropTable(new ObjectPath("mydb", "myview"), false);
+
+// alter view
+catalog.alterTable(new ObjectPath("mydb", "mytable"), new CatalogViewImpl(...), false);
+
+// rename view
+catalog.renameTable(new ObjectPath("mydb", "myview"), "my_new_view", false);
+
+// get view
+catalog.getTable("myview");
+
+// check if a view exist or not
+catalog.tableExists("mytable");
+
+// list views in a database
+catalog.listViews("mydb");
+```
+
+### 分区操作
+
+```java
+// create view
+catalog.createPartition(
+    new ObjectPath("mydb", "mytable"),
+    new CatalogPartitionSpec(...),
+    new CatalogPartitionImpl(...),
+    false);
+
+// drop partition
+catalog.dropPartition(new ObjectPath("mydb", "mytable"), new CatalogPartitionSpec(...), false);
+
+// alter partition
+catalog.alterPartition(
+    new ObjectPath("mydb", "mytable"),
+    new CatalogPartitionSpec(...),
+    new CatalogPartitionImpl(...),
+    false);
+
+// get partition
+catalog.getPartition(new ObjectPath("mydb", "mytable"), new CatalogPartitionSpec(...));
+
+// check if a partition exist or not
+catalog.partitionExists(new ObjectPath("mydb", "mytable"), new CatalogPartitionSpec(...));
+
+// list partitions of a table
+catalog.listPartitions(new ObjectPath("mydb", "mytable"));
+
+// list partitions of a table under a give partition spec
+catalog.listPartitions(new ObjectPath("mydb", "mytable"), new CatalogPartitionSpec(...));
+
+// list partitions of a table by expression filter
+catalog.listPartitions(new ObjectPath("mydb", "mytable"), Arrays.asList(epr1, ...));
+```
+
+### 函数操作
+
+```java
+// create function
+catalog.createFunction(new ObjectPath("mydb", "myfunc"), new CatalogFunctionImpl(...), false);
+
+// drop function
+catalog.dropFunction(new ObjectPath("mydb", "myfunc"), false);
+
+// alter function
+catalog.alterFunction(new ObjectPath("mydb", "myfunc"), new CatalogFunctionImpl(...), false);
+
+// get function
+catalog.getFunction("myfunc");
+
+// check if a function exist or not
+catalog.functionExists("myfunc");
+
+// list functions in a database
+catalog.listFunctions("mydb");
+```

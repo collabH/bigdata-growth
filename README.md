@@ -112,6 +112,7 @@
 * [Data Source](bigdata/flink/Data%20Source.xmind)
 * [Table API](bigdata/flink/TABLE%20API.xmind)
 * [Flink SQL](bigdata/flink/FlinkSQL.xmind)
+* [Flink Hive](bigdata/flink/Flink%20Hive.xmind)
 * [Flink Function](bigdata/flink/Flink%20Function.xmind)
 * [TableSQLOverview](bigdata/flink/TableSQLOverview.md)
 * [DataSource API](bigdata/flink/Data%20Source.xmind)
