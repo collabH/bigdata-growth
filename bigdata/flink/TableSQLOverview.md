@@ -290,3 +290,61 @@ catalog.functionExists("myfunc");
 // list functions in a database
 catalog.listFunctions("mydb");
 ```
+
+# 流式聚合
+
+* 存在的问题
+
+```
+默认情况下，无界聚合算子是逐条处理输入的记录，即：（1）从状态中读取累加器，（2）累加/撤回记录至累加器，（3）将累加器写回状态，（4）下一条记录将再次从（1）开始处理。这种处理模式可能会增加 StateBackend 开销（尤其是对于 RocksDB StateBackend ）。此外，生产中非常常见的数据倾斜会使这个问题恶化，并且容易导致 job 发生反压。
+```
+
+## MiniBatch 聚合
+
+* `将一组输入的数据缓存在聚合算子内部的缓冲区中`，当输入的数据被触发处理时，每个key只需一个操作即可访问状态，这样可以大大减少状态开销并获得更好的吞吐量。
+* 但是，这可能会增加一些延迟，因为它会缓冲一些记录而不是立即处理它们。这是吞吐量和延迟之间的权衡。
+
+![img](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/minibatch_agg.png)
+
+### 参数配置开启
+
+```java
+// access flink configuration
+Configuration configuration = tEnv.getConfig().getConfiguration();
+// set low-level key-value options
+configuration.setString("table.exec.mini-batch.enabled", "true"); // enable mini-batch optimization
+configuration.setString("table.exec.mini-batch.allow-latency", "5 s"); // use 5 seconds to buffer input records
+configuration.setString("table.exec.mini-batch.size", "5000"); // the maximum number of records can be buffered by each aggregate operator task
+```
+
+## Local-Global 聚合
+
+* Local-global聚合是为解决数据倾斜问题，通过将一组聚合氛围两个阶段，首先在上游进行本地聚合，然后在下游进行全局聚合，类似于MR中的Combine+Reduce模式。
+* 每次本地聚合累积的输入数据量基于 mini-batch 间隔。
+
+![img](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/local_agg.png)
+
+### 开启配置
+
+```java
+// access flink configuration
+Configuration configuration = tEnv.getConfig().getConfiguration();
+// set low-level key-value options
+configuration.setString("table.exec.mini-batch.enabled", "true"); // local-global aggregation depends on mini-batch is enabled
+configuration.setString("table.exec.mini-batch.allow-latency", "5 s");
+configuration.setString("table.exec.mini-batch.size", "5000");
+configuration.setString("table.optimizer.agg-phase-strategy", "TWO_PHASE"); // enable two-phase, i.e. local-global aggregation
+```
+
+## 在 distinct 聚合上使用 FILTER 修饰符
+
+```sql
+SELECT
+ day,
+ COUNT(DISTINCT user_id) AS total_uv,
+ COUNT(DISTINCT user_id) FILTER (WHERE flag IN ('android', 'iphone')) AS app_uv,
+ COUNT(DISTINCT user_id) FILTER (WHERE flag IN ('wap', 'other')) AS web_uv
+FROM T
+GROUP BY day
+```
+
