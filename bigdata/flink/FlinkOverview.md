@@ -393,6 +393,44 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 
 * Flink 的 state backends 利用写时复制（copy-on-write）机制允许当异步生成旧版本的状态快照时，能够不受影响地继续流处理。只有当快照被持久保存后，这些旧版本的状态才会被当做垃圾回收。
 
+### 大状态与Checkpoint优化
+
+* checkpoint时间过长导致反压问题
+
+```
+# checkpoint开始的延迟时间
+checkpoint_start_delay = end_to_end_duration - synchronous_duration - asynchronous_duration
+```
+
+* 在对齐期间缓冲的数据量，对于exactly-once语义，Flink将接收多个输入流的操作符中的流进行对齐，并缓冲一些数据以实现对齐。理想情况下，缓冲的数据量较低——较高的缓冲量意味着不同的输入流在非常不同的时间接收检查点屏障。
+
+#### 优化Chckpoint
+
+* checkpoint触发的正常间隔可以在程序配置，当一个检查点完成的时间长于检查点间隔时，下一个检查点在进程中的检查点完成之前不会被触发。默认情况下，下一个checkpoint点将在当前checkpoint完成后立即触发。
+* 当检查点花费的时间经常超过基本间隔时(例如，由于状态增长超过了计划，或者检查点存储的存储空间暂时变慢)，系统就会不断地接受检查点(一旦进行，一旦完成，就会立即启动新的检查点)。这可能意味着太多的资源被持续地占用在检查点上，而算子的进展太少。此行为对使用异步检查点状态的流应用程序影响较小，但仍可能对总体应用程序性能产生影响。
+
+```
+# 为了防止这种情况，应用程序可以定义检查点之间的最小持续时间，这个持续时间是最近的检查点结束到下一个检查点开始之间必须经过的最小时间间隔。
+StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(milliseconds)
+```
+
+![Illustration how the minimum-time-between-checkpoints parameter affects checkpointing behavior.](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/checkpoint_tuning.svg)
+
+#### 优化RocksDB
+
+##### 增量checkpoint
+
+* 开启rocksDB增量checkpoint可以减少checkpoint的时间。
+
+##### 定时器存储在RocksDB或JVM堆
+
+* 默认情况下timers存储在rocksDB中，这是更健壮和可扩展的选择。当性能调优只有少量计时器(没有窗口，在ProcessFunction中不使用计时器)的任务时，将这些计时器放在堆中可以提高性能。要小心使用此特性，因为基于堆的计时器可能会增加检查点时间，而且自然不能扩展到内存之外。
+
+##### 优化RocksDB内存
+
+* 默认情况下RocksDB状态后端使用Flink管理的RocksDBs缓冲区和缓存的内存预算`state.backend.rocksdb.memory.managed: true`
+* 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率
+
 # 原理剖析
 
 ## 运行时架构
