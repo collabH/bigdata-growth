@@ -431,6 +431,23 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 * 默认情况下RocksDB状态后端使用Flink管理的RocksDBs缓冲区和缓存的内存预算`state.backend.rocksdb.memory.managed: true`
 * 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率
 
+## 内存配置
+
+### 配置flink进程内存
+
+#### 配置总内存
+
+* Flink JVM 进程的*进程总内存（Total Process Memory）*包含了由 Flink 应用使用的内存（*Flink 总内存*）以及由运行 Flink 的 JVM 使用的内存。 *Flink 总内存（Total Flink Memory）*包括 *JVM 堆内存（Heap Memory）*和*堆外内存（Off-Heap Memory）*。 其中堆外内存包括*直接内存（Direct Memory）*和*本地内存（Native Memory）*。
+
+![Flink's process memory model](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/process_mem_model.svg)
+
+| **配置项**   | **TaskManager 配置参数**          | **JobManager 配置参数**          |
+| :----------- | :-------------------------------- | :------------------------------- |
+| Flink 总内存 | `taskmanager.memory.flink.size`   | `jobmanager.memory.flink.size`   |
+| 进程总内存   | `taskmanager.memory.process.size` | `jobmanager.memory.process.size` |
+
+* jobmanager.memory.enable-jvm-direct-memory-limit 设置为 `true` 时，JobManager 才会设置 *JVM 直接内存限制*。
+
 # 原理剖析
 
 ## 运行时架构
