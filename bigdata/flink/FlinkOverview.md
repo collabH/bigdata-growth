@@ -441,12 +441,18 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 ![Flink's process memory model](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/process_mem_model.svg)
 
+![Simple memory model](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/simple_mem_model.svg)
+
 | **配置项**   | **TaskManager 配置参数**          | **JobManager 配置参数**          |
 | :----------- | :-------------------------------- | :------------------------------- |
 | Flink 总内存 | `taskmanager.memory.flink.size`   | `jobmanager.memory.flink.size`   |
 | 进程总内存   | `taskmanager.memory.process.size` | `jobmanager.memory.process.size` |
 
 * jobmanager.memory.enable-jvm-direct-memory-limit 设置为 `true` 时，JobManager 才会设置 *JVM 直接内存限制*。
+
+### 配置TaskManager内存
+
+
 
 # 原理剖析
 
