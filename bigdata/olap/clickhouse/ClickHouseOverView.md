@@ -587,3 +587,9 @@ SELECT * FROM hdfs_data
 
 * user.xml中配置，标示单纯Query占用内存最大值，超过本值Query失败，建议在资源足够的情况下调大。
 
+## 删除多个节点的表
+
+```sql
+drop table t on cluster clusterName
+```
+
