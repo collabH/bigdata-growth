@@ -94,6 +94,7 @@
 * [HBaseJavaAPI](bigdata/hbase/HBase%20Java%20API.xmind)
 * [HBase整合MapReduce](bigdata/hbase/HBase整合第三方组件.md)
 
+
 ### Sqoop
 
 * [SqoopOverview](bigdata/sqoop/SqoopOverview.md)
@@ -125,11 +126,17 @@
 
 * [presto概述](bigdata/olap/presto/PrestoOverview.md)
 
+#### clickhouse
+
+* [ClickHouse快速入门](bigdata/olap/clickhouse/ClickHouseOverView.md)
+
 #### Druid
 
 * [Druid概述](bigdata/olap/druid/DruidOverView.md)
 
-### Kylin
+#### Kylin
+
+* [Kylin概述](bigdata/olap/kylin/KylinOverWrite.md)
 
 ## 数据仓库
 
