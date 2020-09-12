@@ -560,3 +560,30 @@ CREATE TABLE t_null(x Int8, y Nullable(Int8)) ENGINE TinyLog
 若您创建的表中有一列与虚拟列的名字相同，那么虚拟列将不能再被访问。我们不建议您这样做。为了避免这种列名的冲突，虚拟列的名字一般都以下划线开头。
 ```
 
+# HDFS
+
+## ClickHouse加载hdfs csv文件
+
+```sql
+-- 从HDFS加载数据
+CREATE TABLE hdfs_data(
+    id Int32,
+    name String
+)ENGINE=HDFS('hdfs://hadoop:8020/clickhouse/test.csv','CSV');
+
+drop table hdfs_data;
+
+--  测试读取
+SELECT * FROM hdfs_data
+```
+
+# 优化
+
+## max_table_size_to_drop
+
+* 此参数在/etc/clickhouse-server/config.xml中，本参数应用于需求删除表或分区的情况，默认50GB，意思是如果要删除的分区或者表，数据量达到了参数值大小，会删除失败。建议改成0，0代表无论数据多大，都可以删除。
+
+## max_memory_usage
+
+* user.xml中配置，标示单纯Query占用内存最大值，超过本值Query失败，建议在资源足够的情况下调大。
+
