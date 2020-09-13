@@ -232,3 +232,332 @@ object CurryFunction extends App {
 }
 ```
 
+### 参数的位置标记法
+
+* 如果某个参数在函数中仅使用一次可以使用`_`表示。
+
+### Execute Around Method模式
+
+```scala
+class Resource private() {
+  println("Starting transaction...")
+
+  private def cleanUp() { println("Ending transaction...")}
+
+  def op1 = println("Operation 1")
+  def op2 = println("Operation 2")
+  def op3 = println("Operation 3")
+}
+
+object Resource {
+  def use(codeBlock: Resource => Unit) {
+    val resource = new Resource
+
+    try {
+      codeBlock(resource)
+    }
+    finally {
+      resource.cleanUp()
+    }
+  }
+
+  def main(args: Array[String]): Unit = {
+    use(data=>print(data))
+  }
+}
+```
+
+### 偏函数
+
+* 调用函数可以说成是将函数应用于实参。如果传入所有的预期的参数，就完全应用了这个函数。如果只传入几个参数，就会得到一个偏应用函数。这给了你一个便利，可以绑定几个实参，其他的留在后面填写。
+
+```scala
+class PartialFunction {
+
+  def log(date: Date, message: String) = {
+    println(date, message)
+  }
+}
+
+object App {
+  def main(args: Array[String]): Unit = {
+    val function = new PartialFunction
+    // 偏函数
+    val partialFunction: String => Unit = function.log(new Date(), _: String)
+    partialFunction("大")
+    partialFunction("小")
+  }
+}
+```
+
+## Trait和类型转换
+
+### 选择性实现
+
+```scala
+val cat = new Cat("cat") with Friend
+cat listen
+```
+
+### 隐式类型转换
+
+* 将类型通过其他类转换成其他类型的方式就是隐式子转换
+
+```scala
+class ImplicitDemo(number: Int) {
+  def days(when: String): Date = {
+    var date = Calendar.getInstance()
+    when match {
+      case ImplicitDemo.ago => date.add(Calendar.DAY_OF_MONTH, -number)
+      case ImplicitDemo.from_now => date.add(Calendar.DAY_OF_MONTH, number)
+      case _ => date
+    }
+    date.getTime()
+  }
+}
+
+object ImplicitDemo {
+  val ago = "ago"
+  val from_now = "from_now"
+
+  implicit def convertInt2DateHelper(number: Int) = new ImplicitDemo(number)
+
+  def main(args: Array[String]): Unit = {
+    2 days ago
+  }
+}
+```
+
+## Scala容器
+
+### Set
+
+* scala提供可变容器和不变容器，在多线程中可以使用不变容器，这样也可以保证线程安全。
+
+ ```scala
+object SetApp extends App {
+
+  //不可变，声明后的集合就无法改变了
+  val set: Set[Int] = Set(1, 2, 3, 4, 5)
+  println(set.+(10))
+  println(set)
+
+  set filter {
+    case data =>
+      data > 4
+  } foreach (println)
+
+  //可变Set集合
+  private val set1: mutable.Set[Int] = scala.collection.mutable.Set(12, 3, 4, 5, 6)
+  // 添加元素
+  set1 += 1
+  set1 += 2
+  set1.head
+
+  // 合并俩个set
+  private val mergeSet: Set[Int] = set ++ set1
+
+  println(mergeSet)
+
+  // map操作
+  mergeSet.map((data: Int) => data * 2)
+    .foreach(println)
+
+  // &  计算交集 
+  println(set & set1)
+
+  // &~ 计算差集
+  println(set &~ set1)
+
+}
+ ```
+
+### Map
+
+* 存在可变和不可变Map
+
+```scala
+object MapApp extends App {
+  // create
+  val map = Map("hsm" -> 24, "wy" -> 24)
+  println(map)
+
+  // filter
+  map filter { case (name: String, age: Int) =>
+    println(s"$name --- $age")
+    "hsm".equals(name) && 24 == age
+  } foreach (println)
+
+  // get
+  println(map("hsm"))
+  println(map.get("wy"))
+  println(map get "wy")
+
+  // put 不可变
+  println(map.+("zzl" -> 24))
+  println(map.+(("ls", 11)))
+  println(map.+("hsm1"))
+
+  // update 向不变容器添加元素
+  private val stringToInt: Map[String, Int] = map.updated("wy1", 24)
+  
+  println(map)
+}
+```
+
+### List
+
+* 只有不可变list，可变list可以使用Java或者ListBuffer
+
+```scala
+  //Nil相当于空的集合
+  val list = List(1, 2, 3, 4, 5)
+
+  //list是由head和tail构成
+  println(list.head) //1
+  println(list.tail) //2,3,4,5
+  println(list(1)) //2
+
+  //head::tail 在List前添加a
+
+  val list1: List[Int] = 1 :: Nil
+  val list2 = 2 :: list1
+  println(3 :: list2)
+
+  // ::: 在List前添加list
+  println(list2.:::(List(4)))
+
+  // filter exists
+  println(list2.filter(data => data > 1))
+  println(list2.exists(data => data == 2 && data == 3))
+  // drop
+  println(list2.drop(1))
+
+  // foldLeft  类似foreach,可以给一个zeroValue 从左边开始计算
+  println(list2.foldLeft(1)((total, data) => {
+    total + data
+  }))
+```
+
+### for表达式
+
+```scala
+// 1 2 3
+  for (i <- 1 to 3) {
+    println(i)
+  }
+  // 1 2
+  for (elem <- 1 until 3) {
+    println(elem)
+  }
+  // for filter
+  for (elem <- 1 to 10; if elem % 2 == 0) {
+    println(elem)
+  }
+  
+  for {
+    i <- 1 to 3
+    if i > 2
+  } {
+    println(i)
+  }
+```
+
+## 模式匹配
+
+```scala
+object CaseDemo extends App {
+  // 字符串匹配
+  def stringCase(word: String) = {
+    word match {
+      case "a" =>
+        println(word)
+    }
+  }
+
+  stringCase("a")
+
+  // 匹配通配符
+  def enumCase(word: String) = {
+    DayOfWeek.withName(word) match {
+      case SUNDAY => {
+        println(SUNDAY.toString)
+      }
+    }
+  }
+
+  enumCase("Sunday")
+
+  // 匹配元组
+  def tupleCase(input: Any) = {
+    input match {
+      case (a, b) => println(a, b)
+      case "done" => println("done...")
+      case _ => None
+    }
+  }
+
+  // 匹配list
+  def listCase(list: List[String]) = {
+    list match {
+      case List("a") => println(list)
+      case ::(head, tail) => println(head, tail)
+    }
+  }
+
+  listCase(List("a"))
+  listCase(List("a", "c"))
+
+  tupleCase((1, 2))
+  tupleCase("done")
+  println(tupleCase(1))
+
+  // case表达式的模式
+  class Sample {
+    val max = 100
+    val MIN = 0
+
+    def process(input: Int) {
+      input match {
+        case this.max => println("You matched max")
+        case MIN => println("You matched min")
+        case _ => println("Unmatched")
+      }
+    }
+  }
+
+  new Sample().process(100)
+  new Sample().process(0)
+  new Sample().process(10)
+
+  // 使用case类模式匹配
+  def caseClassCase(trade: Trade) = {
+    trade match {
+      case Buy() => println("buy")
+      case Sell() => println("sell")
+      case _ => println("nothing")
+    }
+  }
+
+  caseClassCase(Buy())
+  caseClassCase(Sell())
+}
+
+object DayOfWeek extends Enumeration {
+  val SUNDAY = Value("Sunday")
+  val MONDAY = Value("Monday")
+  val TUESDAY = Value("Tuesday")
+  val WEDNESDAY = Value("Wednesday")
+  val THURSDAY = Value("Thursday")
+  val FRIDAY = Value("Friday")
+  val SATURDAY = Value("Saturday")
+}
+
+// 使用case类进行模式匹配
+abstract class Trade()
+
+case class Sell() extends Trade
+
+case class Buy() extends Trade
+```
+
