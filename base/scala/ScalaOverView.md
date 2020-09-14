@@ -561,3 +561,19 @@ case class Sell() extends Trade
 case class Buy() extends Trade
 ```
 
+## 异常处理
+
+```scala
+def main(args: Array[String]): Unit = {
+    try {
+      Thread.sleep(1000)
+    } catch {
+      case interruptedException: InterruptedException =>
+        println("xxx")
+      case _=>{
+        println("not exception")
+      }
+    }
+  }
+```
+
