@@ -291,6 +291,177 @@ private static class ClientPool {
 
 * 创建客户端时会先去获取对应的ClientPool，然后在根据index获取对应的传输层客户端锁和传输层客户端，校验是否可用如果一系列校验没问题就返回给NettyRpcEnv中。
 
+#### 创建TransportClient
+
+```java
+ private TransportClient createClient(InetSocketAddress address)
+            throws IOException, InterruptedException {
+        logger.debug("Creating new connection to {}", address);
+
+        // 创建传输层引导程序Bootstrap，netty
+        Bootstrap bootstrap = new Bootstrap();
+        // 设置工作组，socket channel，其他参数
+        bootstrap.group(workerGroup)
+                .channel(socketChannelClass)
+                // Disable Nagle's Algorithm since we don't want packets to wait
+                .option(ChannelOption.TCP_NODELAY, true)
+                .option(ChannelOption.SO_KEEPALIVE, true)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, conf.connectionTimeoutMs())
+                .option(ChannelOption.ALLOCATOR, pooledAllocator);
+
+        if (conf.receiveBuf() > 0) {
+            bootstrap.option(ChannelOption.SO_RCVBUF, conf.receiveBuf());
+        }
+
+        if (conf.sendBuf() > 0) {
+            bootstrap.option(ChannelOption.SO_SNDBUF, conf.sendBuf());
+        }
+
+        final AtomicReference<TransportClient> clientRef = new AtomicReference<>();
+        final AtomicReference<Channel> channelRef = new AtomicReference<>();
+
+        bootstrap.handler(new ChannelInitializer<SocketChannel>() {
+            @Override
+            public void initChannel(SocketChannel ch) {
+                TransportChannelHandler clientHandler = context.initializePipeline(ch);
+                clientRef.set(clientHandler.getClient());
+                channelRef.set(ch);
+            }
+        });
+
+        // Connect to the remote server 连接到远程服务器
+        long preConnect = System.nanoTime();
+        ChannelFuture cf = bootstrap.connect(address);
+        // 超时判断
+        if (!cf.await(conf.connectionTimeoutMs())) {
+            throw new IOException(
+                    String.format("Connecting to %s timed out (%s ms)", address, conf.connectionTimeoutMs()));
+            // 连接异常判断
+        } else if (cf.cause() != null) {
+            throw new IOException(String.format("Failed to connect to %s", address), cf.cause());
+        }
+
+        // 获取传输层客户端
+        TransportClient client = clientRef.get();
+        Channel channel = channelRef.get();
+        assert client != null : "Channel future completed successfully with null client";
+
+        // Execute any client bootstraps synchronously before marking the Client as successful.
+        long preBootstrap = System.nanoTime();
+        logger.debug("Connection to {} successful, running bootstraps...", address);
+        try {
+            // 给传输层客户端设置客户端引导程序，权限、安全相关
+            for (TransportClientBootstrap clientBootstrap : clientBootstraps) {
+                clientBootstrap.doBootstrap(client, channel);
+            }
+        } catch (Exception e) { // catch non-RuntimeExceptions too as bootstrap may be written in Scala
+            long bootstrapTimeMs = (System.nanoTime() - preBootstrap) / 1000000;
+            logger.error("Exception while bootstrapping client after " + bootstrapTimeMs + " ms", e);
+            client.close();
+            throw Throwables.propagate(e);
+        }
+        long postBootstrap = System.nanoTime();
+
+        logger.info("Successfully created connection to {} after {} ms ({} ms spent in bootstraps)",
+                address, (postBootstrap - preConnect) / 1000000, (postBootstrap - preBootstrap) / 1000000);
+
+        return client;
+    }
+```
+
+* 构建根引导程序Bootstrap并且对其配置
+* 为根引导程序设置管道初始化回调函数，此会调函数将调用TransportContext的initializePipeline方法初始化Channel的pipeline。
+* 使用根引导程序连接远程服务器，当连接成功对管道初始化时会回调初始化回调函数，将TransportClient和Channel对象分别设置到原子引用clientRef与channelRef中。
+* 给TransportClient设置客户端引导程序，即设置TransportClientFactory中的Transport-ClientBootstrap列表
+* 返回TransportClient对象
+
+#### TransportServer
+
+```java
+private void init(String hostToBind, int portToBind) {
+
+    // 选择IO模型，默认为NIO
+    IOMode ioMode = IOMode.valueOf(conf.ioMode());
+    // 创建bossGroup
+    EventLoopGroup bossGroup = NettyUtils.createEventLoop(ioMode, 1,
+      conf.getModuleName() + "-boss");
+    // 创建workerGroup
+    EventLoopGroup workerGroup =  NettyUtils.createEventLoop(ioMode, conf.serverThreads(),
+      conf.getModuleName() + "-server");
+
+    // 穿线byte申请器
+    PooledByteBufAllocator allocator = NettyUtils.createPooledByteBufAllocator(
+      conf.preferDirectBufs(), true /* allowCache */, conf.serverThreads());
+
+    // 创建netty serverbootstrap
+    bootstrap = new ServerBootstrap()
+      .group(bossGroup, workerGroup)
+      .channel(NettyUtils.getServerChannelClass(ioMode))
+      .option(ChannelOption.ALLOCATOR, allocator)
+      .option(ChannelOption.SO_REUSEADDR, !SystemUtils.IS_OS_WINDOWS)
+      .childOption(ChannelOption.ALLOCATOR, allocator);
+
+    //创建netty内存指标
+    this.metrics = new NettyMemoryMetrics(
+      allocator, conf.getModuleName() + "-server", conf);
+
+    // 设置netty所需网络参数
+    if (conf.backLog() > 0) {
+      bootstrap.option(ChannelOption.SO_BACKLOG, conf.backLog());
+    }
+
+    if (conf.receiveBuf() > 0) {
+      bootstrap.childOption(ChannelOption.SO_RCVBUF, conf.receiveBuf());
+    }
+
+    if (conf.sendBuf() > 0) {
+      bootstrap.childOption(ChannelOption.SO_SNDBUF, conf.sendBuf());
+    }
+
+    bootstrap.childHandler(new ChannelInitializer<SocketChannel>() {
+      @Override
+      protected void initChannel(SocketChannel ch) {
+        RpcHandler rpcHandler = appRpcHandler;
+        // 为SocketChannel、rpcHandler分配引导程序
+        for (TransportServerBootstrap bootstrap : bootstraps) {
+          rpcHandler = bootstrap.doBootstrap(ch, rpcHandler);
+        }
+        context.initializePipeline(ch, rpcHandler);
+      }
+    });
+
+    InetSocketAddress address = hostToBind == null ?
+        new InetSocketAddress(portToBind): new InetSocketAddress(hostToBind, portToBind);
+    // 绑定客户端地址
+    channelFuture = bootstrap.bind(address);
+    channelFuture.syncUninterruptibly();
+
+    port = ((InetSocketAddress) channelFuture.channel().localAddress()).getPort();
+    logger.debug("Shuffle server started on port: {}", port);
+  }
+```
+
+#### 管道初始化
+
+* 在创建TransportClient和初始化TransportServer时都调用了initlizePipeline方法，此方法将会调用Netty的API对管道初始化。
+
+```java
+# 真正创建TransportClient的地方
+TransportChannelHandler channelHandler = createChannelHandler(channel, channelRpcHandler);
+
+# 设置channel管道的编解码器
+  channel.pipeline()
+        .addLast("encoder", ENCODER)
+        .addLast(TransportFrameDecoder.HANDLER_NAME, NettyUtils.createFrameDecoder())
+        .addLast("decoder", DECODER)
+        .addLast("idleStateHandler", new IdleStateHandler(0, 0, conf.connectionTimeoutMs() / 1000))
+        // NOTE: Chunks are currently guaranteed to be returned in the order of request, but this
+        // would require more logic to guarantee if this were not part of the same event loop.
+        .addLast("handler", channelHandler);
+```
+
+![管道处理请求和响应流程图](./img/管道处理请求和响应流程图.png)
+
 ### Dispatcher
 
 ```scala
@@ -583,6 +754,220 @@ private[netty] class Dispatcher(nettyEnv: NettyRpcEnv, numUsableCores: Int) exte
 
   /** A poison endpoint that indicates MessageLoop should exit its message loop. */
   private val PoisonPill = new EndpointData(null, null, null)
+}
+```
+
+## 事件总线
+
+* Spark定义了一个特质ListenerBus，可以接受事件并且将事件提交到对应事件的监听器。
+
+### ListenerBus的继承体系
+
+![ListenerBus继承体系](./img/ListenerBus继承体系.jpg)
+
+* SparkListenerBus:用于将SparkListenerEvent类型的事件投递到SparkListener-Interface类型的监听器。
+  * AsyncEventQueue：采用异步线程将SparkListenerEvent类型的事件投递到SparkListener类型的监听器。
+  * ReplayListenerBus：用于从序列化的事件数据中重播事件。
+* StreamingQueryListenerBus：用于将StreamingQueryListener.Event类型的事件投递到StreamingQueryListener类型的监听器，此外还会将StreamingQueryListener. Event类型的事件交给SparkListenerBus。
+* StreamingListenerBus：用于将StreamingListenerEvent类型的事件投递到Streaming Listener类型的监听器，此外还会将StreamingListenerEvent类型的事件交给Spark ListenerBus。
+* ExternalCatalogWithListener:外部catalog监听器。
+
+### SparkListenerBus
+
+* 支持`SparkListenerEvent`的各个子类事件。
+
+* 实现ListenerBus的onPostEvent方法，模式匹配了event做了对应的处理，主要包含了task、statge、job相关。
+
+### AsyncEventQueue
+
+* eventQueue:是SparkListenerEvent事件的阻塞队列，队列大小可以通过Spark属性spark.scheduler.listenerbus.eventqueue.size进行配置，默认为10000（Spark早期版本中属于静态属性，固定为10000）。
+* started：标记LiveListenerBus的启动状态的AtomicBoolean类型的变量。
+* stopped：标记LiveListenerBus的停止状态的AtomicBoolean类型的变量。
+* droppedEventsCounter：使用AtomicLong类型对删除的事件进行计数，每当日志打印了droppedEventsCounter后，会将droppedEventsCounter重置为0。
+* lastReportTimestamp：用于记录最后一次日志打印droppedEventsCounter的时间戳。
+* logDroppedEvent:AtomicBoolean类型的变量，用于标记是否由于eventQueue已满，导致新的事件被删除。
+
+```java
+private class AsyncEventQueue(
+    val name: String,
+    conf: SparkConf,
+    metrics: LiveListenerBusMetrics,
+    bus: LiveListenerBus)
+  extends SparkListenerBus
+  with Logging {
+
+  import AsyncEventQueue._
+
+  // Cap the capacity of the queue so we get an explicit error (rather than an OOM exception) if
+  // it's perpetually being added to more quickly than it's being drained.
+  //
+  private val eventQueue = new LinkedBlockingQueue[SparkListenerEvent](
+    conf.get(LISTENER_BUS_EVENT_QUEUE_CAPACITY))
+
+  // Keep the event count separately, so that waitUntilEmpty() can be implemented properly;
+  // this allows that method to return only when the events in the queue have been fully
+  // processed (instead of just dequeued).
+  private val eventCount = new AtomicLong()
+
+  /** A counter for dropped events. It will be reset every time we log it. */
+  private val droppedEventsCounter = new AtomicLong(0L)
+
+  /** When `droppedEventsCounter` was logged last time in milliseconds. */
+  @volatile private var lastReportTimestamp = 0L
+
+  private val logDroppedEvent = new AtomicBoolean(false)
+
+  private var sc: SparkContext = null
+
+  private val started = new AtomicBoolean(false)
+  private val stopped = new AtomicBoolean(false)
+
+  private val droppedEvents = metrics.metricRegistry.counter(s"queue.$name.numDroppedEvents")
+  private val processingTime = metrics.metricRegistry.timer(s"queue.$name.listenerProcessingTime")
+
+  // Remove the queue size gauge first, in case it was created by a previous incarnation of
+  // this queue that was removed from the listener bus.
+  metrics.metricRegistry.remove(s"queue.$name.size")
+  metrics.metricRegistry.register(s"queue.$name.size", new Gauge[Int] {
+    override def getValue: Int = eventQueue.size()
+  })
+
+    // 后台线程，转发器
+  private val dispatchThread = new Thread(s"spark-listener-group-$name") {
+    setDaemon(true)
+    override def run(): Unit = Utils.tryOrStopSparkContext(sc) {
+      // 发送消息
+      dispatch()
+    }
+  }
+ // 转发转系
+  private def dispatch(): Unit = LiveListenerBus.withinListenerThread.withValue(true) {
+    var next: SparkListenerEvent = eventQueue.take()
+    // 不是毒药消息则一致调用postToAll
+    while (next != POISON_PILL) {
+      val ctx = processingTime.time()
+      try {
+        // 遍历消息调用doPostEvent
+        super.postToAll(next)
+      } finally {
+        ctx.stop()
+      }
+      eventCount.decrementAndGet()
+      next = eventQueue.take()
+    }
+    eventCount.decrementAndGet()
+  }
+
+  override protected def getTimer(listener: SparkListenerInterface): Option[Timer] = {
+    metrics.getTimerForListenerClass(listener.getClass.asSubclass(classOf[SparkListenerInterface]))
+  }
+
+  /**
+   * Start an asynchronous thread to dispatch events to the underlying listeners.
+   *
+   * @param sc Used to stop the SparkContext in case the async dispatcher fails.
+   */
+  private[scheduler] def start(sc: SparkContext): Unit = {
+    if (started.compareAndSet(false, true)) {
+      this.sc = sc
+      // 开始dispatchThread线程，发送监听器事件
+      dispatchThread.start()
+    } else {
+      throw new IllegalStateException(s"$name already started!")
+    }
+  }
+
+  /**
+   * Stop the listener bus. It will wait until the queued events have been processed, but new
+   * events will be dropped.
+   */
+  private[scheduler] def stop(): Unit = {
+    if (!started.get()) {
+      throw new IllegalStateException(s"Attempted to stop $name that has not yet started!")
+    }
+    if (stopped.compareAndSet(false, true)) {
+      eventCount.incrementAndGet()
+      // 发送毒药消息
+      eventQueue.put(POISON_PILL)
+    }
+    // this thread might be trying to stop itself as part of error handling -- we can't join
+    // in that case.
+    if (Thread.currentThread() != dispatchThread) {
+      // 当先线程不是dispatchThread，就会尝试让dispatchThread die
+      dispatchThread.join()
+    }
+  }
+
+  def post(event: SparkListenerEvent): Unit = {
+    if (stopped.get()) {
+      return
+    }
+
+    eventCount.incrementAndGet()
+    if (eventQueue.offer(event)) {
+      return
+    }
+
+    eventCount.decrementAndGet()
+    droppedEvents.inc()
+    droppedEventsCounter.incrementAndGet()
+    if (logDroppedEvent.compareAndSet(false, true)) {
+      // Only log the following message once to avoid duplicated annoying logs.
+      logError(s"Dropping event from queue $name. " +
+        "This likely means one of the listeners is too slow and cannot keep up with " +
+        "the rate at which tasks are being started by the scheduler.")
+    }
+    logTrace(s"Dropping event $event")
+
+    val droppedCount = droppedEventsCounter.get
+    if (droppedCount > 0) {
+      // Don't log too frequently
+      if (System.currentTimeMillis() - lastReportTimestamp >= 60 * 1000) {
+        // There may be multiple threads trying to decrease droppedEventsCounter.
+        // Use "compareAndSet" to make sure only one thread can win.
+        // And if another thread is increasing droppedEventsCounter, "compareAndSet" will fail and
+        // then that thread will update it.
+        if (droppedEventsCounter.compareAndSet(droppedCount, 0)) {
+          val prevLastReportTimestamp = lastReportTimestamp
+          lastReportTimestamp = System.currentTimeMillis()
+          val previous = new java.util.Date(prevLastReportTimestamp)
+          logWarning(s"Dropped $droppedCount events from $name since $previous.")
+        }
+      }
+    }
+  }
+
+  /**
+   * For testing only. Wait until there are no more events in the queue.
+   *
+   * @return true if the queue is empty.
+   */
+  def waitUntilEmpty(deadline: Long): Boolean = {
+    while (eventCount.get() != 0) {
+      if (System.currentTimeMillis > deadline) {
+        return false
+      }
+      Thread.sleep(10)
+    }
+    true
+  }
+
+  /**
+   * LiveListenerBus的委托类，移除监听器
+   * @param listener
+   */
+  override def removeListenerOnError(listener: SparkListenerInterface): Unit = {
+    // the listener failed in an unrecoverably way, we want to remove it from the entire
+    // LiveListenerBus (potentially stopping a queue if it is empty)
+    bus.removeListener(listener)
+  }
+
+}
+
+private object AsyncEventQueue {
+
+  val POISON_PILL = new SparkListenerEvent() { }
+
 }
 ```
 
