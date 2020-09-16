@@ -971,3 +971,158 @@ private object AsyncEventQueue {
 }
 ```
 
+# SparkContext的初始化
+
+## SparkContext概述
+
+### SparkContext的组成
+
+* SparkEnv:Spark运行时环境。Executor是处理任务的执行器依赖于SparkEnv提供的运行环境，Driver中也包含SparkEnv，这是为了保证Local模式下任务的运行。其中包含serilizerManager、RpcEnv、BlockManager、mapOutputTracker等。
+* SparkUI:Spark的用户界面，SparkUI简介以来于计算引擎、调度系统、存储体系、Job、Stage、存储、Executor、Driver组件的监控数据都会以SparkListenerEvent的形式投递到LiveListenerBus中，SparkUI从各个SparkListener中读取数据显示到WEB UI。
+* LiveListenerBus:SparkContext中的事件总线，可以接受各个使用方的事件，通过异步方式对事件进行匹配后调用SparkListener的不同方法。
+* SparkStatusTracker:提供对作业、Stage（阶段）等的监控信息。SparkStatusTracker是一个低级的API，这意味着只能提供非常脆弱的一致性机制。
+* ConsoleProgressbar:利用SparkStatusTracker的API，在控制台展示Stage的进度。由于SparkStatusTracker存在的一致性问题，所以ConsoleProgressBar在控制台的显示往往有一定的时延。
+* JobProgressListener:作业进度监听器。
+* TaskScheduler:任务调度器，是调度系统中的重要组件之一。TaskScheduler按照调度算法对集群管理器已经分配给应用程序的资源进行二次调度后分配给任务。TaskScheduler调度的Task是由DAGScheduler创建的，所以DAGScheduler是TaskScheduler的前置调度。
+* DAGScheduler:DAG调度器，是调度系统中的重要组件之一，负责创建Job，将DAG中的RDD划分到不同的Stage、提交Stage等。SparkUI中有关Job和Stage的监控数据都来自DAGScheduler。
+* EventLoggingListener
+* HeatbeatReceiver:心跳接收器。所有Executor都会向HeartbeatReceiver发送心跳信息，HeartbeatReceiver接收到Executor的心跳信息后，首先更新Executor的最后可见时间，然后将此信息交给TaskScheduler作进一步处理。
+* ContextCleaner:上下文清理器。ContextCleaner实际用异步方式清理那些超出应用作用域范围的RDD、ShuffleDependency和Broadcast等信息。
+* ExecutorAllocationManager:Executor动态分配管理器。顾名思义，可以根据工作负载动态调整Executor的数量。在配置`spark.dynamicAllocation.enabled`属性为true的前提下，在非local模式下或者当`spark.dynamicAllocation.testing`属性为true时启用。
+* ShutdowHookManager:用于设置关闭钩子的管理器。可以给应用设置关闭钩子，这样就可以在JVM进程退出时，执行一些清理工作。
+
+## 创建心跳接收器
+
+### 作用
+
+* 为了Driver能够感知到Executor的变化，当Executor出现问题时，Driver可以做相应的处理。
+
+### SparkContext中创建HeartbeatReceiver代码
+
+* 向RpcEnv的Dispatcher注册HeartbeatReceiver，并返回HeartbeatReceiver的NettyRpcEndpointRef引用。
+
+```scala
+    _heartbeatReceiver = env.rpcEnv.setupEndpoint(
+      HeartbeatReceiver.ENDPOINT_NAME, new HeartbeatReceiver(this))
+```
+
+## 创建调度系统
+
+* 创建DAGScheduler和TaskScheduler和SchedulerBackend，并且发送心跳消息TaskSchedulerIsSet。
+
+```scala
+  val (sched, ts) = SparkContext.createTaskScheduler(this, master, deployMode)
+    _schedulerBackend = sched
+    _taskScheduler = ts
+    _dagScheduler = new DAGScheduler(this)
+    _heartbeatReceiver.ask[Boolean](TaskSchedulerIsSet)
+```
+
+* SparkContext.createTaskScheduler根据master的配置创建相应的方式的taskSchedulerBackend和TaskSchduler。
+
+## 初始化BlockManager
+
+* BlockManager时SparkEnv中的组件之一，主要作用于存储体系的所有组件和功能，是存储体系中最重要的组件。SparkContext初始化过程中会对BlockManager进行初始化。
+
+```scala
+# 初始化blockManager
+_env.blockManager.initialize(_applicationId)
+```
+
+## 创建和启动ExecutorAllocationManager
+
+* ExecutorAllocationManager内部会定时根据工作负载计算所需的Executor数量，如果对Executor需求数量大于之前向集群管理器申请的Executor数量，那么向集群管理器申请添加Executor；如果对Executor需求数量小于之前向集群管理器申请的Executor数量，那么向集群管理器申请取消部分Executor。此外，ExecutorAllocationManager内部还会定时向集群管理器申请移除（“杀死”）过期的Executor。
+
+![ExecutorAlloctionManager](./img/ExecutorAllocationManager原理.jpg)
+
+```scala
+val dynamicAllocationEnabled = Utils.isDynamicAllocationEnabled(_conf)
+    _executorAllocationManager =
+      if (dynamicAllocationEnabled) {
+        schedulerBackend match {
+          case b: ExecutorAllocationClient =>
+            Some(new ExecutorAllocationManager(
+              schedulerBackend.asInstanceOf[ExecutorAllocationClient], listenerBus, _conf,
+              _env.blockManager.master))
+          case _ =>
+            None
+        }
+      } else {
+        None
+      }
+    _executorAllocationManager.foreach(_.start())
+
+# start逻辑
+def start(): Unit = {
+    // 启动一个定时线程回去定时调度，当添加executor和移除executor时
+    listenerBus.addToManagementQueue(listener)
+
+    val scheduleTask = new Runnable() {
+      override def run(): Unit = {
+        try {
+          schedule()
+        } catch {
+          case ct: ControlThrowable =>
+            throw ct
+          case t: Throwable =>
+            logWarning(s"Uncaught exception in thread ${Thread.currentThread().getName}", t)
+        }
+      }
+    }
+    executor.scheduleWithFixedDelay(scheduleTask, 0, intervalMillis, TimeUnit.MILLISECONDS)
+
+    client.requestTotalExecutors(numExecutorsTarget, localityAwareTasks, hostToLocalTaskCount)
+  }
+```
+
+* `spark.dynamicAllocation.enabled`集群模式开启动态管理executor，`spark.dynamicAllocation.testing`local模式开启管理executor，默认都是关闭的。
+
+```scala
+ def isDynamicAllocationEnabled(conf: SparkConf): Boolean = {
+    val dynamicAllocationEnabled = conf.getBoolean("spark.dynamicAllocation.enabled", false)
+    dynamicAllocationEnabled &&
+      (!isLocalMaster(conf) || conf.getBoolean("spark.dynamicAllocation.testing", false))
+  }
+```
+
+![executor动态分配过程](./img/executor动态分配过程.jpg)
+
+## ContextCleaner
+
+* 主要用于清理和超出应用范围的RDD、Shuffle对应的map任务状态、Shuffle元数据、Broadcast对象及RDD的checkpoint数据。
+* `spark.cleaner.referenceTracking`决定是否创建ContextCleaner，默认为true。
+
+### contextCleaner属性
+
+* referenceQueue：缓存顶级的AnyRef引用。
+* referenceBuffer：缓存AnyRef的虚引用。
+* listeners：缓存清理工作的监听器数组。
+* cleaningThread：用于具体清理工作的线程。此线程为守护线程，名称为Spark Context Cleaner。
+* periodicGCService：类型为ScheduledExecutorService，用于执行GC（Garbage Collection，垃圾收集）的调度线程池，此线程池只包含一个线程，启动的线程名称以context-cleaner-periodic-gc开头。
+* periodicGCInterval：执行GC的时间间隔。可通过spark.cleaner.periodicGC.interval属性进行配置，默认是30分钟。
+* blockOnCleanupTasks：清理非Shuffle的其他数据是否是阻塞式的。可通过spark. cleaner.referenceTracking.blocking属性进行配置，默认是true。
+* blockOnShuffleCleanupTasks：清理Shuffle数据是否是阻塞式的。可通过spark. cleaner.referenceTracking.blocking.shuffle属性进行配置，默认是false。清理Shuffle数据包括清理MapOutputTracker中指定ShuffleId对应的map任务状态和ShuffleManager中注册的ShuffleId对应的Shuffle元数据。
+* stopped:ContextCleaner是否停止的状态标记。
+
+## SparkContex提供的常用方法
+
+### broadcast
+
+```scala
+def broadcast[T: ClassTag](value: T): Broadcast[T] = {
+    assertNotStopped()
+    require(!classOf[RDD[_]].isAssignableFrom(classTag[T].runtimeClass),
+      "Can not directly broadcast RDDs; instead, call collect() and broadcast the result.")
+    // 创建新的BroadCast
+    val bc: Broadcast[T] = env.broadcastManager.newBroadcast[T](value, isLocal)
+    val callSite = getCallSite
+    logInfo("Created broadcast " + bc.id + " from " + callSite.shortForm)
+    cleaner.foreach(_.registerBroadcastForCleanup(bc))
+    bc
+  }
+```
+
+### addSparkListener
+
+* 向LiveListenerBus中添加特质的SparkListenerInterface的监听器。
+
