@@ -1321,3 +1321,33 @@ spark.rpc.retry.wait
 
 序号⑤：表示序号④发出的请求在与远端NettyRpcEnv的TransportServer建立了连接后，请求消息首先经过Netty管道的处理，然后经由NettyRpcHandler处理，最后NettyRpcHandler的receive方法会调用Dispatcher的postRemoteMessage或postOneWay-Message方法，将消息放入EndpointData内部Inbox的messages列表中。MessageLoop线程最后处理消息，并将消息发给对应的RpcEndpoint处理。
 
+## 序列化管理器SerializerManager
+
+* Spark中存在俩个序列化组件，SerializerManager和closureSerializer。
+
+```scala
+# 初始化
+val serializer = instantiateClassFromConf[Serializer](
+      "spark.serializer", "org.apache.spark.serializer.JavaSerializer")
+    logDebug(s"Using serializer: ${serializer.getClass}")
+
+    val serializerManager = new SerializerManager(serializer, conf, ioEncryptionKey)
+
+val closureSerializer = new JavaSerializer(conf)
+```
+
+* serializerManager默认为JavaSerializer，可以通过`spark.serializer`制定，closureSerializer为JavaSerializer不能指定。
+
+### SerializerManager属性
+
+* defaultSerializer：默认的序列化器。此defaultSerializer即为上面代码中实例化的serializer，也就是说defaultSerializer的类型是JavaSerializer。
+* conf：即SparkConf。
+* encryptionKey：加密使用的密钥。
+* kryoSerializer:Spark提供的另一种序列化器。kryoSerializer的实际类型是Kryo Serializer，其采用Google提供的Kryo序列化库实现。
+* stringClassTag：字符串类型标记，即ClassTag[String]。
+* primitiveAndPrimitiveArrayClassTags：原生类型及原生类型数组的类型标记的集合，包括：Boolean、Array[boolean]、Int、Array[int]、Long、Array[long]、Byte、Array[byte]、Null、Array[scala.runtime.Null$]、Char、Array[char]、Double、Array [double]、Float、Array[float]、Short、Array[short]等。
+* compressBroadcast：是否对广播对象进行压缩，可以通过spark.broadcast.compress属性配置，默认为true。
+* compressRdds：是否对RDD压缩，可以通过spark.rdd.compress属性配置，默认为false。
+* compressShuffle：是否对Shuffle输出数据压缩，可以通过spark.shuffle.compress属性配置，默认为true。
+* compressShuffleSpill：是否对溢出到磁盘的Shuffle数据压缩，可以通过spark.shuffle.spill.compress属性配置，默认为true。
+* compressionCodec:SerializerManager使用的压缩编解码器。compressionCodec的类型是CompressionCodec。在Spark 1.x.x版本中，compressionCodec是BlockManager的成员之一，现在把compressionCodec和序列化、加密等功能都集中到SerializerManager中，也许是因为实现此功能的工程师觉得加密、压缩都是属于序列化的一部分吧。
