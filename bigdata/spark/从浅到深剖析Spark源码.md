@@ -971,7 +971,7 @@ private object AsyncEventQueue {
 }
 ```
 
-# SparkContext的初始化
+# SparkContext
 
 ## SparkContext概述
 
@@ -1125,4 +1125,199 @@ def broadcast[T: ClassTag](value: T): Broadcast[T] = {
 ### addSparkListener
 
 * 向LiveListenerBus中添加特质的SparkListenerInterface的监听器。
+
+# SparkEnv
+
+
+
+## SparkEnv概述
+
+### SparkEnv组件
+
+* RpcEnv
+* Serializer
+* SerializerMananger
+* MapOutputTracker
+* ShuffleManager
+* BroadcastManager
+* BlockManager
+* SecurityManager
+* MemoryManager
+* OutputCommitCoordinator
+
+## SecurityManager
+
+* 对账号、权限及身份认证进行设置和管理。如果Spark的部署模式为YARN，则需要生成secret key（密钥）并存入Hadoop UGI。而在其他模式下，则需要设置环境变量_SPARK_AUTH_SECRET（优先级更高）或spark.authenticate.secret属性指定secret key（密钥）。SecurityManager还会给当前系统设置默认的口令认证实例。
+
+```scala
+# 创建安全管理器
+val securityManager = new SecurityManager(conf, ioEncryptionKey)
+```
+
+* SecurityManager代码
+
+```scala
+// allow all users/groups to have view/modify permissions
+  private val WILDCARD_ACL = "*"
+
+  // 是否开启认证。可以通过spark.authenticate属性配置，默认为false。
+  private val authOn = sparkConf.get(NETWORK_AUTH_ENABLED)
+  // keep spark.ui.acls.enable for backwards compatibility with 1.0
+  // 是否对账号进行授权。
+  private var aclsOn =
+    sparkConf.getBoolean("spark.acls.enable", sparkConf.getBoolean("spark.ui.acls.enable", false))
+
+  // admin acls should be set before view or modify acls
+  // 管理员账号集合，通过spark.admin.acls配置，默认为空
+  private var adminAcls: Set[String] =
+    stringToSet(sparkConf.get("spark.admin.acls", ""))
+
+  // admin group acls should be set before view or modify group acls
+  private var adminAclsGroups : Set[String] =
+    stringToSet(sparkConf.get("spark.admin.acls.groups", ""))
+
+  // 有查看权限的账号的集合通过spark.ui.view.acls属性配置
+  private var viewAcls: Set[String] = _
+
+  // 拥有查看权限的账号所在的组的集合 spark.ui.view.acls.groups配置
+  private var viewAclsGroups: Set[String] = _
+
+  // list of users who have permission to modify the application. This should
+  // apply to both UI and CLI for things like killing the application.
+  //有修改权限的账号的集合。包括adminAcls、defaultAclUsers及spark. modify.acls属性配置的用户。
+  private var modifyAcls: Set[String] = _
+
+  //拥有修改权限的账号所在组的集合。包括adminAclsGroups和spark.modify.acls.groups属性配置的用户。
+  private var modifyAclsGroups: Set[String] = _
+
+  // always add the current user and SPARK_USER to the viewAcls
+  //默认用户。包括系统属性user.name指定的用户或系统登录用户或者通过系统环境变量SPARK_USER进行设置的用户。
+  private val defaultAclUsers = Set[String](System.getProperty("user.name", ""),
+    Utils.getCurrentUserName())
+
+  setViewAcls(defaultAclUsers, sparkConf.get("spark.ui.view.acls", ""))
+  setModifyAcls(defaultAclUsers, sparkConf.get("spark.modify.acls", ""))
+
+  setViewAclsGroups(sparkConf.get("spark.ui.view.acls.groups", ""));
+  setModifyAclsGroups(sparkConf.get("spark.modify.acls.groups", ""));
+
+  //密钥。在YARN模式下，首先使用sparkCookie从HadoopUGI中获取密钥。如果Hadoop UGI没有保存密钥，则生成新的密钥（密钥长度可以通过spark.
+  // authenticate.secretBitLength属性指定）并存入Hadoop UGI。其他模式下，则需要设置环境变量_SPARK_AUTH_SECRET（优先级更高）或spark.authenticate.secret属性指定。
+  private var secretKey: String = _
+  logInfo("SecurityManager: authentication " + (if (authOn) "enabled" else "disabled") +
+    "; ui acls " + (if (aclsOn) "enabled" else "disabled") +
+    "; users  with view permissions: " + viewAcls.toString() +
+    "; groups with view permissions: " + viewAclsGroups.toString() +
+    "; users  with modify permissions: " + modifyAcls.toString() +
+    "; groups with modify permissions: " + modifyAclsGroups.toString())
+
+  // Set our own authenticator to properly negotiate user/password for HTTP connections.
+  // This is needed by the HTTP client fetching from the HttpServer. Put here so its
+  // only set once.
+  // 如果权限开启
+  if (authOn) {
+    // 使用内部匿名类是指权限认证器
+    Authenticator.setDefault(
+      new Authenticator() {
+        override def getPasswordAuthentication(): PasswordAuthentication = {
+          var passAuth: PasswordAuthentication = null
+          // 获取用户信息
+          val userInfo = getRequestingURL().getUserInfo()
+          if (userInfo != null) {
+            val  parts = userInfo.split(":", 2)
+            // 解密password
+            passAuth = new PasswordAuthentication(parts(0), parts(1).toCharArray())
+          }
+          return passAuth
+        }
+      }
+    )
+  }
+```
+
+## RpcEnv
+
+```scala
+ val systemName = if (isDriver) driverSystemName else executorSystemName
+    val rpcEnv = RpcEnv.create(systemName, bindAddress, advertiseAddress, port.getOrElse(-1), conf,
+      securityManager, numUsableCores, !isDriver)
+
+
+/**
+   * 创建rpcEnv核心逻辑
+   * @param name 系统名称、driver或executor
+   * @param bindAddress 绑定地址
+   * @param advertiseAddress
+   * @param port 端口
+   * @param conf spark配置
+   * @param securityManager 安全管理器
+   * @param numUsableCores 使用核数
+   * @param clientMode 客户端模式
+   * @return
+   */
+  def create(
+      name: String,
+      bindAddress: String,
+      advertiseAddress: String,
+      port: Int,
+      conf: SparkConf,
+      securityManager: SecurityManager,
+      numUsableCores: Int,
+      clientMode: Boolean): RpcEnv = {
+    val config = RpcEnvConfig(conf, name, bindAddress, advertiseAddress, port, securityManager,
+      numUsableCores, clientMode)
+    // 使用NettyRpcEnvFactory创建RpcEnv，实际上是继承rpcEnv的nettyEnv
+    new NettyRpcEnvFactory().create(config)
+  }
+```
+
+### RpcEndpointRef
+
+* RpcEndpoint是Akka中Actor的替代产物，RpcEndpointRef是Actor-Ref的替代。
+
+#### 相关配置
+
+```yaml
+#  最大rpc调用重试次数，默认3次
+spark.rpc.numRetries
+# 重试间隔等待时间，默认3秒
+spark.rpc.retry.wait
+# ack超时时间，默认120s
+"spark.rpc.askTimeout", "spark.network.timeout"
+```
+
+### Inbox和Outbox
+
+* OutboxMessage在客户端使用，是对外发送消息的封装。InboxMessage在服务端使用，是对所接收消息的封装。
+
+#### Inbox
+
+* dispathcer处理inbox消息
+
+![Dispathcer](./img/Dispathcer消息处理逻辑.jpg)
+
+1. 调用inbox的post方法将消息放入messages列表
+2. 将有消息的inbox相关联的endpointdata放入receivers
+3. messageloop每次循环首先取receivers获取endpointdata
+4. 执行endpointdata中inbox的process方法对消息进行具体处理
+
+#### Outbox
+
+* OutboxMessage消息继承体系
+  * OneWayOutboxMessage
+  * RpcOutboxMessage
+
+#### Rpc客户端发送请求
+
+![Rpc](./img/Rpc客户端发送请求.jpg)
+
+序号①：表示通过调用NettyRpcEndpointRef的send和ask方法向本地节点的Rpc-Endpoint发送消息。由于是在同一节点，所以直接调用Dispatcher的postLocalMessage或postOneWayMessage方法将消息放入EndpointData内部Inbox的messages列表中。Message-Loop线程最后处理消息，并将消息发给对应的RpcEndpoint处理。
+
+序号②：表示通过调用NettyRpcEndpointRef的send和ask方法向远端节点的Rpc-Endpoint发送消息。这种情况下，消息将首先被封装为OutboxMessage，然后放入到远端RpcEndpoint的地址所对应的Outbox的messages列表中。
+
+序号③：表示每个Outbox的drainOutbox方法通过循环，不断从messages列表中取得OutboxMessage。
+
+序号④：表示每个Outbox的drainOutbox方法使用Outbox内部的TransportClient向远端的NettyRpcEnv发送序号③中取得的OutboxMessage。
+
+序号⑤：表示序号④发出的请求在与远端NettyRpcEnv的TransportServer建立了连接后，请求消息首先经过Netty管道的处理，然后经由NettyRpcHandler处理，最后NettyRpcHandler的receive方法会调用Dispatcher的postRemoteMessage或postOneWay-Message方法，将消息放入EndpointData内部Inbox的messages列表中。MessageLoop线程最后处理消息，并将消息发给对应的RpcEndpoint处理。
 

@@ -121,7 +121,6 @@
 * [DataSource API](bigdata/flink/Data%20Source.xmind)
 * [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
 
-
 ### olap
 #### Presto
 
@@ -139,6 +138,10 @@
 #### Kylin
 
 * [Kylin概述](bigdata/olap/kylin/KylinOverWrite.md)
+
+#### Kudu 
+
+* [KuduOverView](bigdata/olap/kudu/KuduOverView.md)
 
 ## 数据仓库
 
