@@ -1351,3 +1351,230 @@ val closureSerializer = new JavaSerializer(conf)
 * compressShuffle：是否对Shuffle输出数据压缩，可以通过spark.shuffle.compress属性配置，默认为true。
 * compressShuffleSpill：是否对溢出到磁盘的Shuffle数据压缩，可以通过spark.shuffle.spill.compress属性配置，默认为true。
 * compressionCodec:SerializerManager使用的压缩编解码器。compressionCodec的类型是CompressionCodec。在Spark 1.x.x版本中，compressionCodec是BlockManager的成员之一，现在把compressionCodec和序列化、加密等功能都集中到SerializerManager中，也许是因为实现此功能的工程师觉得加密、压缩都是属于序列化的一部分吧。
+
+## 广播管理器BroadcastManager
+
+* BroadcastManager用于将配置信息和序列化后的RDD、Job及ShuffleDependency等信息在本地存储，如果为了容灾，也会复制到其他节点上。
+
+```scala
+# 创建broadcastManager
+val broadcastManager = new BroadcastManager(isDriver, conf, securityManager)
+```
+
+### 广播变量配置
+
+```yaml
+# 广播变量block大小 默认4m
+spark.broadcast.blockSize
+# 是否开启校验和 默认开启
+spark.broadcast.checksum
+# 是否开启广播变量压缩 默认开启
+spark.broadcast.compress
+```
+
+### BroadcastManager
+
+```scala
+private[spark] class BroadcastManager(
+    val isDriver: Boolean,
+    conf: SparkConf,
+    securityManager: SecurityManager)
+  extends Logging {
+
+  // 是否初始化完成
+  private var initialized = false
+  // 广播工厂实例
+  private var broadcastFactory: BroadcastFactory = null
+
+  // 默认初始化，创建广播工厂
+  initialize()
+
+  // Called by SparkContext or Executor before using Broadcast
+  private def initialize() {
+    synchronized {
+      if (!initialized) {
+        broadcastFactory = new TorrentBroadcastFactory
+        broadcastFactory.initialize(isDriver, conf, securityManager)
+        initialized = true
+      }
+    }
+  }
+
+  // 停止工厂
+  def stop() {
+    broadcastFactory.stop()
+  }
+
+  // 下一个广播对象的广播ID
+  private val nextBroadcastId = new AtomicLong(0)
+
+  // 换成的value
+  private[broadcast] val cachedValues = {
+    new ReferenceMap(AbstractReferenceMap.HARD, AbstractReferenceMap.WEAK)
+  }
+
+  // 创建broadcast对象，传入value和是否local模式
+  def newBroadcast[T: ClassTag](value_ : T, isLocal: Boolean): Broadcast[T] = {
+    broadcastFactory.newBroadcast[T](value_, isLocal, nextBroadcastId.getAndIncrement())
+  }
+
+  // 移除broadcast，是否从driver中移除
+  def unbroadcast(id: Long, removeFromDriver: Boolean, blocking: Boolean) {
+    broadcastFactory.unbroadcast(id, removeFromDriver, blocking)
+  }
+}
+```
+
+### TorrentBroadcast
+
+#### writeBlocks
+
+```scala
+private def writeBlocks(value: T): Int = {
+    import StorageLevel._
+    // Store a copy of the broadcast variable in the driver so that tasks run on the driver
+    // do not create a duplicate copy of the broadcast variable's value.
+  // 获取当前SparkEnv的blockmanager组件
+    val blockManager = SparkEnv.get.blockManager
+    // 将广播变量写成一个单独对象的block
+    if (!blockManager.putSingle(broadcastId, value, MEMORY_AND_DISK, tellMaster = false)) {
+      throw new SparkException(s"Failed to store $broadcastId in BlockManager")
+    }
+    val blocks = {
+      // 将对象块化
+      TorrentBroadcast.blockifyObject(value, blockSize, SparkEnv.get.serializer, compressionCodec)
+    }
+    if (checksumEnabled) {
+      // 初始化校验和数组的长度
+      checksums = new Array[Int](blocks.length)
+    }
+    blocks.zipWithIndex.foreach { case (block, i) =>
+      if (checksumEnabled) {
+        // 根据单独块计算校验和，存入数组中
+        checksums(i) = calcChecksum(block)
+      }
+      // 创建对应块的片id
+      val pieceId = BroadcastBlockId(id, "piece" + i)
+      val bytes = new ChunkedByteBuffer(block.duplicate())
+      // 将block的分片写入driver或executor的本地存储
+      if (!blockManager.putBytes(pieceId, bytes, MEMORY_AND_DISK_SER, tellMaster = true)) {
+        throw new SparkException(s"Failed to store $pieceId of $broadcastId in local BlockManager")
+      }
+    }
+    blocks.length
+  }
+```
+
+#### readBroadcastBlock
+
+```scala
+private def readBroadcastBlock(): T = Utils.tryOrIOException {
+    TorrentBroadcast.synchronized {
+
+      val broadcastCache: ReferenceMap = SparkEnv.get.broadcastManager.cachedValues
+
+      Option(broadcastCache.get(broadcastId)).map(_.asInstanceOf[T]).getOrElse {
+        setConf(SparkEnv.get.conf)
+        // 获取当前blockManager
+        val blockManager = SparkEnv.get.blockManager
+        // 首先从本地获取广播对象，即通过BlockManager putSingle写入存储体系的广播多谢。
+        blockManager.getLocalValues(broadcastId) match {
+          case Some(blockResult) =>
+            if (blockResult.data.hasNext) {
+              val x = blockResult.data.next().asInstanceOf[T]
+              // 释放block的锁
+              releaseLock(broadcastId)
+
+              // 将block放入ubroadcastCache中
+              if (x != null) {
+                broadcastCache.put(broadcastId, x)
+              }
+
+              x
+            } else {
+              throw new SparkException(s"Failed to get locally stored broadcast data: $broadcastId")
+            }
+            // 广播变量不是通过putSingle写入BlockManager中的，则通过readBlocks读取存储在driver或executor的广播快
+          case None =>
+            logInfo("Started reading broadcast variable " + id)
+            val startTimeMs = System.currentTimeMillis()
+            val blocks = readBlocks()
+            logInfo("Reading broadcast variable " + id + " took" + Utils.getUsedTimeMs(startTimeMs))
+
+            try {
+              val obj = TorrentBroadcast.unBlockifyObject[T](
+                blocks.map(_.toInputStream()), SparkEnv.get.serializer, compressionCodec)
+              // Store the merged copy in BlockManager so other tasks on this executor don't
+              // need to re-fetch it.
+              val storageLevel = StorageLevel.MEMORY_AND_DISK
+              if (!blockManager.putSingle(broadcastId, obj, storageLevel, tellMaster = false)) {
+                throw new SparkException(s"Failed to store $broadcastId in BlockManager")
+              }
+
+              if (obj != null) {
+                broadcastCache.put(broadcastId, obj)
+              }
+
+              obj
+            } finally {
+              blocks.foreach(_.dispose())
+            }
+        }
+      }
+```
+
+#### readBlocks
+
+```scala
+  private def readBlocks(): Array[BlockData] = {
+    // Fetch chunks of data. Note that all these chunks are stored in the BlockManager and reported
+    // to the driver, so other executors can pull these chunks from this executor as well.
+    // blocks个数
+    val blocks = new Array[BlockData](numBlocks)
+    // blockManager
+    val bm = SparkEnv.get.blockManager
+    
+    // 随机获取分片block
+    for (pid <- Random.shuffle(Seq.range(0, numBlocks))) {
+      val pieceId = BroadcastBlockId(id, "piece" + pid)
+      logDebug(s"Reading piece $pieceId of $broadcastId")
+      // First try getLocalBytes because there is a chance that previous attempts to fetch the
+      // broadcast blocks have already fetched some of the blocks. In that case, some blocks
+      // would be available locally (on this executor).
+      // 本地获取，找不到去远程拉去block
+      bm.getLocalBytes(pieceId) match {
+        case Some(block) =>
+          blocks(pid) = block
+          releaseLock(pieceId)
+        case None =>
+          bm.getRemoteBytes(pieceId) match {
+            case Some(b) =>
+              if (checksumEnabled) {
+                val sum = calcChecksum(b.chunks(0))
+                if (sum != checksums(pid)) {
+                  throw new SparkException(s"corrupt remote block $pieceId of $broadcastId:" +
+                    s" $sum != ${checksums(pid)}")
+                }
+              }
+              // We found the block from remote executors/driver's BlockManager, so put the block
+              // in this executor's BlockManager.
+              if (!bm.putBytes(pieceId, b, StorageLevel.MEMORY_AND_DISK_SER, tellMaster = true)) {
+                throw new SparkException(
+                  s"Failed to store $pieceId of $broadcastId in local BlockManager")
+              }
+              blocks(pid) = new ByteBufferBlockData(b, true)
+            case None =>
+              throw new SparkException(s"Failed to get $pieceId of $broadcastId")
+          }
+      }
+    }
+    blocks
+  }
+```
+
+### 广播对象的读取
+
+![broadcast读取](./img/braodcast读取.jpg)
+
+## mapOutputTracker
+
