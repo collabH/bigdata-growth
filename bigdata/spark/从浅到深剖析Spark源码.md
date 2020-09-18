@@ -1578,3 +1578,53 @@ private def readBroadcastBlock(): T = Utils.tryOrIOException {
 
 ## mapOutputTracker
 
+* mapOutputTracker用于跟踪map任务的输出状态，此状态便于reduce任务定位map输出结果所在的节点地址，进而获取中间输出结果。每个map任务或者reduce任务都会有其唯一标识，分别为mapId和reduceId。每个reduce任务的输入可能是多个map任务的输出，reduce会到各个map任务所在的节点上拉取Block，这一过程叫做Shuffle。每次Shuffle都有唯一的标识shuffleId。
+
+```scala
+val mapOutputTracker = if (isDriver) {
+      new MapOutputTrackerMaster(conf, broadcastManager, isLocal)
+    } else {
+      new MapOutputTrackerWorker(conf)
+    }
+```
+
+### MapOutputTracker
+
+* MapOutputTracker是一个模版方法，为Master和Worker对应的MapOutTracker提供基础实现。
+
+### MapOutputTrackerMaster
+
+#### 参数配置
+
+```
+# 用于广播的最小大小,默认为512KB。minSizeForBroadcast必须小于maxRpcMessageSize。
+spark.shuffle.mapOutput.minSizeForBroadcast
+# 是否为reduce任务计算本地性的偏好，默认为true
+spark.shuffle.reduceLocality.enabled
+# shuffle mapOupt输出文件线程池线程数，默认为8
+spark.shuffle.mapOutput.dispatcher.numThreads
+# 最大的rpc消息大小，默认128MB，minSizeForBroadcast必须小于maxRpcMessageSize
+spark.rpc.message.maxSize
+```
+
+#### 运行原理
+
+![MapOutputTrackerMaster运行原理](./img/MapOutputTrackerMaster运行原理.jpg)
+
+序号①：表示某个Executor调用MapOutputTrackerWorker的getStatuses方法获取某个shuffle的map任务状态信息，当发现本地的mapStatuses没有相应的缓存，则调用askTracker方法发送GetMapOutputStatuses消息。根据代码清单5-56的内容我们知道，askTracker实际是通过MapOutputTrackerMasterEndpoint的NettyRpcEndpointRef向远端发送GetMapOutputStatuses消息。发送实际依托于NettyRpcEndpointRef持有的Transport-Client。MapOutputTrackerMasterEndpoint在接收到GetMapOutputStatuses消息后，将GetMapOutputMessage消息放入mapOutput Requests队尾。
+
+序号②：表示MessageLoop线程从mapOutputRequests队头取出GetMapOutputMessage。
+
+序号③：表示从shuffleIdLocks数组中取出与当前GetMapOutputMessage携带的shuffleId相对应的锁。
+
+序号④：表示首先从cachedSerializedStatuses缓存中获取shuffleId对应的序列化任务状态信息。
+
+序号⑤：表示当cachedSerializedStatuses中没有shuffleId对应的序列化任务状态信息，则获取mapStatuses中缓存的shuffleId对应的任务状态数组。
+
+序号⑥：表示将任务状态数组进行序列化，然后使用BroadcastManager对序列化的任务状态进行广播。
+
+序号⑦：表示将序列化的任务状态放入cachedSerializedStatuses缓存中。
+
+序号⑧：表示将广播对象放入cachedSerializedBroadcast缓存中。
+
+序号⑨：表示将获得的序列化任务状态信息，通过回调GetMapOutputMessage消息携带的RpcCallContext的reply方法回复客户端。
