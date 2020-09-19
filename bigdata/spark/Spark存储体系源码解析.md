@@ -642,3 +642,577 @@ def createTempShuffleBlock(): (TempShuffleBlockId, File) = {
   }
 ```
 
+# DiskStore
+
+```scala
+private[spark] class DiskStore(
+    conf: SparkConf,
+    diskManager: DiskBlockManager,
+    securityManager: SecurityManager) extends Logging {
+
+  private val minMemoryMapBytes = conf.getSizeAsBytes("spark.storage.memoryMapThreshold", "2m")
+  private val maxMemoryMapBytes = conf.get(config.MEMORY_MAP_LIMIT_FOR_TESTS)
+  // 存储blockId和对应的blockSize
+  private val blockSizes = new ConcurrentHashMap[BlockId, Long]()
+
+  def getSize(blockId: BlockId): Long = blockSizes.get(blockId)
+
+  /**
+   * Invokes the provided callback function to write the specific block.
+   *
+   * @throws IllegalStateException if the block already exists in the disk store.
+   */
+  def put(blockId: BlockId)(writeFunc: WritableByteChannel => Unit): Unit = {
+    if (contains(blockId)) {
+      throw new IllegalStateException(s"Block $blockId is already present in the disk store")
+    }
+    logDebug(s"Attempting to put block $blockId")
+    val startTime = System.currentTimeMillis
+    // 根据block从DiskBlockManager中获取file
+    val file: File = diskManager.getFile(blockId)
+    val out = new CountingWritableChannel(openForWrite(file))
+    var threwException: Boolean = true
+    try {
+      writeFunc(out)
+      blockSizes.put(blockId, out.getCount)
+      threwException = false
+    } finally {
+      try {
+        out.close()
+      } catch {
+        case ioe: IOException =>
+          if (!threwException) {
+            threwException = true
+            throw ioe
+          }
+      } finally {
+         if (threwException) {
+          remove(blockId)
+        }
+      }
+    }
+    val finishTime = System.currentTimeMillis
+    logDebug("Block %s stored as %s file on disk in %d ms".format(
+      file.getName,
+      Utils.bytesToString(file.length()),
+      finishTime - startTime))
+  }
+
+  def putBytes(blockId: BlockId, bytes: ChunkedByteBuffer): Unit = {
+    put(blockId) { channel: WritableByteChannel =>
+      bytes.writeFully(channel)
+    }
+  }
+
+  def getBytes(blockId: BlockId): BlockData = {
+    val file = diskManager.getFile(blockId.name)
+    val blockSize = getSize(blockId)
+
+    securityManager.getIOEncryptionKey() match {
+      case Some(key) =>
+        // Encrypted blocks cannot be memory mapped; return a special object that does decryption
+        // and provides InputStream / FileRegion implementations for reading the data.
+        new EncryptedBlockData(file, blockSize, conf, key)
+
+      case _ =>
+        new DiskBlockData(minMemoryMapBytes, maxMemoryMapBytes, file, blockSize)
+    }
+  }
+
+  def remove(blockId: BlockId): Boolean = {
+    blockSizes.remove(blockId)
+    val file = diskManager.getFile(blockId.name)
+    if (file.exists()) {
+      val ret = file.delete()
+      if (!ret) {
+        logWarning(s"Error deleting ${file.getPath()}")
+      }
+      ret
+    } else {
+      false
+    }
+  }
+
+  def contains(blockId: BlockId): Boolean = {
+    val file = diskManager.getFile(blockId.name)
+    file.exists()
+  }
+
+  private def openForWrite(file: File): WritableByteChannel = {
+    val out = new FileOutputStream(file).getChannel()
+    try {
+      securityManager.getIOEncryptionKey().map { key =>
+        CryptoStreamUtils.createWritableChannel(out, conf, key)
+      }.getOrElse(out)
+    } catch {
+      case e: Exception =>
+        Closeables.close(out, true)
+        file.delete()
+        throw e
+    }
+  }
+```
+
+# MemoryManager
+
+## 内存池模型
+
+* 内存池实质上是对物理内存的逻辑规划，协助Spark任务在运行时合理地使用内存资源。Spark将内存从逻辑上区分为堆内存和堆外内存，称为内存模式（MemoryMode）。这里的堆内存只是Jvm堆的一部分，堆外内存是Spark使用Unsafe的API直接在工作节点的系统内存中开辟的空间。
+
+```java
+@Private
+public enum MemoryMode {
+  ON_HEAP,
+  OFF_HEAP
+}
+```
+
+## MeoryPool
+
+```scala
+// lock对内存池提供线程安全保证的锁对象
+private[memory] abstract class MemoryPool(lock: Object) {
+
+  /**
+   * 内存池大小，单位字节
+   */
+  @GuardedBy("lock")
+  private[this] var _poolSize: Long = 0
+
+  /**
+   * Returns the current size of the pool, in bytes.
+   */
+  final def poolSize: Long = lock.synchronized {
+    _poolSize
+  }
+
+  /**
+   * Returns the amount of free memory in the pool, in bytes.
+   */
+  final def memoryFree: Long = lock.synchronized {
+    _poolSize - memoryUsed
+  }
+
+  /**
+   * Expands the pool by `delta` bytes.
+   */
+  final def incrementPoolSize(delta: Long): Unit = lock.synchronized {
+    require(delta >= 0)
+    _poolSize += delta
+  }
+
+  /**
+   * Shrinks the pool by `delta` bytes.
+   */
+  final def decrementPoolSize(delta: Long): Unit = lock.synchronized {
+    require(delta >= 0)
+    require(delta <= _poolSize)
+    require(_poolSize - delta >= memoryUsed)
+    _poolSize -= delta
+  }
+
+  /**
+   * Returns the amount of used memory in this pool (in bytes).
+   */
+  def memoryUsed: Long
+
+```
+
+### 内存模型
+
+* PoolSize
+  * memoryUsed
+  * memoryFree
+
+### StorageMemoryPool
+
+* 存储物理内存的逻辑抽象，通过对存储内存的逻辑管理，提高Spark存储体系对内存的使用效率。
+
+```scala
+private[memory] class StorageMemoryPool(
+    lock: Object,
+    memoryMode: MemoryMode
+  ) extends MemoryPool(lock) with Logging {
+
+  /**
+   * Storage内存池名称
+   */
+  private[this] val poolName: String = memoryMode match {
+    case MemoryMode.ON_HEAP => "on-heap storage"
+    case MemoryMode.OFF_HEAP => "off-heap storage"
+  }
+
+  @GuardedBy("lock")
+  private[this] var _memoryUsed: Long = 0L
+
+  /**
+    * 使用内存量
+    * @return
+    */
+  override def memoryUsed: Long = lock.synchronized {
+    _memoryUsed
+  }
+
+  /**
+   * memoryStore
+   */
+  private var _memoryStore: MemoryStore = _
+  def memoryStore: MemoryStore = {
+    if (_memoryStore == null) {
+      throw new IllegalStateException("memory store not initialized yet")
+    }
+    _memoryStore
+  }
+
+  /**
+   * Set the [[MemoryStore]] used by this manager to evict cached blocks.
+   * This must be set after construction due to initialization ordering constraints.
+   */
+  final def setMemoryStore(store: MemoryStore): Unit = {
+    _memoryStore = store
+  }
+
+  /**
+   * 申请内存的N bytes换成给定的block
+   * Acquire N bytes of memory to cache the given block, evicting existing ones if necessary.
+   *
+   * @return whether all N bytes were successfully granted.
+   */
+  def acquireMemory(blockId: BlockId, numBytes: Long): Boolean = lock.synchronized {
+    val numBytesToFree = math.max(0, numBytes - memoryFree)
+    acquireMemory(blockId, numBytes, numBytesToFree)
+  }
+
+  /**
+   * Acquire N bytes of storage memory for the given block, evicting existing ones if necessary.
+   *
+   * @param blockId the ID of the block we are acquiring storage memory for
+   * @param numBytesToAcquire the size of this block
+   * @param numBytesToFree the amount of space to be freed through evicting blocks
+   * @return whether all N bytes were successfully granted.
+   */
+  def acquireMemory(
+      blockId: BlockId,
+      numBytesToAcquire: Long,
+      numBytesToFree: Long): Boolean = lock.synchronized {
+    assert(numBytesToAcquire >= 0)
+    assert(numBytesToFree >= 0)
+    assert(memoryUsed <= poolSize)
+    // 如果numBytesToFree大于0，说明memoryFree内存不足，需要使用内存
+    if (numBytesToFree > 0) {
+      memoryStore.evictBlocksToFreeSpace(Some(blockId), numBytesToFree, memoryMode)
+    }
+    // 释放内存后继续判断是否内足够可用内存可以申请
+    // NOTE: If the memory store evicts blocks, then those evictions will synchronously call
+    // back into this StorageMemoryPool in order to free memory. Therefore, these variables
+    // should have been updated.
+    val enoughMemory = numBytesToAcquire <= memoryFree
+    if (enoughMemory) {
+      _memoryUsed += numBytesToAcquire
+    }
+    enoughMemory
+  }
+
+  def releaseMemory(size: Long): Unit = lock.synchronized {
+    if (size > _memoryUsed) {
+      logWarning(s"Attempted to release $size bytes of storage " +
+        s"memory when we only have ${_memoryUsed} bytes")
+      _memoryUsed = 0
+    } else {
+      _memoryUsed -= size
+    }
+  }
+
+  def releaseAllMemory(): Unit = lock.synchronized {
+    _memoryUsed = 0
+  }
+
+  /**
+   * Free space to shrink the size of this storage memory pool by `spaceToFree` bytes.
+   * Note: this method doesn't actually reduce the pool size but relies on the caller to do so.
+   *
+   * @return number of bytes to be removed from the pool's capacity.
+   * 用于释放指定大小的空间，缩小内存池的大小。
+   */
+  def freeSpaceToShrinkPool(spaceToFree: Long): Long = lock.synchronized {
+    // 计算最小的空闲逻辑内存
+    val spaceFreedByReleasingUnusedMemory = math.min(spaceToFree, memoryFree)
+    // 计算剩余的空闲内存
+    val remainingSpaceToFree = spaceToFree - spaceFreedByReleasingUnusedMemory
+    // 如果大于0
+    if (remainingSpaceToFree > 0) {
+      // If reclaiming free memory did not adequately shrink the pool, begin evicting blocks:
+      // 后收其他block的内存
+      val spaceFreedByEviction =
+        memoryStore.evictBlocksToFreeSpace(None, remainingSpaceToFree, memoryMode)
+      // When a block is released, BlockManager.dropFromMemory() calls releaseMemory(), so we do
+      // not need to decrement _memoryUsed here. However, we do need to decrement the pool size.
+      spaceFreedByReleasingUnusedMemory + spaceFreedByEviction
+    } else {
+      spaceFreedByReleasingUnusedMemory
+    }
+  }
+}
+```
+
+## MemoryManager模型
+
+### MemoryManager属性
+
+```scala
+/**
+ *
+ * @param conf spark集群配置
+ * @param numCores CPU核数
+ * @param onHeapStorageMemory 堆内Storage区域内存
+ * @param onHeapExecutionMemory  堆内Execution内存
+ */
+private[spark] abstract class MemoryManager(
+    conf: SparkConf,
+    numCores: Int,
+    onHeapStorageMemory: Long,
+    onHeapExecutionMemory: Long) extends Logging {
+
+  // -- Methods related to memory allocation policies and bookkeeping ------------------------------
+
+  /**
+    *  堆内/堆外，内存管理池
+    */
+  @GuardedBy("this")
+  protected val onHeapStorageMemoryPool = new StorageMemoryPool(this, MemoryMode.ON_HEAP)
+  @GuardedBy("this")
+  protected val offHeapStorageMemoryPool = new StorageMemoryPool(this, MemoryMode.OFF_HEAP)
+  @GuardedBy("this")
+  protected val onHeapExecutionMemoryPool = new ExecutionMemoryPool(this, MemoryMode.ON_HEAP)
+  @GuardedBy("this")
+  protected val offHeapExecutionMemoryPool = new ExecutionMemoryPool(this, MemoryMode.OFF_HEAP)
+
+  onHeapStorageMemoryPool.incrementPoolSize(onHeapStorageMemory)
+  onHeapExecutionMemoryPool.incrementPoolSize(onHeapExecutionMemory)
+
+  //"spark.memory.offHeap.size" 最大堆外内存
+  protected[this] val maxOffHeapMemory = conf.get(MEMORY_OFFHEAP_SIZE)
+  // 堆外storage区域内存
+  protected[this] val offHeapStorageMemory =
+    (maxOffHeapMemory * conf.getDouble("spark.memory.storageFraction", 0.5)).toLong
+
+  // 初始化堆外execution poolSize
+  offHeapExecutionMemoryPool.incrementPoolSize(maxOffHeapMemory - offHeapStorageMemory)
+  offHeapStorageMemoryPool.incrementPoolSize(offHeapStorageMemory)
+```
+
+![MemoryManager内存模型](./img/MemoryManager内存模型.jpg)
+
+* 毫不相干的onHeapStorageMemoryPool和onHeapExecutionMemory-Pool合在了一起，将堆内存作为一个整体看待。而且onHeapStorageMemoryPool与onHeap-ExecutionMemoryPool之间，offHeapStorageMemoryPool与offHeapExecutionMemoryPool之间的实线也调整为虚线，表示它们之间都是“软”边界。存储方或计算方的空闲空间（即memoryFree表示的区域）都可以借给另一方使用。
+
+### UnifiedMemoryManager
+
+```scala
+private[spark] class UnifiedMemoryManager private[memory] (
+    conf: SparkConf,
+    val maxHeapMemory: Long,
+    onHeapStorageRegionSize: Long,
+    numCores: Int)
+  extends MemoryManager(
+    conf,
+    numCores,
+    onHeapStorageRegionSize,
+    maxHeapMemory - onHeapStorageRegionSize) {
+
+  /**
+   * 判断内存大小
+   */
+  private def assertInvariants(): Unit = {
+    assert(onHeapExecutionMemoryPool.poolSize + onHeapStorageMemoryPool.poolSize == maxHeapMemory)
+    assert(
+      offHeapExecutionMemoryPool.poolSize + offHeapStorageMemoryPool.poolSize == maxOffHeapMemory)
+  }
+
+  assertInvariants()
+
+  /**
+   * 最大堆内内存
+   * @return
+   */
+  override def maxOnHeapStorageMemory: Long = synchronized {
+    maxHeapMemory - onHeapExecutionMemoryPool.memoryUsed
+  }
+
+  override def maxOffHeapStorageMemory: Long = synchronized {
+    maxOffHeapMemory - offHeapExecutionMemoryPool.memoryUsed
+  }
+
+  /**
+   * Try to acquire up to `numBytes` of execution memory for the current task and return the
+   * number of bytes obtained, or 0 if none can be allocated.
+   *
+   * This call may block until there is enough free memory in some situations, to make sure each
+   * task has a chance to ramp up to at least 1 / 2N of the total memory pool (where N is the # of
+   * active tasks) before it is forced to spill. This can happen if the number of tasks increase
+   * but an older task had a lot of memory already.
+   */
+  override private[memory] def acquireExecutionMemory(
+      numBytes: Long,
+      taskAttemptId: Long,
+      memoryMode: MemoryMode): Long = synchronized {
+    assertInvariants()
+    assert(numBytes >= 0)
+    val (executionPool, storagePool, storageRegionSize, maxMemory) = memoryMode match {
+      case MemoryMode.ON_HEAP => (
+        onHeapExecutionMemoryPool,
+        onHeapStorageMemoryPool,
+        onHeapStorageRegionSize,
+        maxHeapMemory)
+      case MemoryMode.OFF_HEAP => (
+        offHeapExecutionMemoryPool,
+        offHeapStorageMemoryPool,
+        offHeapStorageMemory,
+        maxOffHeapMemory)
+    }
+
+    /**
+     * 申请storge区域的内存到execution中使用
+     * Grow the execution pool by evicting cached blocks, thereby shrinking the storage pool.
+     *
+     * When acquiring memory for a task, the execution pool may need to make multiple
+     * attempts. Each attempt must be able to evict storage in case another task jumps in
+     * and caches a large block between the attempts. This is called once per attempt.
+     */
+    def maybeGrowExecutionPool(extraMemoryNeeded: Long): Unit = {
+      if (extraMemoryNeeded > 0) {
+        // There is not enough free memory in the execution pool, so try to reclaim memory from
+        // storage. We can reclaim any free memory from the storage pool. If the storage pool
+        // has grown to become larger than `storageRegionSize`, we can evict blocks and reclaim
+        // the memory that storage has borrowed from execution.
+        val memoryReclaimableFromStorage: Long = math.max(
+          storagePool.memoryFree,
+          storagePool.poolSize - storageRegionSize)
+        if (memoryReclaimableFromStorage > 0) {
+          // Only reclaim as much space as is necessary and available:
+          val spaceToReclaim = storagePool.freeSpaceToShrinkPool(
+            math.min(extraMemoryNeeded, memoryReclaimableFromStorage))
+          storagePool.decrementPoolSize(spaceToReclaim)
+          executionPool.incrementPoolSize(spaceToReclaim)
+        }
+      }
+    }
+
+    /**
+     * The size the execution pool would have after evicting storage memory.
+     *
+     * The execution memory pool divides this quantity among the active tasks evenly to cap
+     * the execution memory allocation for each task. It is important to keep this greater
+     * than the execution pool size, which doesn't take into account potential memory that
+     * could be freed by evicting storage. Otherwise we may hit SPARK-12155.
+     *
+     * Additionally, this quantity should be kept below `maxMemory` to arbitrate fairness
+     * in execution memory allocation across tasks, Otherwise, a task may occupy more than
+     * its fair share of execution memory, mistakenly thinking that other tasks can acquire
+     * the portion of storage memory that cannot be evicted.
+     */
+    def computeMaxExecutionPoolSize(): Long = {
+      maxMemory - math.min(storagePool.memoryUsed, storageRegionSize)
+    }
+
+    executionPool.acquireMemory(
+      numBytes, taskAttemptId, maybeGrowExecutionPool, () => computeMaxExecutionPoolSize)
+  }
+
+  override def acquireStorageMemory(
+      blockId: BlockId,
+      numBytes: Long,
+      memoryMode: MemoryMode): Boolean = synchronized {
+    assertInvariants()
+    assert(numBytes >= 0)
+    val (executionPool, storagePool, maxMemory) = memoryMode match {
+      case MemoryMode.ON_HEAP => (
+        onHeapExecutionMemoryPool,
+        onHeapStorageMemoryPool,
+        maxOnHeapStorageMemory)
+      case MemoryMode.OFF_HEAP => (
+        offHeapExecutionMemoryPool,
+        offHeapStorageMemoryPool,
+        maxOffHeapStorageMemory)
+    }
+    // 超过最大内存限制
+    if (numBytes > maxMemory) {
+      // Fail fast if the block simply won't fit
+      logInfo(s"Will not store $blockId as the required space ($numBytes bytes) exceeds our " +
+        s"memory limit ($maxMemory bytes)")
+      return false
+    }
+    // 如果大于storagePool的free内存
+    if (numBytes > storagePool.memoryFree) {
+      // There is not enough free memory in the storage pool, so try to borrow free memory from
+      // the execution pool.
+      // 尝试区execution申请内存
+      // fixme 这里storage区域不足，去申请execution区域内存，但是这里没有校验execution+storge的free内存是否满足申请，如果不满足还需要走到最终storagePool后才能感知，
+      // fixme 然后去尝试回收其他block的内存，为什么不能在这里直接就进行尝试，回收其他block，链路不用在走下去
+      val memoryBorrowedFromExecution = Math.min(executionPool.memoryFree,
+        numBytes - storagePool.memoryFree)
+      executionPool.decrementPoolSize(memoryBorrowedFromExecution)
+      storagePool.incrementPoolSize(memoryBorrowedFromExecution)
+    }
+    storagePool.acquireMemory(blockId, numBytes)
+  }
+
+  override def acquireUnrollMemory(
+      blockId: BlockId,
+      numBytes: Long,
+      memoryMode: MemoryMode): Boolean = synchronized {
+    acquireStorageMemory(blockId, numBytes, memoryMode)
+  }
+}
+
+object UnifiedMemoryManager {
+
+  // Set aside a fixed amount of memory for non-storage, non-execution purposes.
+  // This serves a function similar to `spark.memory.fraction`, but guarantees that we reserve
+  // sufficient memory for the system even for small heaps. E.g. if we have a 1GB JVM, then
+  // the memory used for execution and storage will be (1024 - 300) * 0.6 = 434MB by default.
+  private val RESERVED_SYSTEM_MEMORY_BYTES = 300 * 1024 * 1024
+
+  def apply(conf: SparkConf, numCores: Int): UnifiedMemoryManager = {
+    val maxMemory = getMaxMemory(conf)
+    new UnifiedMemoryManager(
+      conf,
+      maxHeapMemory = maxMemory,
+      onHeapStorageRegionSize =
+        (maxMemory * conf.getDouble("spark.memory.storageFraction", 0.5)).toLong,
+      numCores = numCores)
+  }
+
+  /**
+   * 返回storage和execution区域共享内存部分
+   * Return the total amount of memory shared between execution and storage, in bytes.
+   */
+  private def getMaxMemory(conf: SparkConf): Long = {
+    val systemMemory = conf.getLong("spark.testing.memory", Runtime.getRuntime.maxMemory)
+    val reservedMemory = conf.getLong("spark.testing.reservedMemory",
+      if (conf.contains("spark.testing")) 0 else RESERVED_SYSTEM_MEMORY_BYTES)
+    val minSystemMemory = (reservedMemory * 1.5).ceil.toLong
+    if (systemMemory < minSystemMemory) {
+      throw new IllegalArgumentException(s"System memory $systemMemory must " +
+        s"be at least $minSystemMemory. Please increase heap size using the --driver-memory " +
+        s"option or spark.driver.memory in Spark configuration.")
+    }
+    // SPARK-12759 Check executor memory to fail fast if memory is insufficient
+    if (conf.contains("spark.executor.memory")) {
+      // executor内存
+      val executorMemory = conf.getSizeAsBytes("spark.executor.memory")
+      if (executorMemory < minSystemMemory) {
+        throw new IllegalArgumentException(s"Executor memory $executorMemory must be at least " +
+          s"$minSystemMemory. Please increase executor memory using the " +
+          s"--executor-memory option or spark.executor.memory in Spark configuration.")
+      }
+    }
+    val usableMemory = systemMemory - reservedMemory
+    val memoryFraction = conf.getDouble("spark.memory.fraction", 0.6)
+    (usableMemory * memoryFraction).toLong
+  }
+}
+```
+
+### StaticMemoryManager
+
+* Exection和Storage区域不能互相使用对方的内存
