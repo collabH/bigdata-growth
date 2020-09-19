@@ -479,3 +479,166 @@ def lockNewBlockForWriting(
   }
 ```
 
+# DiskBlockManager
+
+* 负责为逻辑的Block与数据写入磁盘的位置之间建立逻辑的映射关系。
+
+## 相关属性
+
+```scala
+private[spark] class DiskBlockManager(conf: SparkConf,
+                                       deleteFilesOnStop: Boolean) extends Logging {
+  // 本地子目录个数
+  private[spark] val subDirsPerLocalDir = conf.getInt("spark.diskStore.subDirectories", 64)
+
+  /* Create one local directory for each path mentioned in spark.local.dir; then, inside this
+   * directory, create multiple subdirectories that we will hash files into, in order to avoid
+   * having really large inodes at the top level. */
+  // 本地目录数组，创建本地目录
+  private[spark] val localDirs: Array[File] = createLocalDirs(conf)
+  // 本地目录创建失败
+  if (localDirs.isEmpty) {
+    logError("Failed to create any local dir.")
+    System.exit(ExecutorExitCode.DISK_STORE_FAILED_TO_CREATE_DIR)
+  }
+  // The content of subDirs is immutable but the content of subDirs(i) is mutable. And the content
+  // of subDirs(i) is protected by the lock of subDirs(i)
+  private val subDirs = Array.fill(localDirs.length)(new Array[File](subDirsPerLocalDir))
+
+  // 添加shutdown钩子函数
+  private val shutdownHook = addShutdownHook()
+```
+
+
+
+## 本地目录结构
+
+### createLocalDirs
+
+```scala
+ private def createLocalDirs(conf: SparkConf): Array[File] = {
+   // 获取spark.local.dir配置
+    Utils.getConfiguredLocalDirs(conf).flatMap { rootDir =>
+      try {
+        val localDir = Utils.createDirectory(rootDir, "blockmgr")
+        logInfo(s"Created local directory at $localDir")
+        Some(localDir)
+      } catch {
+        case e: IOException =>
+          logError(s"Failed to create local dir in $rootDir. Ignoring this directory.", e)
+          None
+      }
+    }
+  }
+```
+
+### addShutdownHook
+
+```scala
+ private def addShutdownHook(): AnyRef = {
+    logDebug("Adding shutdown hook") // force eager creation of logger
+    ShutdownHookManager.addShutdownHook(ShutdownHookManager.TEMP_DIR_SHUTDOWN_PRIORITY + 1) { () =>
+      logInfo("Shutdown hook called")
+      // 关闭DiskBlockManager
+      DiskBlockManager.this.doStop()
+    }
+  }
+```
+
+![本地目录](/Users/babywang/Documents/reserch/dev/workspace/repository/bigdata/spark/img/spark存储block本地目录结构.jpg)
+
+## DiskBlockManager相关方法
+
+### getFile
+
+```scala
+ def getFile(filename: String): File = {
+    // Figure out which local directory it hashes to, and which subdirectory in that
+   // 获取非负数的hash值
+    val hash = Utils.nonNegativeHash(filename)
+    // 按照取余方式选中一级目录
+    val dirId = hash % localDirs.length
+    // 获取subDirId
+    val subDirId = (hash / localDirs.length) % subDirsPerLocalDir
+
+    // Create the subdirectory if it doesn't already exist
+    val subDir = subDirs(dirId).synchronized {
+      // 获取oldSubDir
+      val old = subDirs(dirId)(subDirId)
+      if (old != null) {
+        old
+      } else {
+        val newDir = new File(localDirs(dirId), "%02x".format(subDirId))
+        if (!newDir.exists() && !newDir.mkdir()) {
+          throw new IOException(s"Failed to create local dir in $newDir.")
+        }
+        subDirs(dirId)(subDirId) = newDir
+        newDir
+      }
+    }
+
+    new File(subDir, filename)
+  }
+```
+
+* 调用Utils工具类的nonNegativeHash方法获取文件名的非负哈希值。
+* 从localDirs数组中按照取余方式获得选中的一级目录。
+* 哈希值除以一级目录的大小获得商，然后用商数与subDirsPerLocalDir取余获得的余数作为选中的二级目录。
+* 获取二级目录。如果二级目录不存在，则需要创建二级目录。
+* 返回二级目录下的文件。
+
+###  containsBlock
+
+```scala
+ def containsBlock(blockId: BlockId): Boolean = {
+    getFile(blockId.name).exists()
+  }
+```
+
+### getAllFiles
+
+```scala
+def getAllFiles(): Seq[File] = {
+  // Get all the files inside the array of array of directories
+  subDirs.flatMap { dir =>
+    dir.synchronized {
+      // Copy the content of dir because it may be modified in other threads
+      dir.clone()
+    }
+  }.filter(_ != null).flatMap { dir =>
+    val files = dir.listFiles()
+    if (files != null) files else Seq.empty
+  }
+}
+```
+
+### createTempLocalBlock
+
+* 为中间结果创建唯一的BlockId和文件，此文件将用于保存本地Block的数据。
+
+```scala
+ def createTempLocalBlock(): (TempLocalBlockId, File) = {
+    // 创建中间零食结果本地BlockId
+    var blockId = new TempLocalBlockId(UUID.randomUUID())
+    // 如果存在则在生产
+    while (getFile(blockId).exists()) {
+      blockId = new TempLocalBlockId(UUID.randomUUID())
+    }
+    (blockId, getFile(blockId))
+  }
+```
+
+### createTempShuffleBlock
+
+* 创建唯一的BlockId和文件，用来存储Shuffle中间结果（即map任务的输出）。
+
+```scala
+def createTempShuffleBlock(): (TempShuffleBlockId, File) = {
+    var blockId = new TempShuffleBlockId(UUID.randomUUID())
+    while (getFile(blockId).exists()) {
+      blockId = new TempShuffleBlockId(UUID.randomUUID())
+    }
+    (blockId, getFile(blockId))
+  }
+```
+
