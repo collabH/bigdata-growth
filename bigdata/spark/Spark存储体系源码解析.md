@@ -642,7 +642,7 @@ def createTempShuffleBlock(): (TempShuffleBlockId, File) = {
   }
 ```
 
-# DiskStore
+## DiskStore
 
 ```scala
 private[spark] class DiskStore(
@@ -1215,4 +1215,53 @@ object UnifiedMemoryManager {
 
 ### StaticMemoryManager
 
-* Exection和Storage区域不能互相使用对方的内存
+* Exection和Storage区域不能互相使用对方的内存。
+
+## MemoryStore
+
+* MemoryStore负责将Block存储到内存。Spark通过将广播数据、RDD、Shuffle数据存储到内存，减少了对磁盘I/O的依赖，提高了程序的读写效率。
+
+### 内存模型
+
+![内存模型](./img/MemoryStore内存模型.jpg)
+
+* 整个MemoryStore的存储分为三块：一块是MemoryStore的entries属性持有的很多MemoryEntry所占据的内存blocksMemoryUsed；一块是onHeapUnroll-MemoryMap或offHeapUnrollMemoryMap中使用展开方式占用的内存currentUnroll-Memory。展开Block的行为类似于人们生活中的“占座”，一间教室里有些座位有人，有些则空着。在座位上放一本书表示有人正在使用，那么别人就不会坐这些座位。这可以防止在你需要座位的时候，却发现已经没有了位置。这样可以防止在向内存真正写入数据时，内存不足发生溢出。blocksMemoryUsed和currentUnrollMemory的空间之和是已经使用的空间，用memoryUsed表示。还有一块内存没有任何标记，表示未使用。
+
+#### Block的抽象模式
+
+```scala
+/**
+ * Block的抽象形式
+ * @tparam T
+ */
+private sealed trait MemoryEntry[T] {
+  // block当前大小
+  def size: Long
+  // block存入内存的模式
+  def memoryMode: MemoryMode
+  // block的类型标志
+  def classTag: ClassTag[T]
+}
+// 反序列化后的MemoryEntry
+private case class DeserializedMemoryEntry[T](
+    value: Array[T],
+    size: Long,
+    classTag: ClassTag[T]) extends MemoryEntry[T] {
+  val memoryMode: MemoryMode = MemoryMode.ON_HEAP
+}
+
+/**
+ * 序列化后的MemoryEntry
+ * @param buffer
+ * @param memoryMode
+ * @param classTag
+ * @tparam T
+ */
+private case class SerializedMemoryEntry[T](
+    buffer: ChunkedByteBuffer,
+    memoryMode: MemoryMode,
+    classTag: ClassTag[T]) extends MemoryEntry[T] {
+  def size: Long = buffer.size
+}
+```
+
