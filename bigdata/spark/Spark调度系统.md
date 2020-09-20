@@ -478,3 +478,312 @@ override def compare(that: RDDInfo): Int = {
 # Stage详解
 
 * DAGScheduler将Job的RDD划分到不同的Stage，并构建这些Stage的依赖关系。这样可以使没有依赖关系的Stage并行执行，并保证有依赖关系的Stage顺序执行。
+
+```scala
+ * @param id Unique stage ID 唯一的stage ID
+ * @param rdd RDD that this stage runs on: for a shuffle map stage, it's the RDD we run map tasks
+ *   on, while for a result stage, it's the target RDD that we ran an action on
+ * @param numTasks Total number of tasks in stage; result stages in particular may not need to
+ *   compute all partitions, e.g. for first(), lookup(), and take().
+ * @param parents List of stages that this stage depends on (through shuffle dependencies). stage依赖
+ * @param firstJobId ID of the first job this stage was part of, for FIFO scheduling. 第一个job的id作为这个stage的一部分
+ * @param callSite Location in the user program associated with this stage: either where the target
+ *   RDD was created, for a shuffle map stage, or where the action for a result stage was called.
+ */
+private[scheduler] abstract class Stage(
+    val id: Int,
+    val rdd: RDD[_],
+    val numTasks: Int,
+    val parents: List[Stage],
+    val firstJobId: Int,
+    val callSite: CallSite)
+  extends Logging {
+
+  // rdd分区数量
+  val numPartitions = rdd.partitions.length
+
+  /** Set of jobs that this stage belongs to. */
+  // jobId集合
+  val jobIds = new HashSet[Int]
+
+  /** The ID to use for the next new attempt for this stage. */
+  // 下次重试id
+  private var nextAttemptId: Int = 0
+
+  // stage name
+  val name: String = callSite.shortForm
+  // stage详情
+  val details: String = callSite.longForm
+
+  /**
+   * 返回最近一次Stage尝试的StageInfo，即返回_latestInfo。
+   * Pointer to the [[StageInfo]] object for the most recent attempt. This needs to be initialized
+   * here, before any attempts have actually been created, because the DAGScheduler uses this
+   * StageInfo to tell SparkListeners when a job starts (which happens before any stage attempts
+   * have been created).
+   */
+  private var _latestInfo: StageInfo = StageInfo.fromStage(this, nextAttemptId)
+
+  /**
+   * 失败的attemptId集合
+   * Set of stage attempt IDs that have failed. We keep track of these failures in order to avoid
+   * endless retries if a stage keeps failing.
+   * We keep track of each attempt ID that has failed to avoid recording duplicate failures if
+   * multiple tasks from the same stage attempt fail (SPARK-5945).
+   */
+  val failedAttemptIds = new HashSet[Int]
+```
+
+* makeNewStageAttempt
+
+```scala
+/**
+   * 通过使用新的attempt ID创建一个新的StageInfo，为这个阶段创建一个新的attempt
+   */
+  /** Creates a new attempt for this stage by creating a new StageInfo with a new attempt ID. */
+  def makeNewStageAttempt(
+      numPartitionsToCompute: Int,
+      taskLocalityPreferences: Seq[Seq[TaskLocation]] = Seq.empty): Unit = {
+    val metrics = new TaskMetrics
+    // 注册度量
+    metrics.register(rdd.sparkContext)
+    // 得到最后一次访问Stage的StageInfo信息
+    _latestInfo = StageInfo.fromStage(
+      this, nextAttemptId, Some(numPartitionsToCompute), metrics, taskLocalityPreferences)
+    nextAttemptId += 1
+  }
+```
+
+## ResultStage实现
+
+```scala
+/**
+ *
+ * @param id Unique stage ID 唯一的stage ID
+ * @param rdd RDD that this stage runs on: for a shuffle map stage, it's the RDD we run map tasks
+ *   on, while for a result stage, it's the target RDD that we ran an action on
+ * @param func  即对RDD的分区进行计算的函数。
+ * @param partitions 由RDD的哥哥分区的索引组成的数组
+ * @param parents List of stages that this stage depends on (through shuffle dependencies). stage依赖
+ * @param firstJobId ID of the first job this stage was part of, for FIFO scheduling. 第一个job的id作为这个stage的一部分
+ * @param callSite Location in the user program associated with this stage: either where the target
+ *   RDD was created, for a shuffle map stage, or where the action for a result stage was called.
+ */
+private[spark] class ResultStage(
+    id: Int,
+    rdd: RDD[_],
+    val func: (TaskContext, Iterator[_]) => _,
+    val partitions: Array[Int],
+    parents: List[Stage],
+    firstJobId: Int,
+    callSite: CallSite)
+  extends Stage(id, rdd, partitions.length, parents, firstJobId, callSite) {
+
+  /**
+   * result stage的活跃job 如果job已经完成将会为空
+   * The active job for this result stage. Will be empty if the job has already finished
+   * 例如这个任务被取消
+   * (e.g., because the job was cancelled).
+   */
+  private[this] var _activeJob: Option[ActiveJob] = None
+
+  /**
+   * 活跃job
+   * @return
+   */
+  def activeJob: Option[ActiveJob] = _activeJob
+
+  // 设置活跃job
+  def setActiveJob(job: ActiveJob): Unit = {
+    _activeJob = Option(job)
+  }
+
+  // 移除当前活跃job
+  def removeActiveJob(): Unit = {
+    _activeJob = None
+  }
+
+  /**
+   * 返回丢失分区id集合的seq
+   * Returns the sequence of partition ids that are missing (i.e. needs to be computed).
+   *
+   * This can only be called when there is an active job.
+   */
+  override def findMissingPartitions(): Seq[Int] = {
+    // 获取当前活跃job
+    val job = activeJob.get
+    // 筛选出没有完成的分区
+    (0 until job.numPartitions).filter(id => !job.finished(id))
+  }
+
+  override def toString: String = "ResultStage " + id
+}
+```
+
+## ShuffleMapStage实现
+
+* ShuffleMapStage是DAG调度流程的中间Stage，他可以包括一个到多个ShuffleMap-Task，这些Task用于生产Shuffle的数据。
+
+```scala
+/**
+ *
+ * @param id Unique stage ID 唯一的stage ID
+ * @param rdd RDD that this stage runs on: for a shuffle map stage, it's the RDD we run map tasks
+ *   on, while for a result stage, it's the target RDD that we ran an action on
+ * @param numTasks Total number of tasks in stage; result stages in particular may not need to
+ *   compute all partitions, e.g. for first(), lookup(), and take().
+ * @param parents List of stages that this stage depends on (through shuffle dependencies). stage依赖
+ * @param firstJobId ID of the first job this stage was part of, for FIFO scheduling. 第一个job的id作为这个stage的一部分
+ * @param callSite Location in the user program associated with this stage: either where the target
+ *   RDD was created, for a shuffle map stage, or where the action for a result stage was called.
+ * @param shuffleDep shuffle依赖
+ * @param mapOutputTrackerMaster map端输出中间数据追中器Master
+ */
+private[spark] class ShuffleMapStage(
+    id: Int,
+    rdd: RDD[_],
+    numTasks: Int,
+    parents: List[Stage],
+    firstJobId: Int,
+    callSite: CallSite,
+    val shuffleDep: ShuffleDependency[_, _, _],
+    mapOutputTrackerMaster: MapOutputTrackerMaster)
+  extends Stage(id, rdd, numTasks, parents, firstJobId, callSite) {
+
+  // map阶段job集合
+  private[this] var _mapStageJobs: List[ActiveJob] = Nil
+
+  /**
+   * 暂停的分区集合
+   *
+   * 要么尚未计算，或者被计算在此后已失去了执行程序，它，所以应该重新计算。 此变量用于由DAGScheduler以确定何时阶段已完成。 在该阶段，无论是积极的尝试或较早尝试这一阶段可能会导致paritition IDS任务成功摆脱pendingPartitions删除。 其结果是，这个变量可以是与在TaskSetManager挂起任务的阶段主动尝试不一致（这里存储分区将始终是分区的一个子集，该TaskSetManager自以为待定）。
+   * Partitions that either haven't yet been computed, or that were computed on an executor
+   * that has since been lost, so should be re-computed.  This variable is used by the
+   * DAGScheduler to determine when a stage has completed. Task successes in both the active
+   * attempt for the stage or in earlier attempts for this stage can cause paritition ids to get
+   * removed from pendingPartitions. As a result, this variable may be inconsistent with the pending
+   * tasks in the TaskSetManager for the active attempt for the stage (the partitions stored here
+   * will always be a subset of the partitions that the TaskSetManager thinks are pending).
+   */
+  val pendingPartitions = new HashSet[Int]
+
+  override def toString: String = "ShuffleMapStage " + id
+
+  /**
+   * Returns the list of active jobs,
+   * i.e. map-stage jobs that were submitted to execute this stage independently (if any).
+   */
+  def mapStageJobs: Seq[ActiveJob] = _mapStageJobs
+
+  /** Adds the job to the active job list. */
+  def addActiveJob(job: ActiveJob): Unit = {
+    _mapStageJobs = job :: _mapStageJobs
+  }
+
+  /** Removes the job from the active job list. */
+  def removeActiveJob(job: ActiveJob): Unit = {
+    _mapStageJobs = _mapStageJobs.filter(_ != job)
+  }
+
+  /**
+   * Number of partitions that have shuffle outputs.
+   * When this reaches [[numPartitions]], this map stage is ready.
+   */
+  def numAvailableOutputs: Int = mapOutputTrackerMaster.getNumAvailableOutputs(shuffleDep.shuffleId)
+
+  /**
+   * Returns true if the map stage is ready, i.e. all partitions have shuffle outputs.
+   */
+  def isAvailable: Boolean = numAvailableOutputs == numPartitions
+
+  /** Returns the sequence of partition ids that are missing (i.e. needs to be computed). */
+  override def findMissingPartitions(): Seq[Int] = {
+    mapOutputTrackerMaster
+      // 查询计算完成的分区
+      .findMissingPartitions(shuffleDep.shuffleId)
+      .getOrElse(0 until numPartitions)
+  }
+}
+```
+
+## StageInfo
+
+```scala
+class StageInfo(
+    val stageId: Int,
+    @deprecated("Use attemptNumber instead", "2.3.0") val attemptId: Int,
+    val name: String,
+    val numTasks: Int, //当前Stage的task数量
+    val rddInfos: Seq[RDDInfo], // rddInfo集合
+    val parentIds: Seq[Int], //父Stage集合
+    val details: String,//详细线程栈信息
+    val taskMetrics: TaskMetrics = null,
+    private[spark] val taskLocalityPreferences: Seq[Seq[TaskLocation]] = Seq.empty) {
+  /** When this stage was submitted from the DAGScheduler to a TaskScheduler. */
+  // DAGScheduler将当前Stage提交给TaskScheduler的时间。
+  var submissionTime: Option[Long] = None
+  /** Time when all tasks in the stage completed or when the stage was cancelled. */
+  // 当前Stage中的所有Task完成的时间（即Stage完成的时间）或者Stage被取消的时间。
+  var completionTime: Option[Long] = None
+  /** If the stage failed, the reason why. */
+  // 失败的原因
+  var failureReason: Option[String] = None
+
+  /**
+   * Terminal values of accumulables updated during this stage, including all the user-defined
+   * accumulators.
+   */
+    // 存储了所有聚合器计算的最终值。
+  val accumulables = HashMap[Long, AccumulableInfo]()
+
+  def stageFailed(reason: String) {
+    failureReason = Some(reason)
+    completionTime = Some(System.currentTimeMillis)
+  }
+
+  def attemptNumber(): Int = attemptId
+
+  private[spark] def getStatusString: String = {
+    if (completionTime.isDefined) {
+      if (failureReason.isDefined) {
+        "failed"
+      } else {
+        "succeeded"
+      }
+    } else {
+      "running"
+    }
+  }
+}
+
+private[spark] object StageInfo {
+  /**
+   * Construct a StageInfo from a Stage.
+   *
+   * Each Stage is associated with one or many RDDs, with the boundary of a Stage marked by
+   * shuffle dependencies. Therefore, all ancestor RDDs related to this Stage's RDD through a
+   * sequence of narrow dependencies should also be associated with this Stage.
+   */
+  def fromStage(
+      stage: Stage,
+      attemptId: Int,
+      numTasks: Option[Int] = None,
+      taskMetrics: TaskMetrics = null,
+      taskLocalityPreferences: Seq[Seq[TaskLocation]] = Seq.empty
+    ): StageInfo = {
+    val ancestorRddInfos = stage.rdd.getNarrowAncestors.map(RDDInfo.fromRdd)
+    val rddInfos = Seq(RDDInfo.fromRdd(stage.rdd)) ++ ancestorRddInfos
+    new StageInfo(
+      stage.id,
+      attemptId,
+      stage.name,
+      numTasks.getOrElse(stage.numTasks),
+      rddInfos,
+      stage.parents.map(_.id),
+      stage.details,
+      taskMetrics,
+      taskLocalityPreferences)
+  }
+}
+```
+
