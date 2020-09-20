@@ -1,4 +1,4 @@
-# 计算引擎概述
+# o计算引擎概述
 
 * 计算引擎包括执行内存和Shuffle两部分
 
@@ -364,5 +364,349 @@ private[spark] class IndexShuffleBlockResolver(
 }
 ```
 
+## SizeTracker
 
+* Spark在Shuffle阶段，给map任务的输出增加了缓存、聚合的数据结构。这些数据结构将使用各种执行内存，为了对这些数据结构的大小进行计算，以便于扩充大小或在没有足够内存时溢出到磁盘，特质SizeTracker定义了对集合进行采样和估算的规范。
+
+## WritablePartitionedPairCollection
+
+* WritablePartitionedPairCollection是对由键值对构成的集合进行大小跟踪的通用接口。这里的每个键值对都有相关联的分区，例如，key为（0, #）, value为1的键值对，真正的键实际是#，而0则是键#的分区ID。WritablePartitionedPairCollection支持基于内存进行有效排序，并可以创建将集合内容按照字节写入磁盘的WritablePartitionedIterator。
+
+# AppendOnlyMap
+
+* AppendOnlyMap是在内存中对任务执行结果进行聚合运算的利器，最大可以支持375809 638（即0.7×2^29）个元素。
+
+```scala
+class AppendOnlyMap[K, V](initialCapacity: Int = 64)
+  extends Iterable[(K, V)] with Serializable {
+
+  import AppendOnlyMap._
+
+  require(initialCapacity <= MAXIMUM_CAPACITY,
+    s"Can't make capacity bigger than ${MAXIMUM_CAPACITY} elements")
+  require(initialCapacity >= 1, "Invalid initial capacity")
+
+  // 负载因子，超过该Capacity*0。7自动扩容
+  private val LOAD_FACTOR = 0.7
+
+  // 容量，转换为2的n次方，主要为了后去计算hash时可以直接将取模的逻辑运算优化为算术运算
+  private var capacity = nextPowerOf2(initialCapacity)
+  // 计算数据存放位置的掩码。计算mask的表达式为capacity -1。
+  private var mask = capacity - 1
+  // 记录当前已经放入data的key与聚合值的数量。
+  private var curSize = 0
+  // :data数组容量增长的阈值。计算growThreshold的表达式为grow-Threshold =LOAD_FACTOR * capacity。
+  private var growThreshold = (LOAD_FACTOR * capacity).toInt
+
+  // Holds keys and values in the same array for memory locality; specifically, the order of
+  // elements is key0, value0, key1, value1, key2, value2, etc.
+  // 存储数据的数组，初始化为2倍的capacity
+  private var data = new Array[AnyRef](2 * capacity)
+
+  // Treat the null key differently so we can use nulls in "data" to represent empty items.
+  // 是否存在null值
+  private var haveNullValue = false
+  // 控制
+  private var nullValue: V = null.asInstanceOf[V]
+
+  // Triggered by destructiveSortedIterator; the underlying data array may no longer be used
+  // 表示data数组是否不再使用
+  private var destroyed = false
+  // 当destroyed为true时，打印的消息内容为"Map state is invalid fromdestructive sorting! "。
+  private val destructionMessage = "Map state is invalid from destructive sorting!"
+```
+
+## apply
+
+* 根据key获取value
+
+```scala
+def apply(key: K): V = {
+    assert(!destroyed, destructionMessage)
+    val k = key.asInstanceOf[AnyRef]
+    if (k.eq(null)) {
+      return nullValue
+    }
+    // 相当于key的hashcode&cap-1 === k.hashcode % cap
+    var pos = rehash(k.hashCode) & mask
+    var i = 1
+    while (true) {
+      // 计算当前key的offset
+      val curKey: AnyRef = data(2 * pos)
+      // 如果k等于当前key
+      if (k.eq(curKey) || k.equals(curKey)) {
+        // 返回当前key的value，value存储在key的offset+1的位置
+        return data(2 * pos + 1).asInstanceOf[V]
+        // 如果key为null，返回null
+      } else if (curKey.eq(null)) {
+        return null.asInstanceOf[V]
+      } else {
+        val delta = i
+        // pos往后移动
+        pos = (pos + delta) & mask
+        i += 1
+      }
+    }
+    null.asInstanceOf[V]
+  }
+```
+
+## incrementSize
+
+```scala
+ private def incrementSize() {
+    // 当前size+1
+    curSize += 1
+    // 如果当前size大于growThreshold则扩容
+    if (curSize > growThreshold) {
+      growTable()
+    }
+  }
+
+// growTable
+protected def growTable() {
+    // capacity < MAXIMUM_CAPACITY (2 ^ 29) so capacity * 2 won't overflow
+    // 新的容量
+    val newCapacity = capacity * 2
+    // check cap
+    require(newCapacity <= MAXIMUM_CAPACITY, s"Can't contain more than ${growThreshold} elements")
+    // 穿件新的数组
+    val newData = new Array[AnyRef](2 * newCapacity)
+    // 计算新的mask
+    val newMask = newCapacity - 1
+    // Insert all our old values into the new array. Note that because our old keys are
+    // unique, there's no need to check for equality here when we insert.
+    var oldPos = 0
+    // 遍历data数组
+    while (oldPos < capacity) {
+      // 过滤key为null的数据
+      if (!data(2 * oldPos).eq(null)) {
+        // 获取key
+        val key = data(2 * oldPos)
+        // 获取value
+        val value = data(2 * oldPos + 1)
+        // 重新计算新的pos
+        var newPos = rehash(key.hashCode) & newMask
+        var i = 1
+        // 保持前进
+        var keepGoing = true
+        while (keepGoing) {
+          // 计算新的key
+          val curKey = newData(2 * newPos)
+          // 如果key为null
+          if (curKey.eq(null)) {
+            // 赋值key和value
+            newData(2 * newPos) = key
+            newData(2 * newPos + 1) = value
+            keepGoing = false
+          } else {
+            // 如果已经存在数据
+            val delta = i
+            // 向后移动
+            newPos = (newPos + delta) & newMask
+            i += 1
+          }
+        }
+      }
+      oldPos += 1
+    }
+    // 重新复制
+    data = newData
+    capacity = newCapacity
+    mask = newMask
+    growThreshold = (LOAD_FACTOR * newCapacity).toInt
+  }
+```
+
+## update
+
+```scala
+def update(key: K, value: V): Unit = {
+    assert(!destroyed, destructionMessage)
+    val k = key.asInstanceOf[AnyRef]
+    // 如果key为null
+    if (k.eq(null)) {
+      // 判断是否存在null值，如果不存在，这容量增长
+      if (!haveNullValue) {
+        // 判断是否需要扩容
+        incrementSize()
+      }
+      // 为nullValue赋值
+      nullValue = value
+      // 设置存在key为Null的value
+      haveNullValue = true
+      // 返回
+      return
+    }
+    // 计算pos
+    var pos = rehash(key.hashCode) & mask
+    var i = 1
+    // 遍历
+    while (true) {
+      // 计算当前key的位置
+      val curKey = data(2 * pos)
+      // 如果当前key在数组中的位置不存在
+      if (curKey.eq(null)) {
+        // 设置值
+        data(2 * pos) = k
+        data(2 * pos + 1) = value.asInstanceOf[AnyRef]
+        incrementSize()  // Since we added a new key
+        return
+        // 如果存在
+      } else if (k.eq(curKey) || k.equals(curKey)) {
+        // 修改value
+        data(2 * pos + 1) = value.asInstanceOf[AnyRef]
+        return
+      } else {
+        // 如果不等，则向后移动
+        val delta = i
+        pos = (pos + delta) & mask
+        i += 1
+      }
+    }
+  }
+```
+
+## changeValue
+
+* 实现了缓存聚合算法
+
+```scala
+ def changeValue(key: K, updateFunc: (Boolean, V) => V): V = {
+    assert(!destroyed, destructionMessage)
+    val k = key.asInstanceOf[AnyRef]
+    if (k.eq(null)) {
+      if (!haveNullValue) {
+        incrementSize()
+      }
+      // nullVlaue等于Null
+      nullValue = updateFunc(haveNullValue, nullValue)
+      haveNullValue = true
+      // 返回null
+      return nullValue
+    }
+    var pos = rehash(k.hashCode) & mask
+    var i = 1
+    while (true) {
+      val curKey = data(2 * pos)
+      if (curKey.eq(null)) {
+        // newValue为null
+        val newValue = updateFunc(false, null.asInstanceOf[V])
+        data(2 * pos) = k
+        // 设置value为null
+        data(2 * pos + 1) = newValue.asInstanceOf[AnyRef]
+        // 判断是否需要扩容
+        incrementSize()
+        return newValue
+      } else if (k.eq(curKey) || k.equals(curKey)) {
+        // 根据聚合函数求出来的值
+        val newValue = updateFunc(true, data(2 * pos + 1).asInstanceOf[V])
+        data(2 * pos + 1) = newValue.asInstanceOf[AnyRef]
+        return newValue
+      } else {
+        val delta = i
+        pos = (pos + delta) & mask
+        i += 1
+      }
+    }
+    null.asInstanceOf[V] // Never reached but needed to keep compiler happy
+  }
+```
+
+## destructiveSortedIterator
+
+* 不使用额外的内存和不牺牲AppendOnlyMap的有效性的前提下，对AppendOnlyMap的data数组中的数据进行排序的实现。
+
+```scala
+def destructiveSortedIterator(keyComparator: Comparator[K]): Iterator[(K, V)] = {
+    destroyed = true
+    // Pack KV pairs into the front of the underlying array
+    var keyIndex, newIndex = 0
+    // 遍历数组
+    while (keyIndex < capacity) {
+      // 如果key不为null，去掉不连续的null key
+      if (data(2 * keyIndex) != null) {
+        data(2 * newIndex) = data(2 * keyIndex)
+        data(2 * newIndex + 1) = data(2 * keyIndex + 1)
+        newIndex += 1
+      }
+      keyIndex += 1
+    }
+    assert(curSize == newIndex + (if (haveNullValue) 1 else 0))
+
+    // 创建Sort排序起
+    new Sorter(new KVArraySortDataFormat[K, AnyRef]).sort(data, 0, newIndex, keyComparator)
+
+    new Iterator[(K, V)] {
+      var i = 0
+      var nullValueReady = haveNullValue
+      def hasNext: Boolean = (i < newIndex || nullValueReady)
+      def next(): (K, V) = {
+        if (nullValueReady) {
+          nullValueReady = false
+          (null.asInstanceOf[K], nullValue)
+        } else {
+          val item = (data(2 * i).asInstanceOf[K], data(2 * i + 1).asInstanceOf[V])
+          i += 1
+          item
+        }
+      }
+    }
+  }
+```
+
+* 利用Sorter、KVArraySortDataFormat及指定的比较器进行排序。这其中用到了TimSort，也就是优化版的归并排序。
+
+## AppendOnlyMap的扩展
+
+### SizeTrackingAppendOnlyMap
+
+* SizeTrackingAppendOnlyMap的确继承了AppendOnlyMap和Size-Tracker。SizeTrackingAppendOnlyMap采用代理模式重写了AppendOnlyMap的三个方法（包括update、changeValue及growTable）。SizeTrackingAppendOnlyMap确保对data数组进行数据更新、缓存聚合等操作后，调用SizeTracker的afterUpdate方法完成采样；在扩充data数组的容量后，调用SizeTracker的resetSamples方法对样本进行重置，以便于对AppendOnlyMap的大小估算更加准确。
+
+```scala
+private[spark] class SizeTrackingAppendOnlyMap[K, V]
+  extends AppendOnlyMap[K, V] with SizeTracker
+{
+  override def update(key: K, value: V): Unit = {
+    super.update(key, value)
+    // 采样和估算自身大小
+    super.afterUpdate()
+  }
+
+  override def changeValue(key: K, updateFunc: (Boolean, V) => V): V = {
+    val newValue = super.changeValue(key, updateFunc)
+    super.afterUpdate()
+    newValue
+  }
+
+  override protected def growTable(): Unit = {
+    super.growTable()
+    // 重新采样
+    resetSamples()
+  }
+}
+```
+
+### PartitionedAppendOnlyMap
+
+*  PartitionedAppendOnlyMap实现了特质WritablePartitionedPairCol lection定义的partitionedDestructiveSortedIterator接口和insert接口。
+
+```scala
+private[spark] class PartitionedAppendOnlyMap[K, V]
+  extends SizeTrackingAppendOnlyMap[(Int, K), V] with WritablePartitionedPairCollection[K, V] {
+
+  def partitionedDestructiveSortedIterator(keyComparator: Option[Comparator[K]])
+    : Iterator[((Int, K), V)] = {
+    // 获取key比较器
+    val comparator = keyComparator.map(partitionKeyComparator).getOrElse(partitionComparator)
+    // 聚合比较器排序
+    destructiveSortedIterator(comparator)
+  }
+
+  def insert(partition: Int, key: K, value: V): Unit = {
+    // 带分区的排序
+    update((partition, key), value)
+  }
+}
+```
 
