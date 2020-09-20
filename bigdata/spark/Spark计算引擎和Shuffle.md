@@ -1,4 +1,4 @@
-# o计算引擎概述
+# 计算引擎概述
 
 * 计算引擎包括执行内存和Shuffle两部分
 
@@ -1105,5 +1105,88 @@ final class ShuffleExternalSorter extends MemoryConsumer {
   @Nullable private MemoryBlock currentPage = null;
   private long pageCursor = -1;
 
+```
+
+# ShuffleManager
+
+## ShuffleWriter详解
+
+* SortShuffleManager依赖于ShuffleWriter提供的服务，抽象类ShuffleWriter定义了将map任务的中间结果输出到磁盘上的功能规范，包括将数据写入磁盘和关闭ShuffleWriter。
+
+```scala
+private[spark] abstract class ShuffleWriter[K, V] {
+  /** Write a sequence of records to this task's output */
+  // 写一个记录的seq到这个task的输出
+  @throws[IOException]
+  def write(records: Iterator[Product2[K, V]]): Unit
+
+  /** Close this writer, passing along whether the map completed */
+  def stop(success: Boolean): Option[MapStatus]
+}
+```
+
+* ShuffleWriter一共有三个子类，分别为SortShuffleWriter、UnsafeShuffleWriter及BypassMergeSortShuffleWriter
+
+### ShuffleHandle
+
+* ShuffleHandle是不透明的Shuffle句柄，ShuffleManager使用它向Task传递Shuffle信息
+
+```scala
+abstract class ShuffleHandle(val shuffleId: Int) extends Serializable {}
+```
+
+#### BaseShuffleHandle
+
+```scala
+private[spark] class BaseShuffleHandle[K, V, C](
+    shuffleId: Int,
+    val numMaps: Int,
+    val dependency: ShuffleDependency[K, V, C])
+  extends ShuffleHandle(shuffleId)
+```
+
+####  SerializedShuffleHandle
+
+```scala
+private[spark] class SerializedShuffleHandle[K, V](
+  shuffleId: Int,
+  numMaps: Int,
+  dependency: ShuffleDependency[K, V, V])
+  extends BaseShuffleHandle(shuffleId, numMaps, dependency) {
+}
+```
+
+####  BypassMergeSortShuffleHandle
+
+```scala
+/**
+ * Subclass of [[BaseShuffleHandle]], used to identify when we've chosen to use the
+ * bypass merge sort shuffle path.
+ */
+private[spark] class BypassMergeSortShuffleHandle[K, V](
+  shuffleId: Int,
+  numMaps: Int,
+  dependency: ShuffleDependency[K, V, V])
+  extends BaseShuffleHandle(shuffleId, numMaps, dependency) {
+}
+```
+
+### MapStatus
+
+```scala
+private[spark] sealed trait MapStatus {
+  /** Location where this task was run. */
+  //task运行的location
+  def location: BlockManagerId
+
+  /**
+   * reduce需要拉取的block的大小
+   * Estimated size for the reduce block, in bytes.
+   *
+   * If a block is non-empty, then this method MUST return a non-zero size.  This invariant is
+   * necessary for correctness, since block fetchers are allowed to skip zero-size blocks.
+   */
+  def getSizeForBlock(reduceId: Int): Long
+}
 ```
 
