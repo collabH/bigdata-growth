@@ -13,6 +13,21 @@
 * 高可用，tablet servers和Master使用Raft Consensus算法，该算法确保只要有超过半数的副本可用，tablet就可以读写。例如，如果3个副本中的2个或5个副本中的3个可用，那么tablet就是可用的。
 * 结构化数据模型。
 
+### 和HDFS、HBASE的区别
+
+![](./img/kudu和其他存储引擎的区别.jpg)
+
+* HDFS是一个仅支持追加写的文件系统，对于需要顺序扫描大规模数据的存储引擎而言，它是表现最好的。
+* Hbase支持实时随机读/写，以及OLTP应用需要的其他特性，HBase适合那种在线、实时、高并发，其中大多数操作都是随机读/写或短扫描的环境。
+
+![](./img/几个存储引擎的对比.jpg)
+
+### Kudu的高层设计
+
+* 运行用户尽可能快的扫描数据，达到在HDFS中扫描原始文件速度的两倍。
+* 运行用户已经可能快地执行随机读/写，响应大约为1ms
+* 以高可用、容错、持久的方式实现以上这些目标。
+
 ## Kudu-Impala集成功能
 
 * CREATE/ALTER/DROP TABLE
@@ -26,6 +41,7 @@
 * 并行扫描
   * 为了在现代硬件上实现可能的最高性能，Impala使用的Kudu客户端在多个tablet上并行扫描。
 * 高性能查询
+* 需要开启Hive的metastore服务。
 
 ## 架构图
 
@@ -59,13 +75,20 @@
 
 ### Tablet Server从角色
 
+* 相当于HDFS的DataNode和Hbase的RegionServer的混合体，tablet server的作用是执行所有与数据相关的操作：存储、访问、编码、压缩、compaction和复制。
 * tablet server存储向kudu client提供tablet服务。对于给定的tablet，一个tablet server充当其leader，其他副本作为这个tablet的follower。只有leader能够提供写请求，leader和follower可以提供读服务。一个tablet server可以服务多个tablet，一个tablet可以由多个tablet server提供服务。
+* Kudu最多支持300个tablet server，但是为了最高的稳定性，比建议tablet server超过100个
+* 建议每个tablet server最多包含2000个tablet（包含副本）
+* 建议每个table在每个tablet server上最多包含60个tablet（包含副本）
+* 建议每个tablet server最多在磁盘上存储8 TB的数据。服务器上所有磁盘的容量之和可以超过8 TB，并且可以和HDFS共享。但是，我们建议Kudu的数据不要超过8TB。
+* 为了获得对大事实表的最优扫描性能，建议保持一个tablet对应一个CPU核的比例。不要将被复制的表计算在内，应该只考虑Leader tablet的数量。对于小维度的表，可以只分配几个tablet。
 
 ### Master
 
+* 存储表名、列名、列类型和数据位置之类的元数据，以及状态之类的信息，比如正在被创建、运行等。
 * master持有全部的tablet，tablet server和catalog table和其他元数据在这个集群中。在任意时间只能存在一个master.如果当前leader断开链接，会有新的master通过raft算法选举产生。
 * master还可以协调客户端的元数据操作，例如当创建一张新表时，客户端内部发送这个请求到master，master会将新表的元数据写入到catalog table中，并且协调在tablet servers创建tablets的过程。
-* 全部的master的数据都存储在一个tablet中，可以将数据复制到全部的slave master中。
+* 全部的master的数据都存储在`一个tablet`中，可以将数据复制到全部的slave master中。
 * tablet server的心跳通过固定间隔发送到master(默认是1秒一次)
 
 ### **Raft Consensus Algorithm**
@@ -88,6 +111,42 @@
   * 虽然插入和更新确实通过网络传输数据，但删除不需要移动任何数据。删除操作被发送到每个tablet服务器，服务器在本地执行删除操作。
   * 物理操作，例如压缩，不需要在网络上传输Kudu中的数据。这与使用HDFS的存储系统不同，在HDFS中，块需要通过网络传输，以实现所需的副本数量。
   * Tablet不需要在同一时间或同一时间表上执行压缩，或者在物理存储层上保持同步。这减少了所有tablet server同时经历高延迟的机会，因为紧凑或沉重的写负载。
+
+## 写入与更新
+
+### 写入操作步骤
+
+1. 写操作被提交到一个tablet的Write Ahead Log（WAL）
+2. 把插入操作添加到MemRowSet中。
+3. 当MemRowSet满了之后，就被刷新(flushed)到磁盘，成为DIskRowSet
+
+#### MemRowSet
+
+* 每次Kudu收到新数据时，这份数据存储的地方成为MemRowSet，类似于一个临时的写缓冲区，当MemRowSet满时，就被刷新到磁盘。
+
+#### 对表的首次插入
+
+![](./img/表的首次插入.jpg)
+
+#### 插入已经存在的记录
+
+![](./img/插入已经存在的记录.jpg)
+
+## Kudu中的概念和机制
+
+### 热点
+
+* 当大部分的读写操作都落到同一个服务器上时，就会产生所谓的热点问题，如果想达到数据完美的分布，让所有读写请求均匀的分配在集群的所有节点上。
+
+#### 设计表考虑的问题
+
+* 读操作的访问模式（吞吐率和延迟）
+* 写操作的访问模式（吞吐率和延迟）
+* 存储开销（压缩比）
+
+### 分区
+
+* kudu支持范围分区和哈希分区
 
 ## 使用场景
 
