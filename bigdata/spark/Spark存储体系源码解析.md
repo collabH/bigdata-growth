@@ -1659,3 +1659,30 @@ case RemoveRdd(rddId) =>
       }
 ```
 
+# DiskBlockObjectWriter
+
+* BlockManager的getDiskWriter方法用于创建DiskBlockObjectWriter。Disk-BlockObjectWriter将在Shuffle阶段将map任务的输出写入磁盘，这样reduce任务就能够从磁盘中获取map任务的中间输出了。
+* DiskBlockObjectWriter用于将JVM中的对象直接写入磁盘文件中。DiskBlockObject-Writer允许将数据追加到现有Block。为了提高效率，DiskBlockObjectWriter保留了跨多个提交的底层文件通道。
+
+## 相关属性
+
+* file：要写入的文件。
+* serializerManager：即SerializerManager。
+* serializerInstance:Serializer的实例。
+* bufferSize：缓冲大小。
+* syncWrites：是否同步写。
+* writeMetrics：类型为ShuffleWriteMetrics，用于对Shuffle中间结果写入到磁盘的度量与统计。
+* blockId：即块的唯一身份标识BlockId。DiskBlockObjectWriter的其他属性如下。
+* channel：即FileChannel。
+* mcs：即ManualCloseOutputStream。
+* bs：即OutputStream。
+* fos：即FileOutputStream。
+* objOut：即SerializationStream。
+* ts：即TimeTrackingOutputStream。
+* initialized：是否已经初始化。
+* streamOpen：是否已经打开流。
+* hasBeenClosed：是否已经关闭。
+* committedPosition：提交的文件位置。
+* reportedPosition：报告给度量系统的文件位置。
+* numRecordsWritten：已写的记录数。
+
