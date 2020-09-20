@@ -1472,3 +1472,10 @@ private def submitStage(stage: Stage) {
 * DAGSchedulerEventProcessLoop内部的轮询线程eventThread不断从事件队列（eventQueue）中获取DAGSchedulerEvent事件，并调用DAGSchedulerEventProcessLoop的doOnReceive方法对事件进行处理。
 * DAGSchedulerEventProcessLoop的doOnReceive方法处理JobSubmitted事件时，将调用DAGScheduler的handleJobSubmitted方法。handleJobSubmitted方法将对RDD构建Stage及Stage之间的依赖关系。
 * DAGScheduler首先把最上游的Stage中的Task集合提交给TaskScheduler，然后逐步将下游的Stage中的Task集合提交给TaskScheduler。TaskScheduler将对Task集合进行调度。
+
+# 调度池POOL
+
+* TaskScheduler对任务的调度是借助于调度池实现的，Pool是对Task集合进行调度的调度池。调度池内部有一个根调度队列，根调度队列中包含了多个子调度池。
+
+ ![Pool](./img/POOL层次.jpg)
+
