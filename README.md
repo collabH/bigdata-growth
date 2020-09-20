@@ -66,6 +66,9 @@
 * [SparkSQLAPI](bigdata/spark/Spark%20SQL%20API.xmind)
 * [SparkSQL](bigdata/spark/Spark%20SQL.xmind)
 * [SparkStreaming](bigdata/spark/Spark%20Steaming.xmind)
+* [Spark调度系统](bigdata/spark/Spark调度系统.md)
+* [Spark计算引擎和Shuffle](bigdata/spark/Spark计算引擎和Shuffle.md)
+* [Spark存储体系](bigdata/spark/Spark存储体系.md)
 * [Spark大数据处理读书笔记](bigdata/spark/Spark大数据处理读书笔记.xmind)
 
 ### Zookeeper
