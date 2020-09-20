@@ -1554,3 +1554,108 @@ def getMatchingBlockIds(filter: BlockId => Boolean): Seq[BlockId] = {
   }
 ```
 
+# BlockManagerMaster
+
+* BlockManagerMaster的作用是对存在于Executor或Driver上的BlockManager进行统一管理。Executor与Driver关于BlockManager的交互都依赖于BlockManagerMaster，比如Executor需要向Driver发送注册BlockManager、更新Executor上Block的最新信息、询问所需要Block目前所在的位置及当Executor运行结束需要将此Executor移除等。
+* Driver上的BlockManagerMaster会实例化并且注册BlockManagerMasterEndpoint。无论是Driver还是Executor，它们的BlockManagerMaster的driverEndpoint属性都将持有BlockManagerMasterEndpoint的RpcEndpointRef。无论是Driver还是Executor，每个BlockManager都拥有自己的BlockManagerSlaveEndpoint，且BlockManager的slaveEndpoint属性保存着各自BlockManagerSlaveEndpoint的RpcEndpointRef。Block-ManagerMaster负责发送消息，BlockManagerMasterEndpoint负责消息的接收与处理，Block-ManagerSlaveEndpoint则接收BlockManagerMasterEndpoint下发的命令。
+
+## BlockManagerMaster的职责
+
+### 与存储体系相关的消息
+
+* RemoveExecutor（移除Executor）
+* RegisterBlockManager（注册BlockManager）
+* UpdateBlockInfo（更新Block信息）
+* GetLocations（获取Block的位置）
+* GetLocationsMultipleBlockIds（获取多个Block的位置）
+* GetPeers（获取其他BlockManager的BlockManagerId）
+* GetExecutorEndpointRef（获取Executor的EndpointRef引用）
+* RemoveBlock（移除Block）
+* RemoveRdd（移除Rdd Block）
+* RemoveShuffle（移除Shuffle Block）。
+* RemoveBroadcast（移除Broadcast Block）。
+* GetMemoryStatus（获取指定的BlockManager的内存状态）。
+* GetStorageStatus（获取存储状态）。
+* GetBlockStatus（获取Block的状态）。
+* GetMatchingBlockIds（获取匹配过滤条件的Block）。
+* HasCachedBlocks（指定的Executor上是否有缓存的Block）。
+* StopBlockManagerMaster（停止BlockManagerMaster）。
+
+### RegisterBlockManager
+
+```scala
+ def registerBlockManager(
+      blockManagerId: BlockManagerId,
+      maxOnHeapMemSize: Long,
+      maxOffHeapMemSize: Long,
+      slaveEndpoint: RpcEndpointRef): BlockManagerId = {
+    logInfo(s"Registering BlockManager $blockManagerId")
+    // 发送RegisterBlockManager到driverEndpoint
+    val updatedId = driverEndpoint.askSync[BlockManagerId](
+      RegisterBlockManager(blockManagerId, maxOnHeapMemSize, maxOffHeapMemSize, slaveEndpoint))
+    logInfo(s"Registered BlockManager $updatedId")
+    updatedId
+  }
+```
+
+## BlockManagerMasterEndpoint
+
+### 相关属性
+
+* rpcEnv
+* isLocal
+* SparkConf
+* ListenerBus:时间总线
+* blockmanagerInfo:存储BlockId和BlockInfo的内存映射
+* blockMangerIdByExecutor:blockManagerId和Executor id的映射关系
+* blockLocations:BlockId和BlockManagerId集合的映射关系，block存储在那些blockManager管理
+* askTrheadPool:"block-manager-ask-thread-pool"
+* topologyMapper:对集群所有节点的拓扑结构的映射。
+
+## BlockManagerSlaveEndpoint
+
+* BlockManagerSlaveEndpoint用于接收BlockManagerMasterEndpoint的命令并执行相应的操作。BlockManagerSlaveEndpoint也重写了RpcEndpoint的receiveAndReply方法。
+
+### BlockManagerMasterEndpoint的removeRDD方法
+
+* 这里在对内存中的block进行移除后，会想每个slave发送removeRDD消息
+
+```scala
+private def removeRdd(rddId: Int): Future[Seq[Int]] = {
+    // First remove the metadata for the given RDD, and then asynchronously remove the blocks
+    // from the slaves.
+
+    // Find all blocks for the given RDD, remove the block from both blockLocations and
+    // the blockManagerInfo that is tracking the blocks.
+    val blocks = blockLocations.asScala.keys.flatMap(_.asRDDId).filter(_.rddId == rddId)
+    blocks.foreach { blockId =>
+      val bms: mutable.HashSet[BlockManagerId] = blockLocations.get(blockId)
+      bms.foreach(bm => blockManagerInfo.get(bm).foreach(_.removeBlock(blockId)))
+      blockLocations.remove(blockId)
+    }
+
+    // Ask the slaves to remove the RDD, and put the result in a sequence of Futures.
+    // The dispatcher is used as an implicit argument into the Future sequence construction.
+    val removeMsg = RemoveRdd(rddId)
+
+    // 遍历locations，向每个节点的BlockManagerSlaveEndpoint发送RemoveBlock消息。
+    val futures = blockManagerInfo.values.map { bm =>
+      bm.slaveEndpoint.ask[Int](removeMsg).recover {
+        case e: IOException =>
+          logWarning(s"Error trying to remove RDD $rddId from block manager ${bm.blockManagerId}",
+            e)
+          0 // zero blocks were removed
+      }
+    }.toSeq
+
+    Future.sequence(futures)
+  }
+
+// slave
+case RemoveRdd(rddId) =>
+      doAsync[Int]("removing RDD " + rddId, context) {
+        // 移除rdd
+        blockManager.removeRdd(rddId)
+      }
+```
+
