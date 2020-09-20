@@ -1265,3 +1265,292 @@ private case class SerializedMemoryEntry[T](
 }
 ```
 
+# BlockManager
+
+## BlockManager初始化
+
+```scala
+ def initialize(appId: String): Unit = {
+    // blockTransferService初始化
+    blockTransferService.init(this)
+    // 初始化shuffle client
+    shuffleClient.init(appId)
+
+    // 获取block副本策略
+    blockReplicationPolicy = {
+      val priorityClass = conf.get(
+        "spark.storage.replication.policy", classOf[RandomBlockReplicationPolicy].getName)
+      val clazz = Utils.classForName(priorityClass)
+      val ret = clazz.newInstance.asInstanceOf[BlockReplicationPolicy]
+      logInfo(s"Using $priorityClass for block replication policy")
+      ret
+    }
+
+    val id =
+      BlockManagerId(executorId, blockTransferService.hostName, blockTransferService.port, None)
+
+    // 注册salveblockManager
+    val idFromMaster = master.registerBlockManager(
+      id,
+      maxOnHeapMemory,
+      maxOffHeapMemory,
+      slaveEndpoint)
+
+    blockManagerId = if (idFromMaster != null) idFromMaster else id
+
+    shuffleServerId = if (externalShuffleServiceEnabled) {
+      logInfo(s"external shuffle service port = $externalShuffleServicePort")
+      BlockManagerId(executorId, blockTransferService.hostName, externalShuffleServicePort)
+    } else {
+      blockManagerId
+    }
+
+    // Register Executors' configuration with the local shuffle service, if one should exist.
+    if (externalShuffleServiceEnabled && !blockManagerId.isDriver) {
+      registerWithExternalShuffleServer()
+    }
+
+    logInfo(s"Initialized BlockManager: $blockManagerId")
+  }
+```
+
+## BlockManager相关方法
+
+### reregister
+
+```scala
+  def reregister(): Unit = {
+    // TODO: We might need to rate limit re-registering.
+    logInfo(s"BlockManager $blockManagerId re-registering with master")
+    // master重新注册blockManager
+    master.registerBlockManager(blockManagerId, maxOnHeapMemory, maxOffHeapMemory, slaveEndpoint)
+    // 上报全部的block
+    reportAllBlocks()
+  }
+
+//reportAllBlocks
+private def reportAllBlocks(): Unit = {
+    logInfo(s"Reporting ${blockInfoManager.size} blocks to the master.")
+    for ((blockId, info) <- blockInfoManager.entries) {
+      val status: BlockStatus = getCurrentBlockStatus(blockId, info)
+      // 如果开启告知master属性，然后上报block状态信息
+      if (info.tellMaster && !tryToReportBlockStatus(blockId, status)) {
+        logError(s"Failed to report $blockId to master; giving up.")
+        return
+      }
+    }
+  }
+
+//getCurrentBlockStatus
+  private def getCurrentBlockStatus(blockId: BlockId, info: BlockInfo): BlockStatus = {
+    info.synchronized {
+      info.level match {
+        case null =>
+          BlockStatus.empty
+        case level: StorageLevel =>
+          val inMem = level.useMemory && memoryStore.contains(blockId)
+          val onDisk = level.useDisk && diskStore.contains(blockId)
+          val deserialized = if (inMem) level.deserialized else false
+          val replication = if (inMem  || onDisk) level.replication else 1
+          val storageLevel = StorageLevel(
+            useDisk = onDisk,
+            useMemory = inMem,
+            useOffHeap = level.useOffHeap,
+            deserialized = deserialized,
+            replication = replication)
+          val memSize = if (inMem) memoryStore.getSize(blockId) else 0L
+          val diskSize = if (onDisk) diskStore.getSize(blockId) else 0L
+          BlockStatus(storageLevel, memSize, diskSize)
+      }
+    }
+  }
+
+//tryToReportBlockStatus
+ private def tryToReportBlockStatus(
+      blockId: BlockId,
+      status: BlockStatus,
+      droppedMemorySize: Long = 0L): Boolean = {
+    val storageLevel = status.storageLevel
+    val inMemSize = Math.max(status.memSize, droppedMemorySize)
+    val onDiskSize = status.diskSize
+    // 发送消息给driverEndpoint
+    master.updateBlockInfo(blockManagerId, blockId, storageLevel, inMemSize, onDiskSize)
+  }
+```
+
+###  getLocalBytes
+
+```scala
+  def getLocalBytes(blockId: BlockId): Option[BlockData] = {
+    logDebug(s"Getting local block $blockId as bytes")
+    // As an optimization for map output fetches, if the block is for a shuffle, return it
+    // without acquiring a lock; the disk store never deletes (recent) items so this should work
+    // 如果当前block是shuffleBlock，获取shuffleBlock解析器
+    if (blockId.isShuffle) {
+      val shuffleBlockResolver = shuffleManager.shuffleBlockResolver
+      // TODO: This should gracefully handle case where local block is not available. Currently
+      // downstream code will throw an exception.
+      // 封装成ChunkedByteBuffer
+      val buf = new ChunkedByteBuffer(
+        shuffleBlockResolver.getBlockData(blockId.asInstanceOf[ShuffleBlockId]).nioByteBuffer())
+      Some(new ByteBufferBlockData(buf, true))
+    } else {
+      // 添加读锁，从本地获取bytes，然后解析BlockInfo解析为对应的BlockData
+      blockInfoManager.lockForReading(blockId).map { info => doGetLocalBytes(blockId, info) }
+    }
+  }
+
+//shuffleBlock
+override def getBlockData(blockId: ShuffleBlockId): ManagedBuffer = {
+    // The block is actually going to be a range of a single map output file for this map, so
+    // find out the consolidated file, then the offset within that from our index
+    // 获取IndexFile
+    val indexFile = getIndexFile(blockId.shuffleId, blockId.mapId)
+
+    // SPARK-22982: if this FileInputStream's position is seeked forward by another piece of code
+    // which is incorrectly using our file descriptor then this code will fetch the wrong offsets
+    // (which may cause a reducer to be sent a different reducer's data). The explicit position
+    // checks added here were a useful debugging aid during SPARK-22982 and may help prevent this
+    // class of issue from re-occurring in the future which is why they are left here even though
+    // SPARK-22982 is fixed.
+    val channel = Files.newByteChannel(indexFile.toPath)
+    channel.position(blockId.reduceId * 8L)
+    val in = new DataInputStream(Channels.newInputStream(channel))
+    try {
+      val offset = in.readLong()
+      val nextOffset = in.readLong()
+      val actualPosition = channel.position()
+      val expectedPosition = blockId.reduceId * 8L + 16
+      if (actualPosition != expectedPosition) {
+        throw new Exception(s"SPARK-22982: Incorrect channel position after index file reads: " +
+          s"expected $expectedPosition but actual position was $actualPosition.")
+      }
+      new FileSegmentManagedBuffer(
+        transportConf,
+        // 获取dataFile
+        getDataFile(blockId.shuffleId, blockId.mapId),
+        offset,
+        nextOffset - offset)
+    } finally {
+      in.close()
+    }
+  }
+
+
+// 如果不是shuffleBlock
+ private def doGetLocalBytes(blockId: BlockId, info: BlockInfo): BlockData = {
+    // 获取存储级别，根据不同的存储级别判断从diskStore或memoryStore获取BlockData
+    val level = info.level
+    logDebug(s"Level for block $blockId is $level")
+    // In order, try to read the serialized bytes from memory, then from disk, then fall back to
+    // serializing in-memory objects, and, finally, throw an exception if the block does not exist.
+    if (level.deserialized) {
+      // Try to avoid expensive serialization by reading a pre-serialized copy from disk:
+      if (level.useDisk && diskStore.contains(blockId)) {
+        // Note: we purposely do not try to put the block back into memory here. Since this branch
+        // handles deserialized blocks, this block may only be cached in memory as objects, not
+        // serialized bytes. Because the caller only requested bytes, it doesn't make sense to
+        // cache the block's deserialized objects since that caching may not have a payoff.
+        diskStore.getBytes(blockId)
+      } else if (level.useMemory && memoryStore.contains(blockId)) {
+        // The block was not found on disk, so serialize an in-memory copy:
+        new ByteBufferBlockData(serializerManager.dataSerializeWithExplicitClassTag(
+          blockId, memoryStore.getValues(blockId).get, info.classTag), true)
+      } else {
+        // memoryStore没有数据
+        handleLocalReadFailure(blockId)
+      }
+    } else {  // storage level is serialized
+      if (level.useMemory && memoryStore.contains(blockId)) {
+        new ByteBufferBlockData(memoryStore.getBytes(blockId).get, false)
+      } else if (level.useDisk && diskStore.contains(blockId)) {
+        val diskData = diskStore.getBytes(blockId)
+        maybeCacheDiskBytesInMemory(info, blockId, level, diskData)
+          .map(new ByteBufferBlockData(_, false))
+          .getOrElse(diskData)
+      } else {
+        handleLocalReadFailure(blockId)
+      }
+    }
+  }
+```
+
+### getBlockData
+
+```scala
+override def getBlockData(blockId: BlockId): ManagedBuffer = {
+    // 如果是shuffleBlock
+    if (blockId.isShuffle) {
+      shuffleManager.shuffleBlockResolver.getBlockData(blockId.asInstanceOf[ShuffleBlockId])
+    } else {
+      // 获取LocalBlockData
+      getLocalBytes(blockId) match {
+        case Some(blockData) =>
+          new BlockManagerManagedBuffer(blockInfoManager, blockId, blockData, true)
+          // 如果从找不到local BlockData
+        case None =>
+          // If this block manager receives a request for a block that it doesn't have then it's
+          // likely that the master has outdated block statuses for this block. Therefore, we send
+          // an RPC so that this block is marked as being unavailable from this block manager.
+          // 上报BlockStatus
+          reportBlockStatus(blockId, BlockStatus.empty)
+          throw new BlockNotFoundException(blockId.toString)
+      }
+    }
+  }
+
+//reportBlockStatus
+  private def reportBlockStatus(
+      blockId: BlockId,
+      status: BlockStatus,
+      droppedMemorySize: Long = 0L): Unit = {
+    // 上报失败，需要重新注册
+    val needReregister = !tryToReportBlockStatus(blockId, status, droppedMemorySize)
+    if (needReregister) {
+      logInfo(s"Got told to re-register updating block $blockId")
+      // Re-registering will report our new block for free.
+      asyncReregister()
+    }
+    logDebug(s"Told master about block $blockId")
+  }
+```
+
+### getStatus
+
+```scala
+ def getStatus(blockId: BlockId): Option[BlockStatus] = {
+    blockInfoManager.get(blockId).map { info =>
+      val memSize = if (memoryStore.contains(blockId)) memoryStore.getSize(blockId) else 0L
+      val diskSize = if (diskStore.contains(blockId)) diskStore.getSize(blockId) else 0L
+      BlockStatus(info.level, memSize = memSize, diskSize = diskSize)
+    }
+  }
+```
+
+### getMatchingBlockIds
+
+```scala
+def getMatchingBlockIds(filter: BlockId => Boolean): Seq[BlockId] = {
+    // The `toArray` is necessary here in order to force the list to be materialized so that we
+    // don't try to serialize a lazy iterator when responding to client requests.
+    // info中全部的blockId 获取全部disk中的block
+    (blockInfoManager.entries.map(_._1) ++ diskBlockManager.getAllBlocks())
+      .filter(filter)
+      .toArray
+      .toSeq
+  }
+```
+
+### getRemoteValues
+
+```scala
+ private def getRemoteValues[T: ClassTag](blockId: BlockId): Option[BlockResult] = {
+    val ct = implicitly[ClassTag[T]]
+    getRemoteBytes(blockId).map { data =>
+      val values =
+        serializerManager.dataDeserializeStream(blockId, data.toInputStream(dispose = true))(ct)
+      new BlockResult(values, DataReadMethod.Network, data.size)
+    }
+  }
+```
+
