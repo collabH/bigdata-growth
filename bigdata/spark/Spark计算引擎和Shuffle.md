@@ -1442,3 +1442,52 @@ override def getWriter[K, V](
   }
 ```
 
+# map端与reduce端的Shuffle组合
+
+## map端和reduce端都进行聚合
+
+### 满足的条件
+
+* ShuffleDependency的mapSideCombine属性为true（即允许在map端合并）。
+* 指定了聚合函数。
+* ShuffleDependency不支持序列化。
+
+![](./img/map端和reduce端都进行聚合.jpg)
+
+* 如果指定了排序函数，还会在reduce端聚合后进行排序。
+
+## map端缓存和reduce端聚合
+
+### 满足的条件
+
+* ShuffleDependency的mapSideCombine属性为false（即不允许在map端合并）。
+* ShuffleDependency的分区数大于spark.shuffle.sort.bypassMergeThreshold属性（默认为200）指定的绕开合并和排序的阈值。
+* ShuffleDependency不支持序列化。
+* 指定了聚合函数。
+
+![](./img/map端缓存和reduce端聚合.jpg)
+
+## map端缓存和reduce端部组合
+
+### 满足的条件
+
+* ShuffleDependency的mapSideCombine属性为false（即不允许在map端合并）。
+* ShuffleDependency的分区数大于spark.shuffle.sort.bypassMergeThreshold属性（默认为200）指定的绕开合并的阈值。
+* ShuffleDependency不支持序列化。
+* 没有指定聚合函数。
+
+![](./img/map端缓存和reduce端不聚合.jpg)
+
+* 当ShuffleDependency支持序列化，其他三个条件不变时，map端将使用Unsafe ShuffleWriter
+
+![](./img/map端使用Tungsten缓存和reduce端不聚合.jpg)
+
+## map端绕开聚合、排序和reduce端不聚合
+
+### 满足的条件
+
+* ShuffleDependency的mapSideCombine属性为false（即不允许在map端合并）。
+* ShuffleDependency的分区数小于等于spark.shuffle.sort.bypassMergeThreshold属性（默认为200）指定的绕开合并的阈值。
+* 没有指定聚合函数。
+
+![](./img/map端临时Shuffle文件的合并与reduce端聚合.jpg)
