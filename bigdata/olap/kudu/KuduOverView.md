@@ -243,3 +243,285 @@ kudu cluster ksck localhost:7051,localhost:7151,localhost:7251
 
 [安装文档](https://kudu.apache.org/docs/installation.html#osx_from_source)
 
+## WebUI地址
+
+### master server
+
+```
+http://＜your-host＞:8051
+```
+
+### Tablet server
+
+```
+http://＜your-host＞:8050
+```
+
+### 通用可查看的信息
+
+* Log(日志):UI上限制了最后一部分日志，以及服务器上日志的存储目录。
+* Memory(内存):包括分项列出的内存详细使用情况以及总的内存情况，查看该信息后，能了解那些地方使用了内存。
+* Metric(指标):一个API端点，提供许多JSON格式的指标，容易用JSON解析器获得想要的指标。
+* RPC(Remote Procedure Call):以JSON格式列出正在运行的和采样的RPC调用
+* Thread（线程）：一个线程的视图，展示了这些线程占用的CPU以及累积的I/O-wait量。线程是分成若干个线程组的，这样可以轻松地对其进行向下钻取（drill down）操作。
+* Flag:在服务器启动时指定的所有标志。这是一个验证你的更改是否生效以及查看默认设置的好方法。
+
+### MasterUI信息
+
+* master:查看当前当选的leader以及环境中master服务器列表
+* table:一个所有table的列表
+* tablet server:所有以及主持的tablet server列表、其通用表识符(或者uuid)，以及RPC和HTTP地址信息。
+
+### Tablet server UI信息
+
+* Dashboard：提供一个视图，列出当前正在tablet服务器上运行的扫描、事务和维护操作。
+* Tablet:这个tablet server管理的所有tablet(副本)的列表。
+
+# Kudu的管理
+
+## master服务器
+
+* 一个集群包括3个master服务器，这些master服务器通过raft协议选举出来一个leader，半数之上的master认为某个master可以成为leader即可。
+* master服务器的数目必须是奇数，最多可以有（n-1）/2个服务器发生故障而程序仍然能提供服务。当多于（n-1）/2个服务器发生故障时，master的服务将不能继续，这样服务对集群来说就不再可用。
+* master服务器维护用户所创建的所有表的元数据活目录信息，Kudu创建一个系统目录表以处理在Kudu中创建的各种对象的元数据，该表设计为一个分区，因此也只有一个tablet。
+
+### 系统目录表
+
+* 由entry_trype、entry_id和metadata三列组成，目录管理器将此表加载到内存中，并且构造3个哈希表以快速查找目录信息。
+* 目录信息是紧凑的，并且由于仅包含元数据而不包含真实的用户数据，会一直比较小，也不需要占用大量的内存和CPU资源。
+
+### master高层架构
+
+* 3个master服务器每个master会有一个tablet存储系统目录表的元数据，这些tablet会有一个leader，其他为tablet则为follower会复制master的数据，每个master服务器上都有一个预写日志。
+* 每个单独的kudu表会创建一个单独的预写日志(WAL)并存放在每个tablet server上。
+
+![](./img/Kudu高层架构.jpg)
+
+## tablet server
+
+* 一个表会被分解成若干个tablet，每个tablet会在多个tablet server上复制，这样table就被分散到各个节点上。多个tablet副本会有一个tablet副本为leader副本，其他副本为follower。
+
+### table server数量规划
+
+```shell
+# 参数含义
+d = 120TB //以Parquet格式存储的数据集大小
+k = 8TB //预计每个table服务器的最大磁盘容量
+p = 25% //预留的额外开销比例
+r = 3 //table复制因子
+
+# table server计算共识
+t=(d/(k*(1-p)))*r
+t=(120/(8*(1-0.25)))*3
+t=20个table server
+```
+
+## 预写日志
+
+### 概述
+
+* 每次对表所做的修改，都会导致对tablet和其副本的修改，也会在tablet的预写日志(WAL)中写入一条条目(entry)。
+* WAL是一个仅支持追加写的日志，磁盘只需要能高速地执行顺序写入即可，但是master服务器和tablet server的每个tablet还有自己的日志，如果有多个表要写入，从磁盘角度看，对WAL的写操作则更像是一个随机写模式。
+* 每个WAL日志段默认大小为8MB，最少要有1个，最多有80个。最大值是可变的，当其他节点的副本正在重启或已经下线，leader tablet可能会继续接受写入。
+
+## 复制策略
+
+* 如果一个tablet服务器出现故障，副本的数量可能会从三个减少到两个，Kudu将迅速修复这些tablet。
+
+### 3-4-3策略
+
+* 第一种策略：如果一个tablet服务器出现故障，在剔除该失败的副本之前，Kudu将先添加替换的副本，然后再剔除失败的副本。
+
+### 3-2-3策略
+
+* 第二种策略：会先立即剔除失败的副本，然后添加新的副本。然而，对于那种定期下线然后重新上线的系统，这样做会造成节点重新上线后要经过很长一段时间才能重新成为集群的成员。
+* 其中的一个tablet服务器经历的故障是不可恢复的；否则，Kudu将在新的主机上创建新的tablet副本，如果失败的tablet服务器恢复，也不会造成任何损害，这时候新创建的副本将被取消。
+
+#### 存在的问题
+
+* 失败的tablet服务器的所有tablet都会被立即剔除，导致系统花大力气才能让新的副本上线。
+
+## 数据存储部署
+
+### Hadoop集群的数据文件存储
+
+* NameNode的fsimage文件、edits文件
+* HiveMetastore数据库
+* HDFS JournalNode的共享edits文件
+* Zookeeper日志
+* Kudu master服务器的数据
+* Kudi master服务器的WAL
+
+### 部署问题
+
+* 每个HDFS DataNode上部署Kudu的数据节点，这些能够水平扩展的服务器也用于Hadoop生态系统的各种服务，统称为：工作节点。
+* HDFS的数据存储和Kudu的数据存储可以放在同一个文件系统和设备卷上，例如/disk1/dfs、/disk1/tserver,这样HDFS和Kudu都能很容易自动这个驱动器剩余容量，HDFS会重新再均衡(Rebalance)。
+* 当需要对静态数据做加密处理的话，HDFS Transpartent Encryption来配置HDFS，而Kudu目前依赖于设备级别的全盘加密技术对静态数据加密，需要使用不同的驱动器。
+
+## Kudu命令行接口
+
+[官方文档](https://kudu.apache.org/docs/command_line_tools_reference.html)
+
+* 这里建议查看官方文档，写的非常详细，需要时可以当成工具书一样使用。
+
+### cluster
+
+#### 集群安全校验
+
+```shell
+kudu cluster ksck hostname:port(master_address) 其他选项可选
+```
+
+### fs
+
+#### check
+
+* 检查文件系统是否存在错误，需要以root身份运行，必须提供WAL目录，然后提供以都好分隔的数据目录的列表。查看服务器上的.gflagfile文件就能找到对应目录
+* 查看.gflagfile的位置
+
+```shell
+ps -ef|grep kudu 
+grep "fs" .gflagfile
+```
+
+* check实例
+
+```shell
+sudo kudu fs check -fs_data_dirs=datafile -fs_metadata_dir=metadata -fs_wal_dir=waldata -repair
+```
+
+####format
+
+* 该命令会格式化一个新的Kudu文件系统，个格式化是针对Kudu文件系统的，而不是操作系统（OS）的文件系统。Kudu的文件系统是一组位于OS文件系统之上的用户文件和目录，这意味着你需要事先准备一个目录或挂载点，并使用支持的OS文件系统，比如ext3。在我们这个例子中，/这个挂载点已经有了一个基本的已格式化的xfs文件系统。
+
+```shell
+sudo kudu format -fs_wal_dir=/kudu-wal -fs_data_dirs=/kudu-data -fs_metadata_dir=/kudu-metada -uuid=xxx
+```
+
+#### list
+
+* 查看磁盘上的tablets，rowset，block和cfile的元数据
+
+```shell
+kudu fs list [-fs_data_dirs=<dirs>] [-fs_metadata_dir=<dir>] [-fs_wal_dir=<dir>] [-table_id=<id>] [-table_name=<name>] [-tablet_id=<id>] [-rowset_id=<id>] [-column_id=<id>] [-block_id=<id>] [-columns=<columns>] [-format=<format>] [-noh]
+```
+
+#### update_dirs
+
+* 修改data目录在一个存在的kudu文件系统
+
+```shell
+kudu fs update_dirs [-force] [-fs_data_dirs=<dirs>] [-fs_metadata_dir=<dir>] [-fs_wal_dir=<dir>]
+```
+
+#### dump
+
+* 用dump命令可以转储文件系统各个部分的内容。
+
+```shell
+-- 转储文件系统的uuid，通过WAL和数据目录获取
+sudo kudu fs dump uuid -fs_wal_dir=/var/lib/kudu/tserver
+
+-- 在块级别做转储
+ sudo kudu fs dump block -fs_wal_dir=/var/lib/kudu/tserver
+
+--在cfile做转储
+sudo kudu fs dump cfile -fs_wal_dir=/var/lib/kudu/tserver
+ 
+ --转储tree
+ sudo kudu fs tree cfile -fs_wal_dir=/var/lib/kudu/tserver
+```
+
+### ham
+
+#### check
+
+* 校验kudu和hive元数据的一致性
+
+```shell
+kudu hms check <master_addresses> [-hive_metastore_sasl_enabled] [-hive_metastore_uris=<uris>] [-noignore_other_clusters]
+```
+
+#### downgrade
+
+* 为kudu和hive的元数据降级metadata到legacy格式
+
+```shell
+kudu hms downgrade <master_addresses> [-hive_metastore_sasl_enabled] [-hive_metastore_uris=<uris>]
+```
+
+#### fix
+
+* 修复自动修复的元数据不一致的Kudu和Hive metastore
+
+```shell
+kudu hms fix <master_addresses> [-dryrun] [-drop_orphan_hms_tables] [-nocreate_missing_hms_tables] [-nofix_inconsistent_tables] [-noupgrade_hms_tables] [-hive_metastore_sasl_enabled] [-hive_metastore_uris=<uris>] [-noignore_other_clusters]
+```
+
+#### list
+
+* 查看kudu table的hms entry集合
+
+```shell
+kudu hms list <master_addresses> [-columns=<columns>] [-format=<format>]
+```
+
+### tablet副本
+
+#### local_replica
+
+```shell
+# 查看本地副本列表
+kudu local_replica list -fs_wal_dir=/kudu_wal
+
+# 转储block_ids
+kudu local_replica dump blocks_id replicaId
+
+# 转储有关表副本的元数据
+kudu local_replica dump meta replicaId
+```
+
+#### remote_replica
+
+## 管理tablet server
+
+### 添加tablet server
+
+#### 安装kudu和kudu-tserver
+
+```shell
+sudo yum -y install kudu
+sudo yum -y install kudu-tserver 
+```
+
+#### 添加kudu server配置
+
+```shell
+vim /etc/kudu/conf/tserver.gflagfile
+
+# 添加tserver的hostname:port
+--tserver_master_addrs=ip-172-31-48-12.ec2.internal:7051
+
+# 启动tablet server
+sudu systemctl start kudu-server
+```
+
+#### tablet server日志
+
+* 通过webUi或者直接查看kudu-tserver.INFO日志
+
+### 删除tablet server
+
+* 主要是decommission(解除运行)，然后删除这个节点上和Kudu相关的软件包
+
+#### decommission步骤
+
+1. 将这个table server的所有副本复制到另一个活动的tablet server，并确保所有被复制的副本都加入了Raft一致性协议。
+2. 删除这个talet服务器上的所有副本
+3. 停止这个tablet服务器
+4. 删除tablet服务器的可执行文件
+
+* 为了确保在执行decommission操作时tablet服务器上没有创建新的tablet，你需要确保在删除时不执行新的DDL操作。
+
+[kudu配置不执行DDL操作](https://kudu.apache.org/docs/configuration.html)
+
