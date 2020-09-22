@@ -145,6 +145,7 @@
 #### Kudu 
 
 * [KuduOverView](bigdata/olap/kudu/KuduOverView.md)
+* [Kudu表和Schema设计](bigdata/olap/kudu/KuduSchemaDesgin.md)
 
 ## 数据仓库
 

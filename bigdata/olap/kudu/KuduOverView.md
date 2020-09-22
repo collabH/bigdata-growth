@@ -364,125 +364,6 @@ t=20个table server
 
 * 这里建议查看官方文档，写的非常详细，需要时可以当成工具书一样使用。
 
-### cluster
-
-#### 集群安全校验
-
-```shell
-kudu cluster ksck hostname:port(master_address) 其他选项可选
-```
-
-### fs
-
-#### check
-
-* 检查文件系统是否存在错误，需要以root身份运行，必须提供WAL目录，然后提供以都好分隔的数据目录的列表。查看服务器上的.gflagfile文件就能找到对应目录
-* 查看.gflagfile的位置
-
-```shell
-ps -ef|grep kudu 
-grep "fs" .gflagfile
-```
-
-* check实例
-
-```shell
-sudo kudu fs check -fs_data_dirs=datafile -fs_metadata_dir=metadata -fs_wal_dir=waldata -repair
-```
-
-####format
-
-* 该命令会格式化一个新的Kudu文件系统，个格式化是针对Kudu文件系统的，而不是操作系统（OS）的文件系统。Kudu的文件系统是一组位于OS文件系统之上的用户文件和目录，这意味着你需要事先准备一个目录或挂载点，并使用支持的OS文件系统，比如ext3。在我们这个例子中，/这个挂载点已经有了一个基本的已格式化的xfs文件系统。
-
-```shell
-sudo kudu format -fs_wal_dir=/kudu-wal -fs_data_dirs=/kudu-data -fs_metadata_dir=/kudu-metada -uuid=xxx
-```
-
-#### list
-
-* 查看磁盘上的tablets，rowset，block和cfile的元数据
-
-```shell
-kudu fs list [-fs_data_dirs=<dirs>] [-fs_metadata_dir=<dir>] [-fs_wal_dir=<dir>] [-table_id=<id>] [-table_name=<name>] [-tablet_id=<id>] [-rowset_id=<id>] [-column_id=<id>] [-block_id=<id>] [-columns=<columns>] [-format=<format>] [-noh]
-```
-
-#### update_dirs
-
-* 修改data目录在一个存在的kudu文件系统
-
-```shell
-kudu fs update_dirs [-force] [-fs_data_dirs=<dirs>] [-fs_metadata_dir=<dir>] [-fs_wal_dir=<dir>]
-```
-
-#### dump
-
-* 用dump命令可以转储文件系统各个部分的内容。
-
-```shell
--- 转储文件系统的uuid，通过WAL和数据目录获取
-sudo kudu fs dump uuid -fs_wal_dir=/var/lib/kudu/tserver
-
--- 在块级别做转储
- sudo kudu fs dump block -fs_wal_dir=/var/lib/kudu/tserver
-
---在cfile做转储
-sudo kudu fs dump cfile -fs_wal_dir=/var/lib/kudu/tserver
- 
- --转储tree
- sudo kudu fs tree cfile -fs_wal_dir=/var/lib/kudu/tserver
-```
-
-### ham
-
-#### check
-
-* 校验kudu和hive元数据的一致性
-
-```shell
-kudu hms check <master_addresses> [-hive_metastore_sasl_enabled] [-hive_metastore_uris=<uris>] [-noignore_other_clusters]
-```
-
-#### downgrade
-
-* 为kudu和hive的元数据降级metadata到legacy格式
-
-```shell
-kudu hms downgrade <master_addresses> [-hive_metastore_sasl_enabled] [-hive_metastore_uris=<uris>]
-```
-
-#### fix
-
-* 修复自动修复的元数据不一致的Kudu和Hive metastore
-
-```shell
-kudu hms fix <master_addresses> [-dryrun] [-drop_orphan_hms_tables] [-nocreate_missing_hms_tables] [-nofix_inconsistent_tables] [-noupgrade_hms_tables] [-hive_metastore_sasl_enabled] [-hive_metastore_uris=<uris>] [-noignore_other_clusters]
-```
-
-#### list
-
-* 查看kudu table的hms entry集合
-
-```shell
-kudu hms list <master_addresses> [-columns=<columns>] [-format=<format>]
-```
-
-### tablet副本
-
-#### local_replica
-
-```shell
-# 查看本地副本列表
-kudu local_replica list -fs_wal_dir=/kudu_wal
-
-# 转储block_ids
-kudu local_replica dump blocks_id replicaId
-
-# 转储有关表副本的元数据
-kudu local_replica dump meta replicaId
-```
-
-#### remote_replica
-
 ## 管理tablet server
 
 ### 添加tablet server
@@ -525,3 +406,122 @@ sudu systemctl start kudu-server
 
 [kudu配置不执行DDL操作](https://kudu.apache.org/docs/configuration.html)
 
+## 基本的性能调优
+
+### 性能调优关注点
+
+* 分配给Kudu的内存量
+* 使用适当的分区策略
+* 维护管理器的线程数量
+
+### Kudu的内存限制
+
+```
+# 生产环境中，刚开始可以设置在24GB到32GB
+--memory_limit_hard_bytes
+```
+
+### 维护管理器的线程
+
+* 执行各种任务的后台线程，会做各种工作，比如将数据从内存刷新到磁盘，从而进行内存管理(把记录从行存储格式的内存切换到列存储格式的磁盘)，还能提高整体的读性能或释放磁盘空间。
+* 基于行的数据很容易写，因为写一行只需要做很少的处理。基于行意味着该行中的数据与另一行中的数据无关。
+* 因此，它是一种适合写操作的非常快速的格式。基于列的数据更难快速地写入，因为它需要做更多的处理来将某一行转化成列格式。
+* 因此，基于列的数据集在读取时更快。当Kudu将数据保存在内存中等待将其刷新到磁盘时，数据是以写优化的行格式存储的。但是，在维护管理器的线程将其刷新到磁盘后，就会转换为列格式存储，以便适合聚合读取类型的查询。
+
+```
+--maintenance_manager_num_threads
+```
+
+### 避免耗尽磁盘空间
+
+```
+--fs_data_dirs_reserved_bytes
+--fs_wal_dir_reserved_bytes
+
+这些参数默认值是1%，也就是在数据目录和WAL目录的文件系统上保留磁盘空间的1%，用于非Kudu的使用，一开始将这些值设置为接近5%的范围比较合适。
+```
+
+### 容忍磁盘故障
+
+* Tablet server可以容忍磁盘故障，但是如果WAL和tablet元数据的磁盘发生故障，则tablet服务器会挂掉。
+* tablet的数据会被分开存储在各个tablet server的多个磁盘上，默认为3个磁盘，这样可以保证tablet server的可靠性。
+
+```
+# 控制特定tablet副本的目标数据目录数
+--fs_target_data_dirs_per_tablet
+```
+
+
+
+## Spark Kudu
+
+### spark-sql方式
+
+```shell
+spark-sql --packages org.apache.kudu:kudu-spark2_2.11:1.10.0
+```
+
+### spark api方式
+
+* 引入依赖
+
+```
+kudu-spark2_scala.version
+kudu-client
+```
+
+* 创建df
+
+```scala
+ def main(args: Array[String]): Unit = {
+    val spark: SparkSession = SparkSession.builder()
+      .appName("kudu-adhoc")
+      .master("local[8]")
+      .getOrCreate()
+
+    // 创建kudu df
+    //    val kuduDf: DataFrame = spark.read.options(Map("kudu.master" -> "192.168.6.50:7051,192.168.6.52:7051,192.168.6.51:7051",
+    //      "kudu.table" -> "test_kud")).format("kudu").load
+
+    // 创建kudu执行上下文
+    val kuduContext: KuduContext = new KuduContext("192.168.6.50:7051,192.168.6.52:7051,192.168.6.51:7051",
+      spark.sparkContext)
+
+    // create kudu table
+    val schemaList: util.List[ColumnSchema] = Lists.newArrayList(new ColumnSchema.ColumnSchemaBuilder("key", Type.INT32)
+      .key(true)
+      .wireType(DataType.INT32)
+      .comment("key用于分区,主键").build(),
+      new ColumnSchema.ColumnSchemaBuilder("name", Type.STRING)
+        .nullable(true)
+        .comment("名称")
+        .build())
+    val schema: Schema = new Schema(schemaList)
+    val tableOptions: CreateTableOptions = new CreateTableOptions()
+      .setNumReplicas(3)
+      .addHashPartitions(Lists.newArrayList("key"), 3)
+
+
+    kuduContext.deleteTable(kuduTableName)
+
+    val kuduTable: KuduTable = kuduContext.createTable(kuduTableName, schema, tableOptions)
+
+    logInfo(s"create table ${kuduTable.getSchema.toString}")
+
+
+    logInfo(s"$kuduTableName 是否存在 ${kuduContext.tableExists(kuduTableName)}")
+
+
+    import spark.implicits._
+
+    // 插入数据
+    val kuduDF: DataFrame = spark.sparkContext.makeRDD(Seq((1, "hsm"), (2, "zhangsan")))
+      .toDF("key", "name")
+
+    // insert
+    kuduContext.insertRows(kuduDF, kuduTableName,
+      new KuduWriteOptions(true, true, true, true))
+
+    spark.close()
+  }
+```
