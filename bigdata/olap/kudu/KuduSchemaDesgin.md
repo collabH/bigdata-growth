@@ -146,3 +146,86 @@
 
 #### hash partitioning
 
+* 哈希分区按哈希值进行分布到多个桶中。在单级哈希分区表中，每个bucket将恰好对应一个tablet。bucket的数量是在创建表时设置的。通常使用主键列作为hash值，但与范围分区一样，可以使用主键列的任何子集。
+* 当不需要对表进行有序访问时，哈希分区是一种有效的策略。哈希分区对于在tablet之间随机分布写操作非常有效，这有助于缓解热定位和tablet大小不均匀。
+
+#### 多级分区
+
+* Kudu允许在一个表上组合多个分区级别，0或多个hash分区能和一个范围分区组合。除了单个分区类型的约束外，对多层分区的唯一附加约束是`多层哈希分区不能哈希同一列`。
+
+#### 分区裁剪
+
+* 当可以确定分区可以被scan谓词完全过滤时，Kudu扫描将自动跳过对整个分区的扫描。要删除hash分区，扫描必须在每个散列上包含等式谓词。要删除范围分区，扫描必须包括范围分区列上的相等谓词或范围谓词。对多层分区表的扫描可以独立地利用任何级别上的分区修剪。
+
+### 分区使用案例
+
+```sql
+CREATE TABLE metrics (
+    host STRING NOT NULL,
+    metric STRING NOT NULL,
+    time INT64 NOT NULL,
+    value DOUBLE NOT NULL,
+    PRIMARY KEY (host, metric, time)
+);
+```
+
+#### 范围分区
+
+* 对度量表进行分区的一种自然方法是在时间列上进行范围分区。假设我们希望每年有一个分区，表将保存2014、2015和2016年的数据。至少有两种方法可以对表进行分区:使用无边界范围分区，或者使用有边界范围分区。
+
+![Range Partitioning by `time`](https://kudu.apache.org/docs/images/range-partitioning-example.png)
+
+#### 哈希分区
+
+* `metrics`根据`host`和`metric`列作为hash分区的列
+
+![Hash Partitioning by `host` and `metric`](https://kudu.apache.org/docs/images/hash-partitioning-example.png)
+
+* 这种分区策略将在表中的所有tablet上均匀地展开写操作，这有助于总体的写吞吐量。通过指定相等谓词，对特定`host`和`metrics`的扫描可以利用分区修剪，从而将扫描的tablet数量减少到一个。
+
+#### 哈希和范围分区
+
+| Strategy             | Writes                                     | Reads                                                 | Tablet Growth                                        |
+| :------------------- | :----------------------------------------- | :---------------------------------------------------- | :--------------------------------------------------- |
+| `range(time)`        | ✗ - all writes go to latest partition      | ✓ - time-bounded scans can be pruned                  | ✓ - new tablets can be added for future time periods |
+| `hash(host, metric)` | ✓ - writes are spread evenly among tablets | ✓ - scans on specific hosts and metrics can be pruned | ✗ - tablets could grow too large                     |
+
+![Hash and Range Partitioning](https://kudu.apache.org/docs/images/hash-range-partitioning-example.png)
+
+#### Hash和Hash分区
+
+* Kudu可以在同一个表中支持任意数量的哈希分区级别，只要这些级别没有共同的哈希列。
+
+![Hash and Hash Partitioning](https://kudu.apache.org/docs/images/hash-hash-partitioning-example.png)
+
+## 模式Schema修改
+
+* 重命名表
+* 重命名主键的列
+* 重命名、添加或者删除非主键列
+* 添加或删除范围分区
+
+可以在单个事务操作中组合多个更改步骤。
+
+## Kudu的限制
+
+* 列的数量
+  * 默认kudu不允许创建一个表超过300个列。
+* cell的大小
+  * 在编码或压缩之前，单个单元不能大于64KB。在由Kudu完成内部组合键编码后，组成组合键的单元总数被限制为16KB。插入不符合这些限制的行将导致错误返回给客户机。
+* 行的大小
+  * 虽然单个单元格最多可以达到64KB，并且Kudu最多支持300列，但是建议单个行不要超过几百KB。
+* **Valid Identifiers**
+  * 诸如表和列名之类的标识符必须是有效的UTF-8序列，并且不超过256字节。
+* 主键不可变
+  * kudu不允许修改修改一行的主键列
+* 不可修改主见
+  * 在创建表之后，Kudu不允许更改主键列。
+* 不可修改分区
+  * 除了添加或删除范围分区外，Kudu不允许更改创建后的表分区方式。
+* 不可修改列的类型
+  * Kudu不允许更改列的类型。
+* partition splitting
+  * 分区不能在表创建之后分开或合并
+* 删除的行磁盘空间不会被回收
+  * 被删除的行所占用的磁盘空间只能通过压缩来回收，并且只有当删除的期限超过“talet server历史记录的最大使用期限”（由--tablet_history_max_age_sec标志控制）时，才能收回。 此外，Kudu当前仅调度压缩以提高读取/写入性能。 tablet绝不会仅仅为了压缩磁盘空间而进行压缩。 这样，当预期将丢弃大量行时，应使用范围分区。 使用范围分区，可以删除各个分区以丢弃数据并回收磁盘空间。
