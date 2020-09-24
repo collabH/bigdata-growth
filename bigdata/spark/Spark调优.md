@@ -113,6 +113,16 @@ java对象的访问速度虽然快，但是占用的空间通常比内部的属�
 
 * 内存回收优化
 
+## JVM相关优化
+
+* 调整非堆内存
+
+```shell
+spark.yarn.driver.memoryOverhead
+```
+
+
+
 ## 数据本地化
 
 * 数据本地化堆Spark job有着重要的影响，如果数据和计算逻辑放在一起那么运算速度会更快减少了数据的网络传输。
@@ -156,3 +166,6 @@ java对象的访问速度虽然快，但是占用的空间通常比内部的属�
 
 * 设置组磁盘。`spark.local.dir=/dir1,/dir2,/dir3`
 
+## Shuffle过程优化
+
+* `spark.shuffle.memoryFraction`:用于设置Shuffle读阶段Task从上一个阶段拉取到内存的AppendOnlyMap中做聚合计算可使用的内存大小，当内存中的AppendOnlyMap装满时会将数据溢写到磁盘中。默认是Executor内存的0.2倍，如果Task拉取的数据量过大可以增大改值。
