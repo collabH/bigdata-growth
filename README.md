@@ -147,6 +147,11 @@
 * [KuduOverView](bigdata/olap/kudu/KuduOverView.md)
 * [Kudu表和Schema设计](bigdata/olap/kudu/KuduSchemaDesgin.md)
 * [KuduConfiguration](bigdata/olap/kudu/KuduConfiguration.md)
+* [Kudu原理分析](bigdata/olap/kudu/Kudu原理分析.md)
+
+#### Impala
+
+* [ImpalaOverView](bigdata/olap/impala/ImpalaOverView.md)
 
 ## 数据仓库
 
