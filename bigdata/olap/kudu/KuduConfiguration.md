@@ -125,6 +125,88 @@ kudu-tserver --help
 * 在安全的集群环境,`--hive_metastore_sasl_enabled`被设置为`true`，`--hive_metastore_kerberos_principal`和`hive.metastore.kerberos.principal`一致
 * 重启Kudu master服务器
 
+# Kudu集成Impala
+
+* Impala SQL语法与HQL相似，熟悉HQL即可。
+
+## impala配置修改
+
+```shell
+vim /etc/default/impala
+在IMPALA_SERVER_ARGS添加
+-kudu_master_hosts=hadoop:7051
+```
+
+## DDL
+
+### 创建内部表
+
+```sql
+create table  test(
+id bigint,
+name string,
+primary key(id))
+partition by hash partitions 16
+stored as kudu
+tblproperties(
+'kudu.master_addresses'='hadoop:7051',
+'kudu.table_name'='test');
+```
+
+### 创建外部表
+
+```sql
+create external table  test(
+id bigint,
+name string,
+primary key(id))
+partition by hash partitions 16
+stored as kudu
+tblproperties(
+'kudu.master_addresses'='hadoop:7051',
+'kudu.table_name'='test');
+```
+
+### 修改
+
+```sql
+-- 修改表名
+ALTER TABLE test RENAME TO test1
+
+-- 修改kudu表的tblProperties
+alter table test set tblproperties('kudu.table'='test1')
+
+-- 修改表类型
+alter table test set tblproperties('external'='true')
+```
+
+## DML
+
+### 插入数据
+
+```sql
+-- 插入单行数据
+INSERT INTO test VALUES(1,'zhangsan')
+
+-- 插入多条数据
+INSERT INTO test VALUES(1,'zhangsan'),(2,'lisi')
+
+-- 批量插入
+INSERT INTBO test1 SELECT * FROM test
+```
+
+### 更新数据
+
+```sql
+UPDATE test SET name='li' where id =1
+```
+
+### 删除数据
+
+```sql
+DELETE from test where id = 2;
+```
+
 # Kudu的动态伸缩指南
 
 ## 概念
