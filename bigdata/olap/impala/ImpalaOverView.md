@@ -124,3 +124,28 @@ help方式查看
 | BINARY       | 不支持         | 字节数组                                             |
 
 * Impala虽然支持`array`、`map`、`struct`复杂数据类型，但是并不完全支持，一般处理方法，将复杂类型转化为基本类型，从hive中创表。
+
+# 存储和压缩
+
+## 支持的存储压缩
+
+| 文件格式     | 压缩编码                     | Impala是否可直接创建                                         | 是否可直接插入                                               |
+| ------------ | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| Parquet      | Snappy（默认）, GZIP;        | Yes                                                          | 支持：CREATE TABLE, INSERT, 查询                             |
+| TextFile     | LZO，gzip，bzip2，snappy     | Yes. 不指定 STORED AS 子句的 CREATE TABLE 语句，默认的文件格式就是未压缩文本 | 支持：CREATE TABLE, INSERT, 查询。如果使用 LZO 压缩，则必须在 Hive 中创建表和加载数据 |
+| RCFile       | Snappy, GZIP, deflate, BZIP2 | Yes.                                                         | 支持CREATE，查询，在 Hive 中加载数据                         |
+| SequenceFile | Snappy, GZIP, deflate, BZIP2 | Yes.                                                         | 支持：CREATE TABLE, INSERT, 查询。需设置<br />修改参数:<br /> ALLOW_UNSUPPORTED_FORMATS=true |
+
+* impala不支持ORC格式
+
+# 性能优化
+
+* 尽量将StateStore和Catalog单独部署到同一个节点上，使其能正常通信。
+* 通过对Impala Daemon内存限制(默认256MB)及StateStore工作线程数，来提供Impala的执行效率。
+* 防止小文件、选择合适的文件存储格式、使用分区。
+* 使用compute stats进行表信息搜集，当一个内容表或分区明显变化，重新计算统计相关数据表或分区。
+* io优化
+  * 避免整个数据发送到客户端
+  * 条件过滤
+  * limit子句
+  * 尽量少用全量元数据刷新
