@@ -472,4 +472,3 @@ private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderEle
   }
 }
 ```
-
