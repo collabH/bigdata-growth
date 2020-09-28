@@ -331,3 +331,145 @@ def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit
     threadPool.execute(tr)
   }
 ```
+
+# Local部署模型
+
+* local模式只有Driver，没有Master和Worker，执行任务的Executor与Driver在同一个JVM进程内，local模式中使用的ExecutorBackend和SchedulerBackend的实现类都是LocalSchedulerBackend。
+
+![local模式启动过程](./img/Local模式启动过程.jpg)
+
+![local模式下的任务提交与执行](./img/local模式下的任务提交与执行.jpg)
+
+1. TaskSchedulerImpl的submitTasks方法在提交Task的最后会调用LocalSchedulerBackend的reviveOffers方法。
+2. LocalSchedulerBackend的reviveOffers方法只是向LocalEnd-point发送ReviveOffers消息。
+3. LocalEndpoint收到ReviveOffers消息后，调用TaskScheduler-Impl的resourceOffers方法申请资源，TaskSchedulerImpl将根据任务申请的CPU核数、内存、本地化等条件为其分配资源。
+4. 任务获得资源后，调用Executor的launchTask方法运行任务。
+5. 在任务运行过程中，Executor中运行的TaskRunner通过调用LocalSchedulerBackend的statusUpdate方法更新Task的状态。
+6. LocalSchedulerBackend的statusUpdate方法将向LocalEndpoint发送StatusUpdate消息。
+7. LocalEndpoint接收到StatusUpdate消息，将调用TaskSchedulerImpl的statusUpdate方法更新任务的状态。
+
+# 领导选举代理
+
+* 领导选举机制（Leader Election）可以保证集群虽然存在多个Master，但是`只有一个Master处于激活（Active）状态，其他的Master处于支持（Standby）状态`。当Active状态的Master出现故障时，会选举出一个Standby状态的Master作为新的Active状态的Master。由于`整个集群的Worker, Driver和Application的信息都已经通过持久化引擎持久化`，因此切换Master时只会影响新任务的提交，对于正在运行中的任务没有任何影响。
+
+```scala
+@DeveloperApi
+trait LeaderElectionAgent {
+  // master实例
+  val masterInstance: LeaderElectable
+  def stop() {} // to avoid noops in implementations.
+}
+
+@DeveloperApi
+trait LeaderElectable {
+  /**
+   * 选举leader
+   */
+  def electedLeader(): Unit
+
+  /**
+   * 撤销leader
+   */
+  def revokedLeadership(): Unit
+}
+```
+
+## MonarchyLeaderAgent
+
+```scala
+private[spark] class MonarchyLeaderAgent(val masterInstance: LeaderElectable)
+  extends LeaderElectionAgent {
+  // 选举leader
+  masterInstance.electedLeader()
+}
+```
+
+## ZooKeeperLeaderElectionAgent
+
+```scala
+private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderElectable,
+    conf: SparkConf) extends LeaderLatchListener with LeaderElectionAgent with Logging  {
+
+  // zookeeper存spark选举的目录
+  val WORKING_DIR = conf.get("spark.deploy.zookeeper.dir", "/spark") + "/leader_election"
+
+  private var zk: CuratorFramework = _
+  // 使用ZooKeeper进行领导选举的客户端，类型为LeaderLatch。
+  private var leaderLatch: LeaderLatch = _
+  // 领导选举的状态，包括有领导（LEADER）和无领导（NOT_LEADER）。
+  private var status = LeadershipStatus.NOT_LEADER
+
+  /**
+   * 开始选举
+   */
+  start()
+
+  private def start() {
+    logInfo("Starting ZooKeeper LeaderElection agent")
+    zk = SparkCuratorUtil.newClient(conf)
+    // 创建leader所
+    leaderLatch = new LeaderLatch(zk, WORKING_DIR)
+    // 添加监听器
+    leaderLatch.addListener(this)
+    // 开启
+    leaderLatch.start()
+  }
+
+  override def stop() {
+    leaderLatch.close()
+    zk.close()
+  }
+
+  /**
+   * 是否是leader
+   */
+  override def isLeader() {
+    synchronized {
+      // could have lost leadership by now.
+      if (!leaderLatch.hasLeadership) {
+        return
+      }
+
+      logInfo("We have gained leadership")
+      updateLeadershipStatus(true)
+    }
+  }
+
+  /**
+   * 不是leader
+   */
+  override def notLeader() {
+    synchronized {
+      // could have gained leadership by now.
+      if (leaderLatch.hasLeadership) {
+        return
+      }
+
+      logInfo("We have lost leadership")
+      updateLeadershipStatus(false)
+    }
+  }
+
+  /**
+   * 修改leader选举状态
+   * @param isLeader
+   */
+  private def updateLeadershipStatus(isLeader: Boolean) {
+    if (isLeader && status == LeadershipStatus.NOT_LEADER) {
+      status = LeadershipStatus.LEADER
+      // 发送ElectedLeader消息
+      masterInstance.electedLeader()
+    } else if (!isLeader && status == LeadershipStatus.LEADER) {
+      status = LeadershipStatus.NOT_LEADER
+      // 发送RevokedLeadership消息
+      masterInstance.revokedLeadership()
+    }
+  }
+
+  private object LeadershipStatus extends Enumeration {
+    type LeadershipStatus = Value
+    val LEADER, NOT_LEADER = Value
+  }
+}
+```
+
