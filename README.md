@@ -8,6 +8,10 @@
 
 ## 基础能力
 
+### 分布式理论
+
+* [分布式架构](base/分布式理论/分布式架构.md)
+
 ### Scala
 
 * [ScalaOverView](./base/scala/ScalaOverView.md)
