@@ -94,6 +94,7 @@
 * [消费者源码剖析](bigdata/kafka/消费者源码剖析.md)
 * [kafkaShell](bigdata/kafka/KafkaShell.xmind)
 * [kafka权威指南读书笔记](bigdata/kafka/kafka权威指南)
+* [深入理解Kafka读书笔记](bigdata/kafka/深入理解Kafka)
 
 ### HBase
 
