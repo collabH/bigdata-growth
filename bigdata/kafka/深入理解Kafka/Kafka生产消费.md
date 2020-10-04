@@ -71,3 +71,47 @@
 
 # 主题和分区
 
+## 分区Leader选举
+
+### 自动选举
+
+* `auto.leader.rebalance.enable`默认为true，但是生产环境中不建议开启自动leader选举，这样可能会阻塞正常的使用。
+
+### 手动选举
+
+* 使用`kafka-perferred-replica-election.sh`脚本进行手动副本选举，这里会将Kafka的具体的元数据存储在Zookeeper的`/admin/preferred_replica_election`节点上，如果数据大小超过Zk的限制则会选举失败，默认为`1MB`。
+* 可以创建一个json文件指定需要选举的分区清单，通过`--path-to-json-file`参数制定
+
+```json
+{
+  "partitiuons":[
+    {
+      "partition":0,
+      "topic": "test"
+    }, 
+    {
+      "partition":1,
+      "topic": "test"
+    }
+  ]
+}
+```
+
+## 分区重分配
+
+### kafka-reassign-partitions.sh
+
+* 创建需要进行分区重新分配的topic
+
+```json
+{
+		"topics":[
+      {
+        "topic":"test"
+      }
+    ],
+  "version": 1
+}
+```
+
+* kafka-reassign-partitions.sh --zookeeper localhost:2181/kafka --generate --topics-to-move-json-file test.json --broker-list 0,2
