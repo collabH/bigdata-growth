@@ -343,3 +343,108 @@
 * 分区的分配要尽可能均匀。
 * 分区的分配尽可能与上次分配保持相同。
 * 当俩个条件发生冲突时，一个条件优先于第二个条件。
+
+## 消费者协调器和组协调器
+
+### 旧版本的Kafka
+
+* 消费者协调器和组协调器的概念是针对新版的消费者客户端而言的，Kafka 建立之初并没有它们。旧版的消费者客户端是使用ZooKeeper的监听器（Watcher）来实现这些功能的。
+* 每个消费组（＜group＞）在ZooKeeper中都维护了一个/consumers/＜group＞/ids路径，在此路径下使用临时节点记录隶属于此消费组的消费者的唯一标识（consumerIdString），consumerIdString由消费者启动时创建。消费者的唯一标识由consumer.id+主机名+时间戳+UUID的部分信息构成，其中 consumer.id 是旧版消费者客户端中的配置，相当于新版客户端中的client.id。比如某个消费者的唯一标识为consumerId_localhost-1510734527562-64b377f5，那么其中consumerId为指定的consumer.id，localhost为计算机的主机名，1510734527562代表时间戳，而64b377f5表示UUID的部分信息。
+
+#### 存在的问题
+
+* 羊群效应（Herd Effect）：所谓的羊群效应是指ZooKeeper中一个被监听的节点变化，大量的Watcher 通知被发送到客户端，导致在通知期间的其他操作延迟，也有可能发生类似死锁的情况。
+* 脑裂问题（Split Brain）：消费者进行再均衡操作时每个消费者都与ZooKeeper进行通信以判断消费者或broker变化的情况，由于ZooKeeper本身的特性，可能导致在同一时刻各个消费者获取的状态不一致，这样会导致异常问题发生。
+
+### 再均衡原理
+
+* 将全部消费组分成多个子集，每个消费组的子集在服务端对应一个**GroupCoordinator**对其进行管理，GroupCoordinator是Kafka服务端中用于管理消费组的组件。而消费者客户端中的**ConsumerCoordinator**组件负责与GroupCoordinator进行交互。
+* ConsumerCoordinator与GroupCoordinator之间最重要的职责就是负责执行消费者再均衡的操作，包括前面提及的分区分配的工作也是在再均衡期间完成的。
+
+#### 再均衡阶段
+
+##### 第一个阶段(FIND_COORDINATOR)
+
+* 消费者需要确定它所属的消费组对应的GroupCoordinator所在的broker，并创建与该broker相互通信的网络连接。如果消费者已经保存了与消费组对应的 GroupCoordinator 节点的信息，并且与它之间的网络连接是正常的，那么就可以进入第二阶段。否则，就需要向集群中的某个节点发送FindCoordinatorRequest请求来查找对应的GroupCoordinator，这里的“某个节点”并非是集群中的任意节点，而是负载最小的节点
+
+##### 第二阶段(JOIN_GROUP)
+
+* 在成功找到消费组所对应的 GroupCoordinator 之后就进入加入消费组的阶段，在此阶段的消费者会向GroupCoordinator发送JoinGroupRequest请求，并处理响应。
+
+##### 第三阶段(SYNC_GROUP)
+
+* leader 消费者根据在第二阶段中选举出来的分区分配策略来实施具体的分区分配，在此之后需要将分配的方案同步给各个消费者，此时leader消费者并不是直接和其余的普通消费者同步分配方案，而是通过 GroupCoordinator 这个“中间人”来负责转发同步分配方案的。在第三阶段，也就是同步阶段，各个消费者会向GroupCoordinator发送SyncGroupRequest请求来同步分配方案
+
+## __consumer_offsets
+
+* 一般情况下，当集群中第一次有消费者消费消息时会自动创建主题__consumer_offsets，不过它的副本因子还受`offsets.topic.replication.factor`参数的约束，这个参数的默认值为3（下载安装的包中此值可能为1），分区数可以通过`offsets.topic.num.partitions`参数设置，默认为50。
+
+## 事务消息
+
+### 幂等
+
+* 所谓的幂等，简单地说就是对接口的多次调用所产生的结果和调用一次是一致的。生产者在进行重试的时候有可能会重复写入消息，而使用Kafka的幂等性功能之后就可以避免这种情况。
+* 开启幂等性功能的方式很简单，只需要显式地将生产者客户端参数`enable.idempotence`设置为true即可（这个参数的默认值为false），需要保证`retries`需要大于0，`max.in.flight.requests.per.connection`参数的值不能大于5，`acks`为-1。
+
+#### 实现原理
+
+* 为了实现生产者的幂等性，Kafka为此引入了producer id（以下简称PID）和序列号（sequence number）这两个概念，分别对应 v2 版的日志格式中RecordBatch的producer id和first seqence这两个字段。每个新的生产者实例在初始化的时候都会被分配一个PID，这个PID对用户而言是完全透明的。对于每个PID，消息发送到的每一个分区都有对应的序列号，这些序列号从0开始单调递增。生产者每发送一条消息就会将＜PID，分区＞对应的序列号的值加1。
+* broker端会在内存中为每一对＜PID，分区＞维护一个序列号。对于收到的每一条消息，只有当它的序列号的值（SN_new）比broker端中维护的对应的序列号的值（SN_old）大1（即SN_new=SN_old+1）时，broker才会接收它。如果SN_new＜SN_old+1，那么说明消息被重复写入，broker可以直接将其丢弃。如果SN_new＞SN_old+1，那么说明中间有数据尚未写入，出现了乱序，暗示可能有消息丢失，对应的生产者会抛出OutOfOrderSequenceException，这个异常是一个严重的异常，后续的诸如 send（）、beginTransaction（）、commitTransaction（）等方法的调用都会抛出IllegalStateException的异常。
+* 引入序列号来实现幂等也只是针对每一对＜PID，分区＞而言的，也就是说，Kafka的幂等只能保证单个生产者会话（session）中单分区的幂等。
+
+### 事务
+
+* 幂等性并不能跨多个分区运作，而事务可以弥补这个缺陷。事务可以保证对多个分区写入操作的原子性。操作的原子性是指多个操作要么全部成功，要么全部失败，不存在部分成功、部分失败的可能。
+* 为了实现事务，应用程序必须提供唯一的 transactionalId，这个 transactionalId 通过客户端参数transactional.id来显式设置，事务要求生产者开启幂等特性，因此通过将transactional.id参数设置为非空从而开启事务特性的同时需要将`enable.idempotence ` 设置为 true。
+* `transactionalId与PID一一对应`，两者之间所不同的是transactionalId由用户显式设置，而PID是由Kafka内部分配的。另外，为了保证新的生产者启动后具有相同transactionalId的旧生产者能够立即失效，每个生产者通过transactionalId获取PID的同时，还会`获取一个单调递增的producer epoch`。如果使用同一个transactionalId开启两个生产者会抛出异常。
+
+#### KafkaProducer事务相关方法
+
+* initTransactions（）方法用来初始化事务，这个方法能够执行的前提是配置了transactionalId。
+* beginTransaction（）方法用来开启事务。
+* sendOffsetsToTransaction（）方法为消费者提供在事务内的位移提交的操作。
+* commitTransaction（）方法用来提交事务。
+* abortTransaction（）方法用来中止事务，类似于事务回滚。
+
+#### 消费端设置
+
+* 消费端的参数`isolation.level`来控制消费端读取的消息，默认值为“read_uncommitted”，意思是说消费端应用可以看到（消费到）未提交的事务，还可以设置为“read_committed”，表示消费端应用不可以看到尚未提交的事务内的消息。
+
+#### 事务消息原理
+
+* 为了实现事务的功能，Kafka还引入了事务协调器（TransactionCoordinator）来负责处理事务，这一点可以类比一下组协调器（GroupCoordinator）。每一个生产者都会被指派一个特定的TransactionCoordinator，所有的事务逻辑包括分派 PID 等都是由 TransactionCoordinator 来负责实施的。TransactionCoordinator 会将事务状态持久化到内部主题__transaction_state 中。下面就以最复杂的consume-transform-produce的流程如下图。
+
+![](./img/事务消息流程.jpg)
+
+1. 查找TransactionCoordinator
+
+```
+TransactionCoordinator负责分配PID和管理事务，因此生产者要做的第一件事情就是找出对应的TransactionCoordinator所在的broker节点。与查找GroupCoordinator节点一样，也是通过FindCoordinatorRequest请求来实现的，只不过FindCoordinatorRequest中的coordinator_type就由原来的0变成了1。
+
+Kafka 在收到 FindCoorinatorRequest 请求之后，会根据 coordinator_key （也就是transactionalId）查找对应的TransactionCoordinator节点。如果找到，则会返回其相对应的node_id、host和port信息。具体查找TransactionCoordinator的方式是根据transactionalId的哈希值计算主题__transaction_state中的分区编号。其中transactionTopicPartitionCount为主题__transaction_state中的分区个数，这个可以通过broker端参数transaction.state.log.num.partitions来配置，默认值为50。找到对应的分区之后，再寻找此分区leader副本所在的broker节点，该broker节点即为这个transactionalId对应的TransactionCoordinator节点。
+```
+
+2. 获取PID
+
+```
+在找到TransactionCoordinator节点之后，就需要为当前生产者分配一个PID了。凡是开启了幂等性功能的生产者都必须执行这个操作，不需要考虑该生产者是否还开启了事务。生产者获取PID的操作是通过InitProducerIdRequest请求来实现的。其中 transactional_id 表示事务的 transactionalId，transaction_timeout_ms表示TransactionCoordinaor等待事务状态更新的超时时间，通过生产者客户端参数transaction.timeout.ms配置，默认值为60000。
+```
+
+**保存PID**
+
+```
+生产者的InitProducerIdRequest请求会被发送给TransactionCoordinator。注意，如果未开启事务特性而只开启幂等特性，那么 InitProducerIdRequest 请求可以发送给任意的 broker。当TransactionCoordinator第一次收到包含该transactionalId的InitProducerIdRequest请求时，它会把transactionalId和对应的PID以消息（我们习惯性地把这类消息称为“事务日志消息”）的形式保存到主题__transaction_state中。
+```
+
+3. 开启事务
+
+```
+通过KafkaProducer的beginTransaction（）方法可以开启一个事务，调用该方法后，生产者本地会标记已经开启了一个新的事务，只有在生产者发送第一条消息之后 TransactionCoordinator才会认为该事务已经开启。
+```
+
+4. 提交或者中止事务
+
+```
+一旦数据被写入成功，我们就可以调用 KafkaProducer 的 commitTransaction（）方法或abortTransaction（）方法来结束当前的事务。
+```
+
