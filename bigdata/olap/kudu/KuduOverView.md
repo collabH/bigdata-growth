@@ -97,12 +97,12 @@
 
 ### catalog table
 
-* 一个catalog table是kudu的核心位置，它存储的信息关于table和tablets。这个catalog table可能不能被直接读取或者写入。相反，只能通过在客户机API中公开的元数据操作来访问它。
+* 一个catalog table是kudu的核心位置，它存储的信息关于table和tablets。这个catalog table可能不能被直接读取或者写入。相反，只能通过在客户端API中公开的元数据操作来访问它。
 * 一个catalog table存储元数据的俩个分类
   * tables
     * table schema，locations，states
   * tablets
-    * 当tablet server的每个tablet都有副本时，存储的事一组已经存在的tablets的state，开始和结束的key。
+    * 当tablet server的每个tablet都有副本时，存储的是一组已经存在的tablets的state，开始和结束的key。
 
 ### logical replication
 
@@ -118,7 +118,7 @@
 
 1. 写操作被提交到一个tablet的Write Ahead Log（WAL）
 2. 把插入操作添加到MemRowSet中。
-3. 当MemRowSet满了之后，就被刷新(flushed)到磁盘，成为DIskRowSet
+3. 当MemRowSet满了之后，就被刷新(flushed)到磁盘，成为DiskRowSet
 
 #### MemRowSet
 
@@ -283,7 +283,7 @@ http://＜your-host＞:8050
 
 * 一个集群包括3个master服务器，这些master服务器通过raft协议选举出来一个leader，半数之上的master认为某个master可以成为leader即可。
 * master服务器的数目必须是奇数，最多可以有（n-1）/2个服务器发生故障而程序仍然能提供服务。当多于（n-1）/2个服务器发生故障时，master的服务将不能继续，这样服务对集群来说就不再可用。
-* master服务器维护用户所创建的所有表的元数据活目录信息，Kudu创建一个系统目录表以处理在Kudu中创建的各种对象的元数据，该表设计为一个分区，因此也只有一个tablet。
+* master服务器维护用户所创建的所有表的元数据或目录信息，Kudu创建一个系统目录表以处理在Kudu中创建的各种对象的元数据，该表设计为一个分区，因此也只有一个tablet。
 
 ### 系统目录表
 
@@ -326,7 +326,7 @@ t=20个table server
 
 ## 复制策略
 
-* 如果一个tablet服务器出现故障，副本的数量可能会从三个减少到两个，Kudu将迅速修复这些tablet。
+* 如果一个tablet server出现故障，副本的数量可能会从三个减少到两个，Kudu将迅速修复这些tablet。
 
 ### 3-4-3策略
 
