@@ -448,3 +448,36 @@ Kafka 在收到 FindCoorinatorRequest 请求之后，会根据 coordinator_key �
 一旦数据被写入成功，我们就可以调用 KafkaProducer 的 commitTransaction（）方法或abortTransaction（）方法来结束当前的事务。
 ```
 
+## Kafka消息可靠性
+
+* 副本数设置，`acks`设置为-1，`retries`按照需求设置，并且`min.insync.replicas`设置大于1
+* `unclean.leader.election.enable`是否选举leader副本只从isr队列中选取，默认为false，即从ISR队列中选择。
+* `log.flush.interval.messages`和`log.flush.interval.ms`，用来调整同步刷盘的策略，默认是不做控制而交由操作系统本身来进行处理。
+* offset提交相关，以及发生再均衡时设计旧Consumer的offset和新Consumer的offset，这时候可以在发生再均衡的时候先提交offset。
+
+# Kafka集群数据迁移
+
+## 模型架构
+
+![](./img/Kafka Mirror Maker架构.jpg)
+
+## 使用
+
+### 修改consumer.properties和producer.properties
+
+```properties
+# consumer.properties
+bootstrap.servers=cluster1:9092
+group.id=groudIdmirror
+client.id=sourceMirror
+partition.assignment.strategy=org.apache.kafka.cliengts.consumer.RoundRobinAssignor
+
+# producer.properties
+bootstrap.servers=cluster2:9092
+client.id=sinkMirror
+```
+
+### Kafka-mirror-maker.sh参数
+
+![](./img/kafka-irror-maker参数.jpg)
+
