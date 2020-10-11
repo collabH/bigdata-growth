@@ -1,5 +1,38 @@
 # Zookeeper入门
 
+## Zookeeper基本概念
+
+### 集群角色
+
+* Zookeeper使用Leader、Follower、Observer三种橘色，所有机器通过Leader选举过程来选定一台称为"Leader"的机器，Leader服务提供读和写服务。
+* Follower和Observer都可以提供读服务，但是Observer不参与选举过程，也不参与写操作的"过半写成功"策略。
+
+### 会话(Session)
+
+* Zookeeper中一个客户端连接是指客户端和服务器之间的一个TCP长连接。Session的sessionTimeout时来设置客户端会话的超时时间，如果客户端由于网络原因断开链接在sessionTimeout时间内重新链接之前创建的会话仍然有效。
+
+### 数据节点(ZNode)
+
+* Zookeeper将所有数据存在内存中，数据模型是一棵树(Znode tree)，由"/"进行分割的路径就是一个Znode，每个Znode可以保存自己的数据内容，同时和一些列属性信息。
+* Znode分为持久节点和临时节点，并且俩个类型的节点还有个属性,"SEQUENTIAL"标示是否为顺序节点。
+
+### 版本
+
+* Znode会维护一个Stat的数据结构，其记录了Znode的是那个数据版本分别为:version(当前ZNode的版本)、cversion(当前Znode子节点的版本)、aversion(当前Znode的ACL版本)
+
+### Watcher
+
+* Zookeeper运行用户在指定节点上注册一些Watcher，并且在一些特定事件触发的时候，Zookeeper服务端会将事件通知到感兴趣的客户端上去。
+
+### ACL
+
+* Zookeeker采用ACL策略进行权限控制，类似于UNIX文件系统的权限控制
+  * CREATE:创建子节点的权限
+  * READ:获取节点数据和子节点列表的权限
+  * WRITE:更新节点数据的权限
+  * DELETE:删除子节点的权限
+  * ADMIN:设置节点ACL的权限
+
 ## Zookeeper工作机制
 
 ![Zookeeper工作机制](./img/Zookeeper工作机制.jpg)
@@ -103,8 +136,3 @@
 ## 写数据流程
 
 ![Zookeeper写数据流程](./img/Zookeeper写数据流程.jpg)
-
-# 面试题
-
-* Zookeeper选举机制
-* Zookeeper监听原理

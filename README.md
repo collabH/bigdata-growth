@@ -77,7 +77,7 @@
 
 ### Zookeeper
 
-* [Zookeeper原理和参数配置](bigdata/zookeeper/Zookeeper原理和参数配置.md)
+* [Zookeeper原理和参数配置](bigdata/zookeeper/ZookeeperOverView.md)
 * [Zookeeper操作与部署](bigdata/zookeeper/Zookeeper操作与部署.md)
 
 ### Flume
