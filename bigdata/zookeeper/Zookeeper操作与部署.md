@@ -63,6 +63,11 @@ server.3=localhost:2890:3890
 
 # Shell操作
 
+```shell
+# 链接客户端
+zkCli.sh -server ip:port
+```
+
 ## create 
 
 ```
@@ -243,7 +248,7 @@ Super
 [wchs] 展示watch的信息 
 [wchc]与[wchp] session与watch及path与watch信息 
 ```
-# API使用
+# 原生API使用
 
 ## 创建连接
 
@@ -593,5 +598,187 @@ public class ZKGetChildrenList implements Watcher {
 
 }
 
+```
+
+# Curator
+
+## 创建会话
+
+```java
+public static void createClient() {
+        // 创建curator客户端
+        CuratorFramework client = CuratorFrameworkFactory.newClient("hadoop:2181", new RetryNTimes(3, 5000));
+
+        // 启动
+        client.start();
+    }
+```
+
+## 创建节点
+
+```java
+public static void createNode() throws Exception {
+        CuratorFramework client = createClient();
+        String path = client.create()
+                .creatingParentsIfNeeded()
+                .withMode(CreateMode.PERSISTENT)
+                .forPath("/create-node/hello", "hello".getBytes());
+        System.out.println(path);
+    }
+```
+
+## 删除节点
+
+```java
+ public static void deleteNode() throws Exception {
+        CuratorFramework client = createClient();
+
+        client.delete()
+                .guaranteed() //保证强制删除node
+                .deletingChildrenIfNeeded() //递归删除全部路径
+                .withVersion(0)
+                .inBackground(new BackgroundCallback() {
+                    @Override
+                    public void processResult(CuratorFramework client, CuratorEvent event) throws Exception {
+                        System.out.println(event.toString());
+                    }
+                })
+                .forPath("/create-node/hello");
+    }
+```
+
+## 读取数据
+
+```java
+  public static void readNode() throws Exception {
+        CuratorFramework client = createClient();
+        Stat stat = new Stat();
+        byte[] bytes = client.getData()
+                // 读取该节点的stat
+                .storingStatIn(stat)
+                .forPath("/create-node/hello");
+
+        System.out.println(new String(bytes, Charset.defaultCharset()));
+        System.out.println(stat.toString());
+    }
+```
+
+## 修改数据
+
+```java
+ public static void updateNode() throws Exception {
+        CuratorFramework client = createClient();
+
+        client.setData()
+                .withVersion(0)
+                .forPath("/create-node/hello", "zhangsan".getBytes());
+    }
+```
+
+## Watcher
+
+### 添加节点监听器
+
+```java
+ public static void addWatcher() throws Exception {
+        CuratorFramework client = CuratorClient.createClient();
+
+        client.create()
+                .creatingParentsIfNeeded()
+                .withMode(CreateMode.EPHEMERAL)
+                .forPath("/watcher", "hello".getBytes());
+
+        NodeCache nodeCache = new NodeCache(client, "/watcher", false);
+
+        nodeCache.start();
+        nodeCache.getListenable().addListener(new NodeCacheListener() {
+            @Override
+            public void nodeChanged() throws Exception {
+                System.out.println("我变化了");
+            }
+        });
+
+        client.setData().forPath("/watcher", "test".getBytes());
+
+        Thread.sleep(2000);
+        client.delete().deletingChildrenIfNeeded().forPath("/watcher");
+
+        Thread.sleep(Integer.MAX_VALUE);
+    }
+```
+
+### 添加子节点监听器
+
+```java
+public static void createChildrenNode() throws Exception {
+        CuratorFramework client = CuratorClient.createClient();
+
+        client.create()
+                .creatingParentsIfNeeded()
+                .withMode(CreateMode.EPHEMERAL)
+                .forPath("/childwatcher/test", "hello".getBytes());
+
+        PathChildrenCache childrenCache = new PathChildrenCache(client, "/childwatcher", true);
+        childrenCache.start();
+
+        childrenCache.getListenable().addListener(new PathChildrenCacheListener() {
+            @Override
+            public void childEvent(CuratorFramework curatorFramework, PathChildrenCacheEvent pathChildrenCacheEvent) throws Exception {
+                System.out.println(pathChildrenCacheEvent.getType());
+            }
+        });
+
+        Thread.sleep(2000);
+
+        // update
+        client.setData()
+                .withVersion(0)
+                .forPath("/childwatcher/test", "hh".getBytes());
+
+        // 添加新的子节点
+        client.create()
+                .creatingParentsIfNeeded()
+                .withMode(CreateMode.EPHEMERAL)
+                .forPath("/childwatcher/test1", "hello".getBytes());
+
+
+        // 删除子节点
+        client.delete()
+                .withVersion(0)
+                .forPath("/childwatcher/test1");
+
+        Thread.sleep(Integer.MAX_VALUE);
+    }
+```
+
+## Master选举机制
+
+```java
+public class MasterLeaderSelector {
+    public static void main(String[] args) throws InterruptedException {
+        CuratorFramework client = CuratorClient.createClient();
+
+        LeaderSelector leaderSelector = new LeaderSelector(client, "/leaderselector/master", new LeaderSelectorListener() {
+            // 成为leader
+            @Override
+            public void takeLeadership(CuratorFramework client) throws Exception {
+                System.out.println("成为Master");
+                Thread.sleep(3000);
+                System.out.println("完成master操作 释放master权力");
+            }
+
+            // 状态变更
+            @Override
+            public void stateChanged(CuratorFramework client, ConnectionState newState) {
+                if (newState == ConnectionState.SUSPENDED || newState == ConnectionState.LOST) {
+                    throw new CancelLeadershipException();
+                }
+            }
+        });
+        leaderSelector.autoRequeue();
+        leaderSelector.start();
+        Thread.sleep(Integer.MAX_VALUE);
+    }
+}
 ```
 
