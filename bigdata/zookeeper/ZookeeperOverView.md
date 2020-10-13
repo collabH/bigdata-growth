@@ -136,3 +136,66 @@
 ## 写数据流程
 
 ![Zookeeper写数据流程](./img/Zookeeper写数据流程.jpg)
+
+# Zookeeper技术内幕
+
+## 节点特性
+
+### 节点类型
+
+#### 持久节点(PERSISTENT)
+
+* 一直存在在Zookeeper服务器上，直到有删除操作来主动清除这个节点。
+
+#### 临时节点(EPHEMERAL)
+
+* 生命周期与客户端的会话绑定在一起，如果客户端会话失败，这个临时节点会被自动清除。
+
+#### 顺序节点(SEQUENTIAL)
+
+* 每个父节点都会为它的第一级子节点维护一份顺序，用于记录下每个子节点创建的先后顺序，基于这个顺序特性，在创建子节点的时候，可以设置这个标记，创建这个节点的过程中，Zookeeper会自动为给定节点名加上一个数字后缀，作为一个新的、完整的节点名。
+* 数字后缀的上限是整型的最大值。
+
+### 状态信息
+
+* 状态Stat包含的如下属性
+  * czxid:即Created ZXID，表示该数据节点被创建时的事务ID
+  * mzxid:即Modified ZXID，表示该节点最后一次被更新时的事务ID
+  * ctime:即Created Time，表示节点被创建的时间
+  * mtime:即Modified Time，表示该节点最后一次被更新的时间
+  * version:即数据节点的版本号。
+  * cversion:子节点的版本号
+  * aversion:节点的ACL版本号
+  * ephemeralOwner:创建该临时节点的会话的SessionId，如果该节点时持久节点，这个属性为0
+  * dataLength:数据内容的长度
+  * numChildren:当前节点的子节点的个数
+  * pzxid:表示该节点的子节点列表最后一次被修改时的事务ID。只有子节点列表变更了才会变更pzxid，子节点内容变更不会影响pzxid
+
+## Version
+
+* Zookeeper在修改操作基于"CAS"乐观锁解决并发问题。
+
+## Watcher数据变更的通知
+
+* Zookeeper提供的一种分布式数据的发布/订阅功能，Zookeeper客户端会向服务端注册一个Watcher监听，当服务端的一些指定事件触发了这个Watcher，就会向指定客户端发送一个事件通知来实现分布式的通知功能。
+
+![](../canal/img/Watcher机制.jpg)
+
+* Zookeeper的Watcher机制主要包含客户端线程、客户端WatchManager和Zookeeper服务器。当Zookeeper服务器端触发Watcher事件后，会向客户端发送通知，客户端现场从WatchManager中取出对应的Watcher对象来执行回调逻辑。
+
+### Watcher通知状态与数据类型
+
+![](../canal/img/Watcher通知状态.jpg)
+
+### 工作机制
+
+* 总的分为三个过程:客户端注册Watcher、服务端处理Watcher和客户端回调Watcher。
+
+### 特性
+
+* 一次性
+  * 无论服务端还是客户端，一旦一个Watcher被触发，Zookeeper都会将其从相应的存储中移除。
+* 客户端串行执行
+  * 客户端Watcher回调的过程是一个串行同步的过程，为了保证顺序。
+* 轻量
+  * WatchedEvent是Zookeeper整个watcher通知机制的最小通知单元，该数据包含通知状态、事件类型和节点路径。客户端向服务端注册Watcher时，并不是把Watcher对象传递到服务器，而是在客户端请求中使用boolean类型属性进行标记，同时服务端仅仅保存了当前连接的ServerCnxn对象。
