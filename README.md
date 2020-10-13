@@ -51,6 +51,10 @@
 
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
 
+### Canal
+
+* [CanalOverView](bigdata/canal/CanalOverView.md)
+
 ### Hive
 
 * [HiveOverwrite](bigdata/hive/HiveOverwrite.md)
