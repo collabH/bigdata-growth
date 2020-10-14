@@ -1,4 +1,4 @@
-# Zookeeper入门
+# TZookeeper入门
 
 ## Zookeeper基本概念
 
@@ -199,3 +199,159 @@
   * 客户端Watcher回调的过程是一个串行同步的过程，为了保证顺序。
 * 轻量
   * WatchedEvent是Zookeeper整个watcher通知机制的最小通知单元，该数据包含通知状态、事件类型和节点路径。客户端向服务端注册Watcher时，并不是把Watcher对象传递到服务器，而是在客户端请求中使用boolean类型属性进行标记，同时服务端仅仅保存了当前连接的ServerCnxn对象。
+
+# Zookeeper会话
+
+## 会话状态
+
+* 包含CONNECTING、CONNECTED、RECONNECTING、RECONNECTED、CLOSE等状态。
+* 一旦客户端创建Zookeeper对象，客户端状态就变成CONNECTING，同时客户端开始从上述服务器列表中逐个选取IP地址尝试进行网络链接，直到成功链接服务器，然后客户端状态变更为CONNECTED。
+* 伴随着网络断开或其他原因，客户端与服务器之间的连接会出现断开的情况，这时候Zookeeper客户端会自动重连，客户端的状态回变更为CONNECTING，直到连接上服务器状态再变为CONNECTED。
+
+![](./img/Zookeeper会话状态变更.jpg)
+
+## 会话创建
+
+### Session
+
+* Zookeeper的一个会话实体，主要包含以下4个基本属性
+  * sessionID:会话ID，用来唯一标识一个会话，每次客户端创建新会话的时候，Zookeeper会为其分配一个全局唯一的sessionID。
+  * TimeOut:会话超时时间，客户端在构造Zookeeper实例时可以指定sessionTimeout参数来指定会话的超时时间，客户端会向服务端发送这个超时时间后，服务器会根据自己的超时时间限制最终确定会话的超时时间。
+  * TickTIme:下次会话超时时间点。
+  * isClosing:标记一个会话是否已经被关闭。
+
+## 会话管理
+
+### 分桶策略
+
+* SessionTracker主要负责会话管理，使用的方式时“分桶策略”来管理会话，将类似的会话放在同一区块中进行管理，以便于Zookeeper对会话进行不同区块的隔离处理以及同一区块的统一管理。
+
+![](./img/会话管理分桶策略.jpg)
+
+# Leader选举
+
+## 服务器启动时期的Leader选举
+
+1. 每个Server会发出一个投票
+
+```
+初始情况下对于Server1和Server2来说，都会将自己作为Leader服务器来进行投票，每次投票包含的基本的元素包括:所推举的服务器的myid和ZXID，我们以(myid、ZXID)的形式来表示。初始化阶段无论是Server1还是Sever2都投给自己，即Server1的投票为(1,0)，Server2的投票为(2,0),然后各自将这个投票发送给集群的其他所有机器。
+```
+
+2. 接收来自各个服务器的投票
+
+```
+每个服务器都会接收来自服其他服务器的投票，集群中的每个服务器在接收到投票后，首先会判断该投票的有效性，包括检测是否是本轮投票、是否来自LOOKING状态的服务器。
+```
+
+3. 处理投票
+
+```
+在接收到来自其他服务器的投票后，针对每一个投票，服务器都需要将别人的投票和自己的投票进行PK，如下
+
+1.优先检查ZXID。ZXID比较大的服务器优先作为Leader
+2.如果ZXID相同的话，那么就比较myid，myid比较大的作为Leader服务器
+```
+
+4. 统计投票
+
+```
+每次投票后，服务器都会统计所有投票，判断是否已经有过半的机器接收到相同的投票信息。对于Server1和Server2来说，都统计出集群中已经有俩台机器接收了(2,0)这个投票信息。
+```
+
+5. 改变服务器状态
+
+```
+一旦确定了Leader，每个服务器就会更新自己的状态；如果是Follower，那么就变更为FOLLOWING，如果是Leader，那么就变更为LEADERING。
+```
+
+## 服务器运行期间的Leader选举
+
+* 在Zookeeper集群正常运行过程中，一旦选出一个Leader，那么所有服务器的集群角色一般不会再发生变化，Leader服务器将一直作为集群的Leader，即使集群中有非Leader集群挂了或是有新机器加入集群也不会影响Leader。但是一旦Leader机器挂掉了，整个集群就无法对外提供服务，而是进行新一轮的Leader选举。
+
+1. 变更状态
+
+```jinja2
+当Leader挂了后，余下的非Observer服务器都会将自己的服务器状态变更为LOOKING，然后开始进入Leader选举流程。
+```
+
+2. 每个Server会发出一个投票
+
+```
+这个过程中，需要生成投票信息(myid,ZXID)。因为是运行期间，因此每个服务器上的ZXID可能不同，假定Server1的ZXID为123，而Server3的ZXID为122，在第一轮投票中，Server1和Server2都会投自己，即分别产生投票(1,123)和(3,122)，然后各自将这个投票发给集群中所有机器。
+```
+
+3. 接收来自各个服务器的投票
+4. 处理投票
+
+```
+对于投票的处理，因为Server1的ZXID的123，所以Server1会成为新的Leader
+
+1.优先检查ZXID。ZXID比较大的服务器优先作为Leader
+2.如果ZXID相同的话，那么就比较myid，myid比较大的作为Leader服务器
+```
+
+5. 统计投票
+6. 改变服务器状态
+
+## Leader选举的算法分析
+
+* Zookeeper提供三种Leader选举算法，分别为LeaderElection、UDP版本的FastLeaderElection和TCP版本的FastLeaderElection，可以通过配置文件zoo.cfg中用electionAlg属性来指定，分别使用数字0～3表示。0代表LeaderElection，1代表UDP版本的FastLeaderElection的非授权模式，2代表UDP版本的FastLeaderElection授权模式，3代表TCP版本的FastLeaderElection。从3.4.0后ZK废弃了0，1，2这三种算法。
+
+### 术语解释
+
+#### SID:服务器ID
+
+* SID是一个数字，用来唯一标识一台Zookeeper集群中的机器，每台机器不能重复，和myid的值一致。
+
+#### ZXID:事务ID
+
+* ZXID是一个事务ID，用来唯一表示一次服务器状态的变更，在某一个时刻，集群中每台机器的ZXID值不一定全部一致，这和Zookeeper服务器对于客户端“更新请求”的处理逻辑有关。
+
+#### Vote：投票
+
+* Leader选举必须通过投票来实现，当集群中的机器发现自己无法检测到Leader机器的时候，就会开始尝试进行投票。
+
+#### Quorum:过半数机器数
+
+* 是Zookeeper集群中过半的机器数，如果集群中总的机器数是n的话，可以通过:`quorum=(n/2+1)`来计算
+
+### 变更投票
+
+* 集群中的每台机器发出自己的投票后，也会接收到来自集群中其他机器的投票。每台机器都会根据一定的规则，来处理收到的其他机器的投票，并一次来决定是否需要变更自己的投票。
+* vote_sid:接收到的投票所推举Leader服务器的SID
+* vote_zxid:接收到的投票所推举Leader服务器的ZXID
+* self_sid:当前服务器自己的SID
+* self_zxid:当前服务器自己的ZXID
+
+#### 变更规则
+
+1. 如果vote_sid大于self_zxid，就认可当前收到的投票，并再次将该投票发送出去
+2. 如果vote_zxid小于self_zxid，不做变更
+3. 如果vote_zxid等于self_zxid，比较sid，如果vote_sid大于self_sid，变更该投票，并在此发送出去
+4. 如果vote_zxid等于self_zxid，比较sid，如果vote_sid小于self_sid，不做变更
+
+![](./img/投票变更过程.jpg)
+
+## Leader选举的实现细节
+
+### 服务器状态
+
+* LOOKING:寻找Leader状态，当前服务器处于该状态时，它会认为集群中没有Leader，因此需要进入Leader选举流程。
+* FOLLOWING:跟随者状态
+* LEADING :领导者状态
+* OBSERVING:观察者状态
+
+### 投票数据结构
+
+```java
+public class Vote{
+    private final int version;
+    private final long id;
+    private final long zxid;
+    private final long electionEpoch;
+    private final long peerEpoch;
+    private final ServerState state;
+}
+```
+
