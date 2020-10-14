@@ -357,3 +357,48 @@ public class Vote{
 
 ![](./img/Leader选举流程.jpg)
 
+# 服务器角色介绍
+
+* 在Zookeeper集群中分别有Leader、Follower和Observer三种类型的服务器角色。
+
+## Leader
+
+* Leader服务器是整个Zookeeper集群工作机制中的核心，主要工作如下
+  1. 事务请求的唯一调度和处理者，保证集群事务处理的顺序性
+  2. 集群内部各服务器的调度者
+
+### 请求处理链
+
+* Zookeeper使用责任链模式来处理每一个客户端请求，每一个服务器启动的时候，都会进行请求处理链的初始化。
+
+![](./img/Leader服务器请求处理链.jpg)
+
+* PrepRequestProcessor是Leader服务器的请求预处理器，也是Leader服务器的第一个请求处理器，在Zk中，会将改变服务器状态的请求称为“事务请求”，该处理器就是识别当前请求是否事务请求，对于事务请求该处理器会做一系列预处理操作，如创建请求事务投、事务体、会话检查等
+* ProposalRequestProcessor处理器是Leader服务器的事务投票处理器，也是Leader服务器事务处理流程的发起者，对于非事务请求，ProposalRequestProcessor会直接将请求流转到CommitProcessor处理器，对于事务请求，除了将请求交给CommitProcessor处理器外，还会根据请求类型创建对应的`Proposal`提议，并发送给所有的Follower服务器来发起一次集群内的事务投票。
+* SyncRequestProcessor是事务日志记录处理器，该处理器主要用来将事务请求记录到事务日志文件中去，同时还会触发Zookeeper进行数据快照。
+* AckRequestProcessor处理器是Leader特有的处理器，主要负责在SyncRequestProcess完成事务日志记录后，向Proposal的投票收集器发送ACK反馈，以通知投票收集器当前服务器已经完成了对该Proposal的事务日志记录。
+* CommitProcessor是事务提交处理器，对于非事务请求，该处理器会直接将其交付给下一级处理器进行处理，对于事务请求，会等待集群内针对Proposal的投票直到该Proposal可被提交。
+* ToBeCommitProcessor中有一个toBeApplied队列用来存储已经被CommitProcessor处理过的可被提交的Proposal，然后逐个将请求交付给FinalRequestProcessor进行处理，等其处理完毕在从toBeApplied队列中移除
+* FinalRequestProcessor主要进行客户端请求返回之前的收尾工作，包括创建客户端请求的响应；针对事务请求，该处理器会负责将事务应用到内存数据库中。
+
+### LearnrHandler
+
+* 为了保持整个集群中的实时通信，同时为了确保可以控制所有的Follower/Observer服务器，Leader会为每一个Follower/Observer建立一个TCP长链接，同时会为每个Follower/Observer创建一个LearnerHandler实体，其是集群中Leader服务器的管理器，主要负责Follower/Observer和Leader服务器之间的网络通信，包括数据同步、请求转发和Proposal提议的投票等。
+
+## Follower
+
+* 处理客户端非事务请求，转发事务请求到Leader服务器
+* 参与事务请求Proposal的投票
+* 参与Leader选举投票
+
+![](./img/Follower请求处理链.jpg)
+
+* FollowerRequestProcessor主要是识别当前请求是否为事务请求，如果是则转发到Leader服务器。
+* SendAckRequestProcessor主要是在完成事务日志记录后，向Leader服务器发送ACK消息表明自身完成了事务日志的记录工作。和Leader的AckRequestProcessor的区别是，Leader上的处理器是Leader本地的完成的ACK是一个本地操作。
+
+## Observer
+
+* Observer是ZK3.3.0版本引入的一个全新的服务器角色，主要作用是观察ZK集群的最新状态并将这些同步过来，和Follower的原理基本相同，对于非事务请求转发到Leader，并且不参与任何形式的投票包括Leader选举和事务请求Proposal的投票。
+
+![](./img/Observer请求处理器.jpg)
+
