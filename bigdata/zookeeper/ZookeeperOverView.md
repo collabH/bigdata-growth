@@ -355,3 +355,5 @@ public class Vote{
 }
 ```
 
+![](./img/Leader选举流程.jpg)
+
