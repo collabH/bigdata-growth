@@ -27,12 +27,44 @@ server.3=localhost:2890:3890
 admin.serverPort=10001
 tickTime=2000
 dataDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_data1
+# 事务日志存储目录
+dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper
+_tx_data1
 clientPort=2182
+# 默认值为10，用于Leader服务器等待Follower启动，并完成数据同步的时间，Follower服务器启动的过程中，会与Leader建立链接并完成对数据的同步，从而确定自己对外提供服务的起始状态。Leader服务器运行Follower在initLimit时间内完成这个工作。
 initLimit=20
+# 默认值为5，用于Leader服务器和Follower之间进行心跳检测的最大延迟时间，在ZK运行过程中，Leader会与所有Follower进行心态检查来确定该服务器是否存活，Le如果Leader服务器在syncLimit无法获取Follower的心跳检查响应，就会认为该Follower服务器下线了。
 syncLimit=5
+# 默认为100000，用于配置相邻两次数据快照之间的事务操作次数，即zk会在sanpCount次事务操作之后进行一次数据快照。
+snapCount=100000
+# 默认为65536单位KB，即64MB。用于ZK事务日志文件预分配的磁盘空间大小。
+preAllocSize=65536
+# 默认为2 会话超时时间，用于限制服务端对客户端会话的超时时间。
+minSessionTimeout=2
+# 默认为20
+maxSessionTimeout=20
+# 默认为60 从Socket层面限制单个客户端与单台服务器之间的并发连接数，即以IP地址的力度来进行连接数的限制。如果设置为0即对连接数不做任何限制
+maxClientCnxns=60
+# 默认1048575字节，单个数据节点(ZNode)上可以存储的最大数据量大小。
+jute.maxbuffer=1048575
+# sever.id=host:port:port 第一个port指定Follower服务器与Leader进行运行时通信和数据同步的短裤，第二个端口用于Leader选举过程中的投票通信
 server.1=localhost:2888:3888
 server.2=localhost:2889:3889
 server.3=localhost:2890:3890
+# 默认为3，对历史事务日志和快照日志自动清理时需要保留的快照数据文件和对应事务日志文件的数量。
+autopurge.snapRetainCount=3
+# 默认为0，单位小时，配置历史文件自动清理的频率，如果为0或者负数，则不需要开启定时清理功能。
+autopurge.purgeInterval=0
+# 默认1000ms，事务日志进行fsync操作时消耗时间的报警阈值，一旦fsync操作的耗时超过这个阈值就会在日志中打出警告
+fsync.warningthresholdms=1000
+# 默认为yes，可选配置为yes和no，用于服务器是否在事务提交的时候将日志写入操作强制刷入磁盘
+forceSync=yes
+# 默认为yes，可以选配no，表示Leader服务器是否能够接受客户端链接，默认情况下为yes表示leader服务器可以接受并处理客户端的所有读写请求
+leaderSevers=yes
+# 默认为5000ms，代表在leader选举过程中，各个服务器之间进行TCP链接创建的超时时间
+cnxTimeout=5000
+# zk选举算法，3.4.0后0，1，2被移除，目前只提供tcp版本的FastLeaderElection算法
+electionAlg
 ```
 
 ### Hadoop2
@@ -40,6 +72,9 @@ server.3=localhost:2890:3890
 ```properties
 tickTime=2000
 dataDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_data2
+# 事务日志存储目录
+dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper
+_tx_data2
 clientPort=2183
 initLimit=20
 syncLimit=5
@@ -53,12 +88,27 @@ server.3=localhost:2890:3890
 ```properties
 tickTime=2000
 dataDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_data3
+# 事务日志存储目录
+dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper
+_tx_data3
 clientPort=2184
 initLimit=20
 syncLimit=5
 server.1=localhost:2888:3888
 server.2=localhost:2889:3889
 server.3=localhost:2890:3890
+```
+
+## 开启ZookeeperJMX
+
+* ZK默认开启了JMX功能，但是只支持本地连接,修改bin目录下的zkServer.sh
+
+### 默认JMX配置
+
+```properties
+-Dcom.sum.management.jmxremote.port=5000
+-Dcom.sum.management.jmxremote.ssl=false
+-Dcom.sum.management.jmxremote.authenticate=false
 ```
 
 # Shell操作
