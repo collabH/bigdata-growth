@@ -1,4 +1,4 @@
-# TZookeeper入门
+# Zookeeper入门
 
 ## Zookeeper基本概念
 
@@ -401,4 +401,205 @@ public class Vote{
 * Observer是ZK3.3.0版本引入的一个全新的服务器角色，主要作用是观察ZK集群的最新状态并将这些同步过来，和Follower的原理基本相同，对于非事务请求转发到Leader，并且不参与任何形式的投票包括Leader选举和事务请求Proposal的投票。
 
 ![](./img/Observer请求处理器.jpg)
+
+# 数据与存储
+
+ ## 内存数据
+
+* Zookeeper类似于内存数据库，存储整棵树的内容，包括所有节点路径、节点数据以及ACL信息等，Zookeeper会定时讲这些数据溢写到磁盘上。
+
+### DataTreee
+
+* DataTree代表Zk中的一个“树”的数据结构，代表内存中一份完整的数据。
+
+```java
+public class DataTree {
+    private static final Logger LOG = LoggerFactory.getLogger(DataTree.class);
+
+    /**
+     * This hashtable provides a fast lookup to the datanodes. The tree is the
+     * source of truth and is where all the locking occurs
+     
+    存放ZK所有数据节点，key为节点的path value为dataNode
+     */
+    private final ConcurrentHashMap<String, DataNode> nodes =
+        new ConcurrentHashMap<String, DataNode>();
+
+    private final WatchManager dataWatches = new WatchManager();
+
+    private final WatchManager childWatches = new WatchManager();
+
+    /** the root of zookeeper tree */
+    private static final String rootZookeeper = "/";
+
+    /** the zookeeper nodes that acts as the management and status node **/
+    private static final String procZookeeper = Quotas.procZookeeper;
+
+    /** this will be the string thats stored as a child of root */
+    private static final String procChildZookeeper = procZookeeper.substring(1);
+
+    /**
+     * the zookeeper quota node that acts as the quota management node for
+     * zookeeper
+     */
+    private static final String quotaZookeeper = Quotas.quotaZookeeper;
+
+    /** this will be the string thats stored as a child of /zookeeper */
+    private static final String quotaChildZookeeper = quotaZookeeper
+            .substring(procZookeeper.length() + 1);
+
+    /**
+     * the path trie that keeps track fo the quota nodes in this datatree
+     */
+    private final PathTrie pTrie = new PathTrie();
+
+    /**
+     * This hashtable lists the paths of the ephemeral nodes of a session.
+     
+     存储临时节点，便于后续会话断开时立即清理
+     */
+    private final Map<Long, HashSet<String>> ephemerals =
+        new ConcurrentHashMap<Long, HashSet<String>>();
+
+    /**
+     * this is map from longs to acl's. It saves acl's being stored for each
+     * datanode.
+     */
+    public final Map<Long, List<ACL>> longKeyMap =
+        new HashMap<Long, List<ACL>>();
+
+    /**
+     * this a map from acls to long.
+     */
+    public final Map<List<ACL>, Long> aclKeyMap =
+        new HashMap<List<ACL>, Long>();
+
+    /**
+     * these are the number of acls that we have in the datatree
+     */
+    protected long aclIndex = 0;
+}
+```
+
+### DataNode
+
+* 数据存储的最小单位，保存节点的数据内容、ACL列表和节点状态以及父节点的引入和子节点列表
+
+```java
+public class DataNode implements Record {
+    /** the parent of this datanode */
+    DataNode parent;
+
+    /** the data for this datanode */
+    byte data[];
+
+    /**
+     * the acl map long for this datanode. the datatree has the map
+     */
+    Long acl;
+
+    /**
+     * the stat for this node that is persisted to disk.
+     */
+    public StatPersisted stat;
+
+    /**
+     * the list of children for this node. note that the list of children string
+     * does not contain the parent path -- just the last part of the path. This
+     * should be synchronized on except deserializing (for speed up issues).
+     */
+    private Set<String> children = null;
+}
+```
+
+### ZKDatabase
+
+* 内存数据库负责管理Zookeeper的所有会话、DataTree存储和事务日志。ZKDatabase会定时向磁盘dump快照数据，同时在ZK服务器启动的时候，从磁盘上的事务日志和快照数据文件恢复成一个完整的内存数据库。
+
+```java
+public class ZKDatabase {
+    
+    private static final Logger LOG = LoggerFactory.getLogger(ZKDatabase.class);
+    
+    /**
+     * make sure on a clear you take care of 
+     * all these members.
+     */
+    protected DataTree dataTree;
+    protected ConcurrentHashMap<Long, Integer> sessionsWithTimeouts;
+    protected FileTxnSnapLog snapLog;
+    protected long minCommittedLog, maxCommittedLog;
+    public static final int commitLogCount = 500;
+    protected static int commitLogBuffer = 700;
+    protected LinkedList<Proposal> committedLog = new LinkedList<Proposal>();
+    protected ReentrantReadWriteLock logLock = new ReentrantReadWriteLock();
+    volatile private boolean initialized = false;
+    }
+```
+
+## 事务日志
+
+### 文件存储
+
+* zk的dataDir目录时Zookeeper中默认用于存储事务日志文件的地方，Zk也可以单独为事务日志分配一个文件存储目录：dataLogDir。
+* Zk在运行时会在事务日志存储目录下创建一个version-2的目录，表示事务日志格式版本号。
+* 所有事务日志文件大小都为64MB，名字为log.zxid
+
+```shell
+-rw-r--r--  1 babywang  staff    64M  7 27 00:00 log.1
+-rw-r--r--  1 babywang  staff    64M  8 10 00:23 log.173
+-rw-r--r--  1 babywang  staff    64M  8 11 09:17 log.246
+-rw-r--r--  1 babywang  staff    64M  8 12 23:20 log.26d
+-rw-r--r--  1 babywang  staff    64M  7 27 21:41 log.29
+-rw-r--r--  1 babywang  staff    64M  8  5 23:40 log.2b
+-rw-r--r--  1 babywang  staff    64M  8 13 22:17 log.3fc
+-rw-r--r--  1 babywang  staff    64M  8 15 13:41 log.46a
+-rw-r--r--  1 babywang  staff    64M  8 23 22:51 log.4d5
+-rw-r--r--  1 babywang  staff    64M  8 25 22:29 log.4dc
+-rw-r--r--  1 babywang  staff    64M  8 28 18:04 log.507
+-rw-r--r--  1 babywang  staff    64M  8 29 17:18 log.542
+-rw-r--r--  1 babywang  staff    64M 10 12 18:16 log.6df
+-rw-r--r--  1 babywang  staff    64M  8  6 20:00 log.a4
+-rw-r--r--  1 babywang  staff    64M  8  8 23:29 log.d3
+```
+
+## snapshot-数据快照
+
+* 数据快照用于记录Zk服务器某一个时刻的全量内存数据内容，并将其写入指定的磁盘文件中。
+
+### 文件存储
+
+* 可以使用特定的磁盘目录存储，也可以通过dataDir属性进行配置，运行时也会在该目录下创建一个version-2目录，版本号为其快照格式版本号。
+
+```shell
+-rw-r--r--  1 babywang  staff   424B  7 26 19:38 snapshot.0
+-rw-r--r--  1 babywang  staff   4.2K  8  9 19:43 snapshot.172
+-rw-r--r--  1 babywang  staff   3.7K  8 11 09:16 snapshot.245
+-rw-r--r--  1 babywang  staff   4.2K  8 12 21:02 snapshot.26c
+-rw-r--r--  1 babywang  staff   547B  7 27 20:53 snapshot.28
+-rw-r--r--  1 babywang  staff   547B  8  5 22:47 snapshot.2a
+-rw-r--r--  1 babywang  staff   5.3K  8 13 22:03 snapshot.3fb
+-rw-r--r--  1 babywang  staff   5.3K  8 15 13:39 snapshot.469
+-rw-r--r--  1 babywang  staff   5.3K  8 23 22:50 snapshot.4d4
+-rw-r--r--  1 babywang  staff   4.7K  8 25 22:28 snapshot.4db
+-rw-r--r--  1 babywang  staff   5.4K  8 28 17:18 snapshot.506
+-rw-r--r--  1 babywang  staff   7.0K  8 29 11:58 snapshot.541
+-rw-r--r--  1 babywang  staff   4.8K 10 12 10:29 snapshot.6de
+-rw-r--r--  1 babywang  staff   4.0K  8  6 19:33 snapshot.a3
+-rw-r--r--  1 babywang  staff   4.0K  8  8 13:27 snapshot.d2
+```
+
+## 初始化
+
+* Zk服务器启动期间，首先会进行数据初始化，将存储在磁盘上的数据文件加载到ZK服务器的内存中
+
+### 初始化流程
+
+![](./img/启动初始化流程.jpg)
+
+## 数据同步
+
+* 整个集群完成Leader选举后，Learner会向Leader服务器进行注册，当Learner服务器向Leader完成注册后就进入数据同步环节。数据同步过程就是Leader服务器将那些没有在Learner服务器提交过事务请求同步给Learner服务器。
+
+![](./img/数据同步流程.jpg)
 
