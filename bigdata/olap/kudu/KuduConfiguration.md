@@ -121,6 +121,10 @@ kudu-tserver --help
 --hive_metastore_uris=<HMS Thrift URI(s)>
 --hive_metastore_sasl_enabled=<value of the Hive Metastore's hive.metastore.sasl.enabled configuration>
 ```
+* 修改kudu master/tsserver配置
+```
+hive_metastore_uris=hive metastore uri
+```
 
 * 在安全的集群环境,`--hive_metastore_sasl_enabled`被设置为`true`，`--hive_metastore_kerberos_principal`和`hive.metastore.kerberos.principal`一致
 * 重启Kudu master服务器
