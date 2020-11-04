@@ -28,7 +28,7 @@
 
 ## 算法
 
-* [算法题解](algorithm/算法题解.md)
+* [算法题解](base/algorithm/算法题解.md)
 
 ## BigData
 ### Hadoop
@@ -60,6 +60,10 @@
 ### Canal
 
 * [CanalOverView](bigdata/canal/CanalOverView.md)
+
+### Debezium
+
+* [DebeziumOverView](bigdata/debezium/DebeziumOverView.md)
 
 ### Hive
 
