@@ -1,6 +1,15 @@
 # 架构设计
 
+* source connector从debezium发送消息到kafka
+* sink connector将记录从kafka中发送到其他系统接收器
 
+![Debezium Architecture](https://debezium.io/documentation/reference/1.4/_images/debezium-architecture.png)
+
+## Debezium Server
+
+* 使用Debezium Server部署Debezium，这个Server是可配置的。
+
+![Debezium Architecture](https://debezium.io/documentation/reference/1.4/_images/debezium-server-architecture.png)
 
 # 参数配置
 
