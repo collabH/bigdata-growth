@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 targetPath=$2
+targetServer=$3
 
 #2 获取文件名称
 p1=$1
@@ -17,7 +18,7 @@ user=`whoami`
 
 #5 循环
 
-for server in flink-cluster-01 flink-cluster-02 flink-cluster-03 flink-cluster-04 flink-cluster-05; do
+for server in ${targetServer}; do
     echo '----------'${server}'---------'
     scp ${pdir}/${fileName} ${user}@${server}:${targetPath}
 done
