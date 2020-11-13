@@ -879,3 +879,24 @@ binlog_rows_query_log_events=ON
 7. Method：GET，URL：http://ip:port/connector-plugins/ 获取kafka connect环境中的所有可执行connector plugins
 ```
 
+* 配置监听db的demo
+
+```json
+{
+    "name": "for_os_connector",
+    "config": {
+        "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+        "tasks.max": "1",
+        "database.hostname": "common.mysql.test.local",
+        "database.port": "3306",
+        "database.user": "debezium_mysql",
+        "database.password": "TT5mUKA1P78nl6EVPb",
+        "database.server.id": "184054",
+        "database.server.name": "for_os_binlog",
+        "database.include.list": "for_os",
+        "database.history.kafka.bootstrap.servers": "cdh04:9092,cdh05:9092,cdh06:9092",
+        "database.history.kafka.topic": "forOsddlhistory"
+    }
+}
+```
+
