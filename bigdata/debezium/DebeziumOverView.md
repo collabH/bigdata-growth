@@ -891,11 +891,14 @@ binlog_rows_query_log_events=ON
         "database.port": "3306",
         "database.user": "debezium_mysql",
         "database.password": "TT5mUKA1P78nl6EVPb",
-        "database.server.id": "184054",
-        "database.server.name": "for_os_binlog",
-        "database.include.list": "for_os",
+        "database.server.id": "184042",
+        "database.server.name": "ao_2020_binlog",
+        "time.precision.mode": "connect",
+        "database.include.list": "ao_2020",
         "database.history.kafka.bootstrap.servers": "cdh04:9092,cdh05:9092,cdh06:9092",
-        "database.history.kafka.topic": "forOsddlhistory"
+        "database.history.kafka.topic": "ao2020ddlhistory",
+        "tombstones.on.delete": "false",
+        "name": "ao_2020_connector"
     }
 }
 ```
