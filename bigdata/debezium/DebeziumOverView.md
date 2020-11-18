@@ -897,8 +897,7 @@ binlog_rows_query_log_events=ON
         "database.include.list": "ao_2020",
         "database.history.kafka.bootstrap.servers": "cdh04:9092,cdh05:9092,cdh06:9092",
         "database.history.kafka.topic": "ao2020ddlhistory",
-        "tombstones.on.delete": "false",
-        "name": "ao_2020_connector"
+        "tombstones.on.delete": "false"
     }
 }
 ```
