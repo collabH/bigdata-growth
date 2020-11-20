@@ -135,7 +135,9 @@
 * [TableSQLOverview](bigdata/flink/TableSQLOverview.md)
 
 #### Theory
+* [TaskExecutor内存模型原理深入](bigdata/flink/TaskExecutor内存模型原理深入.md)
 * [Flink窗口实现应用](bigdata/flink/Flink窗口实现应用.md)
+
 
 #### Application
 * [DataStream API](bigdata/flink/FlinkDataStream%20API.xmind)
@@ -183,6 +185,7 @@
 * [数据建模](datawarehouse/DataModeler.md)
 * [数据仓库建模](datawarehouse/数据仓库建模.xmind)
 * [数据仓库](datawarehouse/数据仓库实战.md)
+* [基于Flink的事实数仓建设](datawarehouse/基于Flink的事实数仓建设.md)
 
 ## devops
 
