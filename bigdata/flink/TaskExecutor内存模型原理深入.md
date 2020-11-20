@@ -141,7 +141,40 @@ subpartitions 下游subtask数量
 
 # JobManager内存
 
+## 参数配置
 
+### 配置总内存
+
+* jobmanager.memory.flink.size
+* jobmanager.memory.process.size
+
+### 详细配置
+
+![Flink's process memory model](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/process_mem_model.svg)
+
+| **组成部分**                                                 | **配置参数**                                                 | **描述**                                                     |
+| :----------------------------------------------------------- | :----------------------------------------------------------- | :----------------------------------------------------------- |
+| [JVM 堆内存](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_jobmanager.html#configure-jvm-heap) | [`jobmanager.memory.heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-heap-size) | JobManager 的 *JVM 堆内存*。                                 |
+| [堆外内存](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_jobmanager.html#configure-off-heap-memory) | [`jobmanager.memory.off-heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-off-heap-size) | JobManager 的*堆外内存（直接内存或本地内存）*。              |
+| [JVM Metaspace](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup.html#jvm-parameters) | [`jobmanager.memory.jvm-metaspace.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-jvm-metaspace-size) | Flink JVM 进程的 Metaspace。                                 |
+| JVM 开销                                                     | [`jobmanager.memory.jvm-overhead.min`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-jvm-overhead-min) [`jobmanager.memory.jvm-overhead.max`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-jvm-overhead-max) [`jobmanager.memory.jvm-overhead.fraction`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-jvm-overhead-fraction) | 用于其他 JVM 开销的本地内存，例如栈空间、垃圾回收空间等。该内存部分为基于[进程总内存](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup.html#configure-total-memory)的[受限的等比内存部分](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup.html#capped-fractionated-components)。 |
+
+## 内存特性
+
+### 堆内内存
+
+* 以下会用到堆内内存
+  * 用于Flink框架
+  * 在作业提交时（例如一些特殊的批处理 Source）及 Checkpoint 完成的回调函数中执行的用户代码
+* 需要多少堆内内存取决于运行的作业数量、作业的结构及上述用户代码需求。
+
+### 堆外内存
+
+* *堆外内存*包括 *JVM 直接内存* 和 *本地内存*。 可以通过配置参数 [`jobmanager.memory.enable-jvm-direct-memory-limit`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-enable-jvm-direct-memory-limit) 设置是否启用 *JVM 直接内存限制*。 如果该配置项设置为 `true`，Flink 会根据配置的*堆外内存*大小设置 JVM 参数 *-XX:MaxDirectMemorySize*。 
+* 可以通过配置参数 [`jobmanager.memory.off-heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#jobmanager-memory-off-heap-size) 设置堆外内存的大小。 如果遇到 JobManager 进程抛出 “OutOfMemoryError: Direct buffer memory” 的异常，可以尝试调大这项配置。
+* 以下情况可能用到堆外内存：
+  - Flink 框架依赖（例如 Akka 的网络通信）
+  - 在作业提交时（例如一些特殊的批处理 Source）及 Checkpoint 完成的回调函数中执行的用户代码
 
 # 工具
 
