@@ -9,6 +9,20 @@
 * 相对稳定的
 * 处理上一次批处理流程到当前的数据
 
+## 实时数仓架构
+
+### Lambda架构
+
+![img](./img/Lambda架构.jpg)
+
+### Kappa架构
+
+![](./img/Kappa架构.jpg)
+
+### 实时OLAP架构
+
+![](./img/实时OLAP架构.jpg)
+
 # 流式Join
 
 ## 纬表join
