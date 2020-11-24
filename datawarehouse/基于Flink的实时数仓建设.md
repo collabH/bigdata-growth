@@ -99,3 +99,34 @@ WHERE
 
 ![](./img/windowjoin.jpg)
 
+# 实时数仓问题解决
+
+## 大State问题
+
+* 可以在数据接入时通过`ROW_NUMBER`函数对数据流去重，然后在进行join。
+
+```sql
+-- 去重
+create view view1
+select *(
+select *,row_number()over(partition by id order by proctime()desc) as rn from s1)
+where rn =1;
+
+create view view2
+select *(
+select *,row_number()over(partition by id order by proctime()desc) as rn from s2)
+where rn =1;
+
+insert into dwd_t
+select view1.id,view2.name
+view1 left outer join view2 on view1.id=view2.id
+```
+
+## 多流join优化
+
+* 将多流通过union all合并，把数据错位拼接到一起，后面加一层Group By，相当于将Join关联转换成Group By
+
+## 回溯历史数据
+
+* 采用批流混合的方式来完成状态复用，基于Blink流处理来处理实时消息流，基于Blink的批处理完成离线计算，通过两者的融合，在同一个任务里完成历史所有数据的计算
+* 将实时的流和存储在olap系统的总的离线数据进行union all，完成消息的回溯
