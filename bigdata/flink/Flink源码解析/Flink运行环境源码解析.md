@@ -36,3 +36,8 @@
 	private final List<JobListener> jobListeners = new ArrayList<>();
 ```
 
+## 数据流相关操作
+
+### 读取文件操作
+
+* 底层依赖于文件的修改时间做的checkpoint，记录文件修改时间，读取大于最后文件修改时间的文件
