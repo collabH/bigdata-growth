@@ -41,3 +41,42 @@
 ### 读取文件操作
 
 * 底层依赖于文件的修改时间做的checkpoint，记录文件修改时间，读取大于最后文件修改时间的文件
+
+## StreamEnv执行
+
+* Transformations->StreamGraph->JobGraph
+* 核型类方法
+
+```java
+	public JobClient executeAsync(StreamGraph streamGraph) throws Exception {
+		checkNotNull(streamGraph, "StreamGraph cannot be null.");
+		checkNotNull(configuration.get(DeploymentOptions.TARGET), "No execution.target specified in your configuration file.");
+
+		final PipelineExecutorFactory executorFactory =
+			executorServiceLoader.getExecutorFactory(configuration);
+
+		checkNotNull(
+			executorFactory,
+			"Cannot find compatible factory for specified execution.target (=%s)",
+			configuration.get(DeploymentOptions.TARGET));
+
+		// 通过executorFactory得到特定配置的executor
+		CompletableFuture<JobClient> jobClientFuture = executorFactory
+			.getExecutor(configuration)
+			.execute(streamGraph, configuration);
+
+		try {
+			JobClient jobClient = jobClientFuture.get();
+			jobListeners.forEach(jobListener -> jobListener.onJobSubmitted(jobClient, null));
+			return jobClient;
+		} catch (ExecutionException executionException) {
+			final Throwable strippedException = ExceptionUtils.stripExecutionException(executionException);
+			jobListeners.forEach(jobListener -> jobListener.onJobSubmitted(null, strippedException));
+
+			throw new FlinkException(
+				String.format("Failed to execute job '%s'.", streamGraph.getJobName()),
+				strippedException);
+		}
+	}
+```
+
