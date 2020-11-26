@@ -168,3 +168,225 @@ public static LocalStreamEnvironment createLocalEnvironment(int parallelism, Con
 	}
 ```
 
+# ExecutionEnvironment
+
+## 环境属性相关配置
+
+```java
+private static ExecutionEnvironmentFactory contextEnvironmentFactory = null;
+
+	/** The ThreadLocal used to store {@link ExecutionEnvironmentFactory}. */
+	private static final ThreadLocal<ExecutionEnvironmentFactory> threadLocalContextEnvironmentFactory = new ThreadLocal<>();
+
+	/** The default parallelism used by local environments. */
+	private static int defaultLocalDop = Runtime.getRuntime().availableProcessors();
+
+
+	// sink算子数组
+	private final List<DataSink<?>> sinks = new ArrayList<>();
+
+	private final List<Tuple2<String, DistributedCacheEntry>> cacheFile = new ArrayList<>();
+
+	private final ExecutionConfig config = new ExecutionConfig();
+
+	/** Result from the latest execution, to make it retrievable when using eager execution methods. */
+	protected JobExecutionResult lastJobExecutionResult;
+
+	/** Flag to indicate whether sinks have been cleared in previous executions. */
+	private boolean wasExecuted = false;
+
+	private final PipelineExecutorServiceLoader executorServiceLoader;
+
+	private final Configuration configuration;
+
+	private final ClassLoader userClassloader;
+
+	private final List<JobListener> jobListeners = new ArrayList<>();
+```
+
+## 任务执行
+
+* dataSinks->Plan->JobGraph(这里和Stream一致，最终都需要转换成JobGraph提交给对应的集群环境)
+
+```java
+# dataSinks转换Plan
+public Plan createProgramPlan(String jobName, boolean clearSinks) {
+		checkNotNull(jobName);
+
+		if (this.sinks.isEmpty()) {
+			if (wasExecuted) {
+				throw new RuntimeException("No new data sinks have been defined since the " +
+						"last execution. The last execution refers to the latest call to " +
+						"'execute()', 'count()', 'collect()', or 'print()'.");
+			} else {
+				throw new RuntimeException("No data sinks have been created yet. " +
+						"A program needs at least one sink that consumes data. " +
+						"Examples are writing the data set or printing it.");
+			}
+		}
+
+		final PlanGenerator generator = new PlanGenerator(
+				sinks, config, getParallelism(), cacheFile, jobName);
+		final Plan plan = generator.generate();
+
+		// clear all the sinks such that the next execution does not redo everything
+		if (clearSinks) {
+			this.sinks.clear();
+			wasExecuted = true;
+		}
+
+		return plan;
+	}
+```
+
+### PlanGenerator
+
+```java
+public class PlanGenerator {
+
+	private static final Logger LOG = LoggerFactory.getLogger(PlanGenerator.class);
+
+	private final List<DataSink<?>> sinks;
+	private final ExecutionConfig config;
+	private final int defaultParallelism;
+	private final List<Tuple2<String, DistributedCache.DistributedCacheEntry>> cacheFile;
+	private final String jobName;
+
+	public PlanGenerator(
+			List<DataSink<?>> sinks,
+			ExecutionConfig config,
+			int defaultParallelism,
+			List<Tuple2<String, DistributedCache.DistributedCacheEntry>> cacheFile,
+			String jobName) {
+		this.sinks = checkNotNull(sinks);
+		this.config = checkNotNull(config);
+		this.cacheFile = checkNotNull(cacheFile);
+		this.jobName = checkNotNull(jobName);
+		this.defaultParallelism = defaultParallelism;
+	}
+
+	public Plan generate() {
+		final Plan plan = createPlan();
+		registerGenericTypeInfoIfConfigured(plan);
+		registerCachedFiles(plan);
+
+		logTypeRegistrationDetails();
+		return plan;
+	}
+
+	/**
+	 * Create plan.
+	 *
+	 * @return the generated plan.
+	 */
+	private Plan createPlan() {
+		final OperatorTranslation translator = new OperatorTranslation();
+		final Plan plan = translator.translateToPlan(sinks, jobName);
+
+		if (defaultParallelism > 0) {
+			plan.setDefaultParallelism(defaultParallelism);
+		}
+		plan.setExecutionConfig(config);
+		return plan;
+	}
+
+	/**
+	 * Check plan for GenericTypeInfo's and register the types at the serializers.
+	 *
+	 * @param plan the generated plan.
+	 */
+	private void registerGenericTypeInfoIfConfigured(Plan plan) {
+		if (!config.isAutoTypeRegistrationDisabled()) {
+			plan.accept(new Visitor<Operator<?>>() {
+
+				private final Set<Class<?>> registeredTypes = new HashSet<>();
+				private final Set<org.apache.flink.api.common.operators.Operator<?>> visitedOperators = new HashSet<>();
+
+				@Override
+				public boolean preVisit(org.apache.flink.api.common.operators.Operator<?> visitable) {
+					if (!visitedOperators.add(visitable)) {
+						return false;
+					}
+					OperatorInformation<?> opInfo = visitable.getOperatorInfo();
+					Serializers.recursivelyRegisterType(opInfo.getOutputType(), config, registeredTypes);
+					return true;
+				}
+
+				@Override
+				public void postVisit(org.apache.flink.api.common.operators.Operator<?> visitable) {
+				}
+			});
+		}
+	}
+
+	private void registerCachedFiles(Plan plan) {
+		try {
+			registerCachedFilesWithPlan(plan);
+		} catch (Exception e) {
+			throw new RuntimeException("Error while registering cached files: " + e.getMessage(), e);
+		}
+	}
+
+	/**
+	 * Registers all files that were registered at this execution environment's cache registry of the
+	 * given plan's cache registry.
+	 *
+	 * @param p The plan to register files at.
+	 * @throws IOException Thrown if checks for existence and sanity fail.
+	 */
+	private void registerCachedFilesWithPlan(Plan p) throws IOException {
+		for (Tuple2<String, DistributedCache.DistributedCacheEntry> entry : cacheFile) {
+			p.registerCachedFile(entry.f0, entry.f1);
+		}
+	}
+
+	private void logTypeRegistrationDetails() {
+		int registeredTypes = getNumberOfRegisteredTypes();
+		int defaultKryoSerializers = getNumberOfDefaultKryoSerializers();
+
+		LOG.info("The job has {} registered types and {} default Kryo serializers", registeredTypes, defaultKryoSerializers);
+
+		if (config.isForceKryoEnabled() && config.isForceAvroEnabled()) {
+			LOG.warn("In the ExecutionConfig, both Avro and Kryo are enforced. Using Kryo serializer for serializing POJOs");
+		} else if (config.isForceKryoEnabled()) {
+			LOG.info("Using KryoSerializer for serializing POJOs");
+		} else if (config.isForceAvroEnabled()) {
+			LOG.info("Using AvroSerializer for serializing POJOs");
+		}
+
+		if (LOG.isDebugEnabled()) {
+			logDebuggingTypeDetails();
+		}
+	}
+
+	private int getNumberOfRegisteredTypes() {
+		return config.getRegisteredKryoTypes().size() +
+				config.getRegisteredPojoTypes().size() +
+				config.getRegisteredTypesWithKryoSerializerClasses().size() +
+				config.getRegisteredTypesWithKryoSerializers().size();
+	}
+
+	private int getNumberOfDefaultKryoSerializers() {
+		return config.getDefaultKryoSerializers().size() +
+				config.getDefaultKryoSerializerClasses().size();
+	}
+
+	private void logDebuggingTypeDetails() {
+		LOG.debug("Registered Kryo types: {}", config.getRegisteredKryoTypes().toString());
+		LOG.debug("Registered Kryo with Serializers types: {}",
+				config.getRegisteredTypesWithKryoSerializers().entrySet().toString());
+		LOG.debug("Registered Kryo with Serializer Classes types: {}",
+				config.getRegisteredTypesWithKryoSerializerClasses().entrySet().toString());
+		LOG.debug("Registered Kryo default Serializers: {}",
+				config.getDefaultKryoSerializers().entrySet().toString());
+		LOG.debug("Registered Kryo default Serializers Classes {}",
+				config.getDefaultKryoSerializerClasses().entrySet().toString());
+		LOG.debug("Registered POJO types: {}", config.getRegisteredPojoTypes().toString());
+
+		// print information about static code analysis
+		LOG.debug("Static code analysis mode: {}", config.getCodeAnalysisMode());
+	}
+}
+```
+
+* 执行环境创建于Stream类似
