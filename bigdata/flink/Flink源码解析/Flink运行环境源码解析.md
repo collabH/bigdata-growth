@@ -80,3 +80,91 @@
 	}
 ```
 
+## 执行环境创建
+
+### 根据运行环境创建对应执行环境
+
+```java
+	public static StreamExecutionEnvironment getExecutionEnvironment() {
+		// 解析执行环境创建工程，如果不存在则创建本地执行环境，根据任务运行环境区分
+		return Utils.resolveFactory(threadLocalContextEnvironmentFactory, contextEnvironmentFactory)
+			.map(StreamExecutionEnvironmentFactory::createExecutionEnvironment)
+			.orElseGet(StreamExecutionEnvironment::createLocalEnvironment);
+	}
+```
+
+### 本地执行环境
+
+```java
+public static LocalStreamEnvironment createLocalEnvironment(int parallelism, Configuration configuration) {
+		final LocalStreamEnvironment currentEnvironment;
+
+		// 创建本地执行环境，传入空配置，并将execution.target设置为local
+		currentEnvironment = new LocalStreamEnvironment(configuration);
+		currentEnvironment.setParallelism(parallelism);
+
+		return currentEnvironment;
+	}
+
+## 本地运行环境webUI
+  	public static StreamExecutionEnvironment createLocalEnvironmentWithWebUI(Configuration conf) {
+		checkNotNull(conf, "conf");
+
+		if (!conf.contains(RestOptions.PORT)) {
+			// explicitly set this option so that it's not set to 0 later
+			conf.setInteger(RestOptions.PORT, RestOptions.PORT.defaultValue());
+		}
+
+		return createLocalEnvironment(defaultLocalParallelism, conf);
+	}
+```
+
+### 远程执行环境
+
+```java
+	private static Configuration getEffectiveConfiguration(
+			final Configuration baseConfiguration,
+			final String host,
+			final int port,
+			final String[] jars,
+			final List<URL> classpaths,
+			final SavepointRestoreSettings savepointRestoreSettings) {
+
+		// 将客户端传入配置合并
+		final Configuration effectiveConfiguration = new Configuration(baseConfiguration);
+
+		// 设置jobManager配置
+		RemoteEnvironmentConfigUtils.setJobManagerAddressToConfig(host, port, effectiveConfiguration);
+		// 设置执行jar包路径
+		RemoteEnvironmentConfigUtils.setJarURLsToConfig(jars, effectiveConfiguration);
+		ConfigUtils.encodeCollectionToConfig(effectiveConfiguration, PipelineOptions.CLASSPATHS, classpaths, URL::toString);
+
+		if (savepointRestoreSettings != null) {
+			// 设置savepoint配置
+			SavepointRestoreSettings.toConfiguration(savepointRestoreSettings, effectiveConfiguration);
+		} else {
+			SavepointRestoreSettings.toConfiguration(SavepointRestoreSettings.none(), effectiveConfiguration);
+		}
+
+		// these should be set in the end to overwrite any values from the client config provided in the constructor.
+		effectiveConfiguration.setString(DeploymentOptions.TARGET, "remote");
+		effectiveConfiguration.setBoolean(DeploymentOptions.ATTACHED, true);
+
+		return effectiveConfiguration;
+	}
+```
+
+## 注册分布式缓存文件
+
+### registerCachedFile
+
+* 将本地文件或者分布式文件注册到分布式缓存中，如果需要，运行时会将文件临时复制到本地缓存中。
+* 可以通过RuntimeContext#getDistibutedCache读取
+
+```
+	public void registerCachedFile(String filePath, String name, boolean executable) {
+		// 文件映射存储Tuple2元组
+		this.cacheFile.add(new Tuple2<>(name, new DistributedCache.DistributedCacheEntry(filePath, executable)));
+	}
+```
+
