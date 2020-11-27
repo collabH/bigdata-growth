@@ -3,18 +3,30 @@
 ## 特点
 
 * 提供对HDFS、HBase、Kudu数据的高性能、低延迟的交互式SQL查询性能。
-
 * 基于Hive，使用内存计算，兼顾数据仓库、基有实时、批处理、多并发的有点，是PB级大数据实时查询分析引擎。
+
+## 适用场景
+
+![](./img/impala适用场景.jpg)
 
 ## 优缺点
 
 ### 优点
 
+* MPP架构，去中心化，完全兼容HiIVE元数据,结合kudu实时数仓
 * 基于内存运行，不需要把中间结果写入磁盘，省掉了大量的I/O开销。
 * 无需转换为MR，直接访问存储在HDFS、HBASE和Kudu中的数据进行作业，速度快。
 * 使用了支持Data Locality的I/O调度机制，尽可能将数据和计算分配到同一台机器上进行，减少了网络开销。
 * 支持各种文件格式，如TEXTFILE、SEQUENCEFILE、RCFile、Parquet。
 * 可以访问hive的metastore，对hive数据支持做数据分析。
+
+#### MPP并行架构
+
+![impala架构](./img/MPP去中心化.jpg)
+
+#### 查询性能
+
+![](./img/查询性能.jpg)
 
 ### 缺点
 
@@ -22,6 +34,7 @@
 * 分区超过1万，性能严重下降。
 * 只能读取文本文件，不能直接读取自定义二进制文件。
 * 每当新的记录/文件被添加到HDFS中的数据目录中，该表需要被刷新。
+* 链接一个Coordinator失败后无法故障转移到其他可用的Corrdinator
 
 ## Impala的架构
 
@@ -30,8 +43,9 @@
 ![impala架构](../kudu/img/impala架构图.jpg)
 
 * Impalad
-  * 接收client的请求、Query执行并返回给中心协调及诶单；
+  * 接收client的请求、Query执行并返回给中心协调节点；
   * 子节点上的守护进程，负责向statestore保持通信，汇报工作。
+  * Impala还区别于其他MPP架构的引擎的一点，是Impala有多个Coordinator和Executor，多个Coordinator可以同时对外提供服务。多Coordinator的架构设计让Impala可以有效防范单点故障的出现。
 * Catalog
   * 分发表的元数据信息到各个impalad中；
   * 接收来自statestore的所有请求。
@@ -149,3 +163,4 @@ help方式查看
   * 条件过滤
   * limit子句
   * 尽量少用全量元数据刷新
+
