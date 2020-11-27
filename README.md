@@ -15,6 +15,10 @@
 
 * [分布式架构](base/分布式理论/分布式架构.md)
 
+### 计算机理论
+
+* [LSM存储模型](base/计算机理论/LSM存储模型.md)
+
 ### Scala
 
 * [ScalaOverView](./base/scala/ScalaOverView.md)
