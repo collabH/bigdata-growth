@@ -390,3 +390,427 @@ public class PlanGenerator {
 ```
 
 * 执行环境创建于Stream类似
+
+# TableEnvironment
+
+* 链接外部系统
+* 通过catalog注册和检索其他元数据对象
+* 执行SQL语句
+* 设置配置参数
+
+## 接口方法
+
+```java
+public interface TableEnvironment {
+  // 创建Table执行环境，入参配置使用的执行器和流/批模式
+  static TableEnvironment create(EnvironmentSettings settings) {
+		return TableEnvironmentImpl.create(settings);
+	}
+  /**
+  使用方式，从传入对象构造Table对象
+  *	 <pre>{@code
+	 *  tEnv.fromValues(
+	 *      row(1, "ABC"),
+	 *      row(2L, "ABCDE")
+	 *  )
+	 * }</pre>
+  */
+	Table fromValues(Expression... values);
+  
+  /*  tEnv.fromValues(
+	 *      DataTypes.ROW(
+	 *          DataTypes.FIELD("id", DataTypes.DECIMAL(10, 2)),
+	 *          DataTypes.FIELD("name", DataTypes.STRING())
+	 *      ),
+	 *      row(1, "ABC"),
+	 *      row(2L, "ABCDE")
+	  )
+   */  
+	Table fromValues(AbstractDataType<?> rowType, Expression... values);
+  
+  // 传递迭代器
+  Table fromValues(Iterable<?> values);
+  Table fromValues(AbstractDataType<?> rowType, Iterable<?> values);
+  // 注册catalog
+  void registerCatalog(String catalogName, Catalog catalog);
+  // 根据catalogName获取catalog
+  Optional<Catalog> getCatalog(String catalogName);
+  // 根据moduleName记载一个Module，会根据顺序加载Module，如果已经存在抛出异常，module主要记录一些catalog函数和flink内置函数
+  void loadModule(String moduleName, Module module);
+  	void unloadModule(String moduleName);
+  // 注册临时UDF函数
+  	void createTemporarySystemFunction(String name, Class<? extends UserDefinedFunction> functionClass);
+  void createTemporarySystemFunction(String name, UserDefinedFunction functionInstance);
+  boolean dropTemporarySystemFunction(String name);
+  void createFunction(String path, Class<? extends UserDefinedFunction> functionClass);
+	void createFunction(String path, Class<? extends UserDefinedFunction> functionClass, boolean ignoreIfExists);
+  boolean dropFunction(String path);
+  void createTemporaryFunction(String path, Class<? extends UserDefinedFunction> functionClass);
+  boolean dropTemporaryFunction(String path);
+  void createTemporaryView(String path, Table view);
+  Table from(String path);
+  String[] listCatalogs();
+  String[] listModules();
+  String[] listDatabases();
+  String[] listTables();
+  String[] listViews();
+  // 分析sql执行计划
+  String explainSql(String statement, ExplainDetail... extraDetails);
+  Table sqlQuery(String query);
+  TableResult executeSql(String statement);
+  String getCurrentCatalog();
+  void useCatalog(String catalogName);
+  String getCurrentDatabase();
+  void useDatabase(String databaseName);
+  TableConfig getConfig();
+  StatementSet createStatementSet();
+}
+```
+
+## TableEnvironmentInternal
+
+* 表环境内部接口
+
+```java
+public interface TableEnvironmentInternal extends TableEnvironment {
+
+	Parser getParser();
+
+	CatalogManager getCatalogManager();
+
+	TableResult executeInternal(List<ModifyOperation> operations);
+
+	TableResult executeInternal(QueryOperation operation);
+
+	String explainInternal(List<Operation> operations, ExplainDetail... extraDetails);
+
+	void registerTableSourceInternal(String name, TableSource<?> tableSource);
+
+	void registerTableSinkInternal(String name, TableSink<?> configuredSink);
+}
+```
+
+## 核心方法实现
+
+### FromValues
+
+```java
+// 底层调用createTable方法
+public Table fromValues(AbstractDataType<?> rowType, Expression... values) {
+		// 将rowType解析成dataType
+		final DataType resolvedDataType = catalogManager.getDataTypeFactory().createDataType(rowType);
+		// 将表达式转换成QueryOperation
+		return createTable(operationTreeBuilder.values(resolvedDataType, values));
+	}
+```
+
+### registerCatalog
+
+```java
+public void registerCatalog(String catalogName, Catalog catalog) {
+		catalogManager.registerCatalog(catalogName, catalog);
+	}
+	
+	public void registerCatalog(String catalogName, Catalog catalog) {
+		// 校验catalogname是否合法
+		checkArgument(!StringUtils.isNullOrWhitespaceOnly(catalogName), "Catalog name cannot be null or empty.");
+		// 校验catalog
+		checkNotNull(catalog, "Catalog cannot be null");
+
+		// 判断catalog是否已经存在
+		if (catalogs.containsKey(catalogName)) {
+			throw new CatalogException(format("Catalog %s already exists.", catalogName));
+		}
+
+		// 将catalog放入catalogs linkedHashMap有序链表map中
+		catalogs.put(catalogName, catalog);
+		// 初始化catalog链接
+		catalog.open();
+	}
+```
+
+### loadModule
+
+```java
+public void loadModule(String moduleName, Module module) {
+		moduleManager.loadModule(moduleName, module);
+	}
+	
+		public void loadModule(String name, Module module) {
+		checkArgument(!StringUtils.isNullOrWhitespaceOnly(name), "name cannot be null or empty string");
+		checkNotNull(module, "module cannot be null");
+
+		// 类似于catalog操作
+		if (!modules.containsKey(name)) {
+			modules.put(name, module);
+
+			LOG.info("Loaded module {} from class {}", name, module.getClass().getName());
+		} else {
+			throw new ValidationException(
+				String.format("A module with name %s already exists", name));
+		}
+	}
+```
+
+### createTemporarySystemFunction
+
+```java
+	public void createTemporarySystemFunction(String name, UserDefinedFunction functionInstance) {
+		// 注册临时系统函数
+		functionCatalog.registerTemporarySystemFunction(
+			name,
+			functionInstance,
+			false);
+	}
+
+private void registerTemporarySystemFunction(
+			String name,
+			CatalogFunction function,
+			boolean ignoreIfExists) {
+		// 将functionName转换为全小写
+		final String normalizedName = FunctionIdentifier.normalizeName(name);
+
+		try {
+			// 校验函数
+			validateAndPrepareFunction(function);
+		} catch (Throwable t) {
+			throw new ValidationException(
+				String.format(
+					"Could not register temporary system function '%s' due to implementation errors.",
+					name),
+				t);
+		}
+
+		if (!tempSystemFunctions.containsKey(normalizedName)) {
+			tempSystemFunctions.put(normalizedName, function);
+		} else if (!ignoreIfExists) {
+			throw new ValidationException(
+				String.format(
+					"Could not register temporary system function. A function named '%s' does already exist.",
+					name));
+		}
+	}
+```
+
+### createFunction
+
+```java
+	public void createFunction(String path, Class<? extends UserDefinedFunction> functionClass, boolean ignoreIfExists) {
+		final UnresolvedIdentifier unresolvedIdentifier = parser.parseIdentifier(path);
+		functionCatalog.registerCatalogFunction(
+			unresolvedIdentifier,
+			functionClass,
+			ignoreIfExists);
+	}
+	
+		public void registerCatalogFunction(
+			UnresolvedIdentifier unresolvedIdentifier,
+			Class<? extends UserDefinedFunction> functionClass,
+			boolean ignoreIfExists) {
+		final ObjectIdentifier identifier = catalogManager.qualifyIdentifier(unresolvedIdentifier);
+		final ObjectIdentifier normalizedIdentifier = FunctionIdentifier.normalizeObjectIdentifier(identifier);
+
+		try {
+			UserDefinedFunctionHelper.validateClass(functionClass);
+		} catch (Throwable t) {
+			throw new ValidationException(
+				String.format(
+					"Could not register catalog function '%s' due to implementation errors.",
+					identifier.asSummaryString()),
+				t);
+		}
+
+		final Catalog catalog = catalogManager.getCatalog(normalizedIdentifier.getCatalogName())
+			.orElseThrow(IllegalStateException::new);
+		final ObjectPath path = identifier.toObjectPath();
+
+		// we force users to deal with temporary catalog functions first
+		// 判断内存中是否存在
+		if (tempCatalogFunctions.containsKey(normalizedIdentifier)) {
+			if (ignoreIfExists) {
+				return;
+			}
+			throw new ValidationException(
+				String.format(
+					"Could not register catalog function. A temporary function '%s' does already exist. " +
+						"Please drop the temporary function first.",
+					identifier.asSummaryString()));
+		}
+
+		// 判断该catalog是否存在
+		if (catalog.functionExists(path)) {
+			if (ignoreIfExists) {
+				return;
+			}
+			throw new ValidationException(
+				String.format(
+					"Could not register catalog function. A function '%s' does already exist.",
+					identifier.asSummaryString()));
+		}
+
+		final CatalogFunction catalogFunction = new CatalogFunctionImpl(
+			functionClass.getName(),
+			FunctionLanguage.JAVA);
+		try {
+			// 调用catalog创建函数
+			catalog.createFunction(path, catalogFunction, ignoreIfExists);
+		} catch (Throwable t) {
+			throw new TableException(
+				String.format(
+					"Could not register catalog function '%s'.",
+					identifier.asSummaryString()),
+				t);
+		}
+	}
+```
+
+### dropFunction
+
+```java
+public boolean dropCatalogFunction(
+			UnresolvedIdentifier unresolvedIdentifier,
+			boolean ignoreIfNotExist) {
+		final ObjectIdentifier identifier = catalogManager.qualifyIdentifier(unresolvedIdentifier);
+		final ObjectIdentifier normalizedIdentifier = FunctionIdentifier.normalizeObjectIdentifier(identifier);
+
+		final Catalog catalog = catalogManager.getCatalog(normalizedIdentifier.getCatalogName())
+			.orElseThrow(IllegalStateException::new);
+		final ObjectPath path = identifier.toObjectPath();
+
+		// we force users to deal with temporary catalog functions first
+		// 优先处理内存中的临时catalog函数
+		if (tempCatalogFunctions.containsKey(normalizedIdentifier)) {
+			throw new ValidationException(
+				String.format(
+					"Could not drop catalog function. A temporary function '%s' does already exist. " +
+						"Please drop the temporary function first.",
+					identifier.asSummaryString()));
+		}
+
+		if (!catalog.functionExists(path)) {
+			if (ignoreIfNotExist) {
+				return false;
+			}
+			throw new ValidationException(
+				String.format(
+					"Could not drop catalog function. A function '%s' doesn't exist.",
+					identifier.asSummaryString()));
+		}
+
+		try {
+			catalog.dropFunction(path, ignoreIfNotExist);
+		} catch (Throwable t) {
+			throw new TableException(
+				String.format(
+					"Could not drop catalog function '%s'.",
+					identifier.asSummaryString()),
+				t);
+		}
+		return true;
+	}
+```
+
+### createTemporaryFunction
+
+```java
+public void registerTemporaryCatalogFunction(
+			UnresolvedIdentifier unresolvedIdentifier,
+			CatalogFunction catalogFunction,
+			boolean ignoreIfExists) {
+		// 处理函数标识符
+		final ObjectIdentifier identifier = catalogManager.qualifyIdentifier(unresolvedIdentifier);
+		final ObjectIdentifier normalizedIdentifier = FunctionIdentifier.normalizeObjectIdentifier(identifier);
+
+		try {
+			// 校验和前置处理函数
+			validateAndPrepareFunction(catalogFunction);
+		} catch (Throwable t) {
+			throw new ValidationException(
+				String.format(
+					"Could not register temporary catalog function '%s' due to implementation errors.",
+					identifier.asSummaryString()),
+				t);
+		}
+
+		// 放入tempCatalogFunctions内存map中
+		if (!tempCatalogFunctions.containsKey(normalizedIdentifier)) {
+			tempCatalogFunctions.put(normalizedIdentifier, catalogFunction);
+		} else if (!ignoreIfExists) {
+			throw new ValidationException(
+				String.format(
+					"Could not register temporary catalog function. A function '%s' does already exist.",
+					identifier.asSummaryString()));
+		}
+	}
+```
+
+### from
+
+```java
+//from->scanInternal
+public Optional<TableLookupResult> getTable(ObjectIdentifier objectIdentifier) {
+		Preconditions.checkNotNull(schemaResolver, "schemaResolver should not be null");
+		// 获取临时表不存在从catalog中获取
+		CatalogBaseTable temporaryTable = temporaryTables.get(objectIdentifier);
+		if (temporaryTable != null) {
+			TableSchema resolvedSchema = resolveTableSchema(temporaryTable);
+			return Optional.of(TableLookupResult.temporary(temporaryTable, resolvedSchema));
+		} else {
+			return getPermanentTable(objectIdentifier);
+		}
+	}
+```
+
+### sqlQuery
+
+```java
+@Override
+	public Table sqlQuery(String query) {
+		// 解析query sql语句转换为Operation集合
+		List<Operation> operations = parser.parse(query);
+
+		if (operations.size() != 1) {
+			throw new ValidationException(
+				"Unsupported SQL query! sqlQuery() only accepts a single SQL query.");
+		}
+
+		Operation operation = operations.get(0);
+
+		// 判断是否为QueryOperation
+		if (operation instanceof QueryOperation && !(operation instanceof ModifyOperation)) {
+			// 创建Table
+			return createTable((QueryOperation) operation);
+		} else {
+			throw new ValidationException(
+				"Unsupported SQL query! sqlQuery() only accepts a single SQL query of type " +
+					"SELECT, UNION, INTERSECT, EXCEPT, VALUES, and ORDER_BY.");
+		}
+	}
+	
+		protected TableImpl createTable(QueryOperation tableOperation) {
+		return TableImpl.createTable(
+			this,
+			tableOperation,
+			operationTreeBuilder,
+			functionCatalog.asLookup(parser::parseIdentifier));
+	}
+```
+
+### executeSql
+
+```java
+public TableResult executeSql(String statement) {
+		List<Operation> operations = parser.parse(statement);
+
+		if (operations.size() != 1) {
+			throw new TableException(UNSUPPORTED_QUERY_IN_EXECUTE_SQL_MSG);
+		}
+		// 根据不同的算子执行不同的操作
+		return executeOperation(operations.get(0));
+	}
+```
+
+# Blink Planner
+
+## ExecutorFactory
+
