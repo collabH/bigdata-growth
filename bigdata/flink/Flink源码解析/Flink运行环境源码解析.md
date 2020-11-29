@@ -812,5 +812,287 @@ public TableResult executeSql(String statement) {
 
 # Blink Planner
 
+## TableFactory
+
+```java
+public interface TableFactory {
+
+ // 必须的属性配置，比如connector.type， format.type等
+	Map<String, String> requiredContext();
+
+/**
+* 支持的属性配置
+*   - schema.#.type
+*   - schema.#.name
+*   - connector.topic
+*   - format.line-delimiter
+*   - format.ignore-parse-errors
+*   - format.fields.#.type
+*   - format.fields.#.name
+* 表示值的数组，其中“#”表示一个或多个数字
+* 在某些情况下，声明通配符“ *”可能很有用。通配符只能在属性键的末尾声明。
+*/
+	List<String> supportedProperties();
+}
+
+```
+
+## ComponentFactory
+
+* 组件的工厂接口，如果存在多个匹配的实现，则可以进一步进行歧义消除
+
+```java
+public interface ComponentFactory extends TableFactory {
+
+  // 可选上下文
+	Map<String, String> optionalContext();
+
+  // 比选上下文配置
+	@Override
+	Map<String, String> requiredContext();
+
+  // 支持配置属性
+	@Override
+	List<String> supportedProperties();
+}
+```
+
 ## ExecutorFactory
+
+```java
+public interface ExecutorFactory extends ComponentFactory {
+
+  // 根据配置创建executor
+	Executor create(Map<String, String> properties);
+}
+```
+
+## BlinkExecutorFactory
+
+```java
+public class BlinkExecutorFactory implements ExecutorFactory {
+
+	/**
+	 * Creates a corresponding {@link ExecutorBase}.
+	 *
+	 * @param properties Static properties of the {@link Executor}, the same that were used for factory lookup.
+	 * @param executionEnvironment a {@link StreamExecutionEnvironment} to use while executing Table programs.
+	 * @return instance of a {@link Executor}
+	 */
+	public Executor create(Map<String, String> properties, StreamExecutionEnvironment executionEnvironment) {
+		// 根据对应模式创建
+		if (Boolean.valueOf(properties.getOrDefault(EnvironmentSettings.STREAMING_MODE, "true"))) {
+			return new StreamExecutor(executionEnvironment);
+		} else {
+			return new BatchExecutor(executionEnvironment);
+		}
+	}
+
+	@Override
+	public Executor create(Map<String, String> properties) {
+		return create(properties, StreamExecutionEnvironment.getExecutionEnvironment());
+	}
+
+	@Override
+	public Map<String, String> requiredContext() {
+		DescriptorProperties properties = new DescriptorProperties();
+		return properties.asMap();
+	}
+
+	@Override
+	public List<String> supportedProperties() {
+		return Arrays.asList(EnvironmentSettings.STREAMING_MODE, EnvironmentSettings.CLASS_NAME);
+	}
+
+	@Override
+	public Map<String, String> optionalContext() {
+		Map<String, String> context = new HashMap<>();
+		context.put(EnvironmentSettings.CLASS_NAME, this.getClass().getCanonicalName());
+		return context;
+	}
+}
+```
+
+### Executor
+
+* createPipeline(List<Transformation<?>> transformations,TableConfig tableConfig,String jobName);
+  * 将给定的transformations转换成Pipeline
+* execute(Pipeline pipeline) throws Exception;
+* executeAsync(Pipeline pipeline) throws Exception;
+
+### ExecutorBase
+
+```java
+public abstract class ExecutorBase implements Executor {
+	// 默认Job名称
+	private static final String DEFAULT_JOB_NAME = "Flink Exec Table Job";
+
+	// Job执行环境
+	private final StreamExecutionEnvironment executionEnvironment;
+	// 表配置
+	protected TableConfig tableConfig;
+
+	public ExecutorBase(StreamExecutionEnvironment executionEnvironment) {
+		this.executionEnvironment = executionEnvironment;
+	}
+
+	public StreamExecutionEnvironment getExecutionEnvironment() {
+		return executionEnvironment;
+	}
+
+	@Override
+	public JobExecutionResult execute(Pipeline pipeline) throws Exception {
+		return executionEnvironment.execute((StreamGraph) pipeline);
+	}
+
+	@Override
+	public JobClient executeAsync(Pipeline pipeline) throws Exception {
+		return executionEnvironment.executeAsync((StreamGraph) pipeline);
+	}
+
+	protected String getNonEmptyJobName(String jobName) {
+		if (StringUtils.isNullOrWhitespaceOnly(jobName)) {
+			return DEFAULT_JOB_NAME;
+		} else {
+			return jobName;
+		}
+	}
+}
+```
+
+### StreamExecutor
+
+```java
+@Internal
+public class StreamExecutor extends ExecutorBase {
+
+	@VisibleForTesting
+	public StreamExecutor(StreamExecutionEnvironment executionEnvironment) {
+		super(executionEnvironment);
+	}
+
+	/**
+	 * 表执行器，将transformations转换为StreamGraph
+	 * @param transformations list of transformations
+	 * @param tableConfig
+	 * @param jobName what should be the name of the job
+	 * @return
+	 */
+	@Override
+	public Pipeline createPipeline(List<Transformation<?>> transformations, TableConfig tableConfig, String jobName) {
+		// 将transformations转换成StreamGraph
+		StreamGraph streamGraph = ExecutorUtils.generateStreamGraph(getExecutionEnvironment(), transformations);
+		// 设置job名称
+		streamGraph.setJobName(getNonEmptyJobName(jobName));
+		return streamGraph;
+	}
+}
+```
+
+### BatchExecutor
+
+```java
+public class BatchExecutor extends ExecutorBase {
+
+	@VisibleForTesting
+	public BatchExecutor(StreamExecutionEnvironment executionEnvironment) {
+		super(executionEnvironment);
+	}
+
+	@Override
+	public Pipeline createPipeline(List<Transformation<?>> transformations, TableConfig tableConfig, String jobName) {
+		StreamExecutionEnvironment execEnv = getExecutionEnvironment();
+		// 设置table配置
+		ExecutorUtils.setBatchProperties(execEnv, tableConfig);
+		StreamGraph streamGraph = ExecutorUtils.generateStreamGraph(execEnv, transformations);
+		streamGraph.setJobName(getNonEmptyJobName(jobName));
+		ExecutorUtils.setBatchProperties(streamGraph, tableConfig);
+		return streamGraph;
+	}
+}
+```
+
+# Parser
+
+* 用于将SQL字符串解析成SQL对象
+* List<Operation> parse(String statement);
+* UnresolvedIdentifier parseIdentifier(String identifier);
+* ResolvedExpression parseSqlExpression(String sqlExpression, TableSchema inputSchema);
+
+## ParserImpl
+
+```java
+public class ParserImpl implements Parser {
+
+	// catalog管理器
+	private final CatalogManager catalogManager;
+
+	// we use supplier pattern here in order to use the most up to
+	// date configuration. Users might change the parser configuration in a TableConfig in between
+	// multiple statements parsing
+	// 校验器提供器
+	private final Supplier<FlinkPlannerImpl> validatorSupplier;
+	private final Supplier<CalciteParser> calciteParserSupplier;
+	private final Function<TableSchema, SqlExprToRexConverter> sqlExprToRexConverterCreator;
+
+	public ParserImpl(
+			CatalogManager catalogManager,
+			Supplier<FlinkPlannerImpl> validatorSupplier,
+			Supplier<CalciteParser> calciteParserSupplier,
+			Function<TableSchema, SqlExprToRexConverter> sqlExprToRexConverterCreator) {
+		this.catalogManager = catalogManager;
+		this.validatorSupplier = validatorSupplier;
+		this.calciteParserSupplier = calciteParserSupplier;
+		this.sqlExprToRexConverterCreator = sqlExprToRexConverterCreator;
+	}
+
+	@Override
+	public List<Operation> parse(String statement) {
+		CalciteParser parser = calciteParserSupplier.get();
+		FlinkPlannerImpl planner = validatorSupplier.get();
+		// parse the sql query，解析SQL
+		SqlNode parsed = parser.parse(statement);
+
+		Operation operation = SqlToOperationConverter.convert(planner, catalogManager, parsed)
+			.orElseThrow(() -> new TableException("Unsupported query: " + statement));
+		return Collections.singletonList(operation);
+	}
+
+	@Override
+	public UnresolvedIdentifier parseIdentifier(String identifier) {
+		CalciteParser parser = calciteParserSupplier.get();
+		SqlIdentifier sqlIdentifier = parser.parseIdentifier(identifier);
+		return UnresolvedIdentifier.of(sqlIdentifier.names);
+	}
+
+	@Override
+	public ResolvedExpression parseSqlExpression(String sqlExpression, TableSchema inputSchema) {
+		SqlExprToRexConverter sqlExprToRexConverter = sqlExprToRexConverterCreator.apply(inputSchema);
+		RexNode rexNode = sqlExprToRexConverter.convertToRexNode(sqlExpression);
+		// 转换成逻辑类型
+		LogicalType logicalType = FlinkTypeFactory.toLogicalType(rexNode.getType());
+		return new RexNodeExpression(rexNode, TypeConversions.fromLogicalToDataType(logicalType));
+	}
+}
+```
+
+# Planner
+
+* 转换一个SQL字符串为table api指定的对象，如Operation
+* 关系型执行器，提供了一种计划，优化和将ModifyOperation的树转换为可运行形式Transformation
+
+```java
+public interface Planner {
+	Parser getParser();
+
+	// 将ModifyOperation的关系树转换为一组可运行的Transformation 。
+//此方法接受ModifyOperation的列表，以允许重用多个关系查询的公共子树。 每个查询的顶部节点应该是ModifyOperation ，以便传递输出Transformation的预期属性，例如输出模式（追加，撤回，向上插入）或预期的输出类型。
+	List<Transformation<?>> translate(List<ModifyOperation> modifyOperations);
+	// 执行计划
+	String explain(List<Operation> operations, ExplainDetail... extraDetails);
+
+  // 在给定的光标位置返回给定语句的完成提示。 完成不区分大小写。
+	String[] getCompletionHints(String statement, int position);
+}
+```
 
