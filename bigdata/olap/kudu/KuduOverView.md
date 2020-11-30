@@ -17,6 +17,8 @@
 
 ![](./img/kudu和其他存储引擎的区别.jpg)
 
+![](./img/kuduVshbase.jpg)
+
 * HDFS是一个仅支持追加写的文件系统，对于需要顺序扫描大规模数据的存储引擎而言，它是表现最好的。
 * Hbase支持实时随机读/写，以及OLTP应用需要的其他特性，HBase适合那种在线、实时、高并发，其中大多数操作都是随机读/写或短扫描的环境。
 
@@ -27,6 +29,12 @@
 * 运行用户尽可能快的扫描数据，达到在HDFS中扫描原始文件速度的两倍。
 * 运行用户已经可能快地执行随机读/写，响应大约为1ms
 * 以高可用、容错、持久的方式实现以上这些目标。
+
+### 缺点
+
+* Kudu因为支持update，在内存&磁盘上数据的存储采用Base+Delta形式，Base记录几本的数据，Delta记录修改的数据，所以数据读取时需要同时读取Base+Delta两部分数据。
+* 通过Impala查询性能与Parquet比有不小差距
+* 整个集群做的不够完善，缺乏像HBase这种Region的Split&Merge功能
 
 ## Kudu-Impala集成功能
 
@@ -46,6 +54,8 @@
 ## 架构图
 
 ![Kudu Architecture](https://kudu.apache.org/docs/images/kudu-architecture-2.png)
+
+![](./img/Kudu架构.jpg)
 
 * 与HDFS和Hbase相似，Kudu使用单个的Master节点，用来管理集群的元数据，并且使用任意数量的Tablet Server(类似于Hbase的RegionServer角色)节点来存储实际数据。可以部署HA Master来提高容错能力。
 
