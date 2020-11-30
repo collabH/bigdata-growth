@@ -897,7 +897,13 @@ binlog_rows_query_log_events=ON
         "database.include.list": "ao_2020",
         "database.history.kafka.bootstrap.servers": "cdh04:9092,cdh05:9092,cdh06:9092",
         "database.history.kafka.topic": "ao2020ddlhistory",
-        "tombstones.on.delete": "false"
+        "tombstones.on.delete": "false",
+        // 添加新表示动态取拉取其历史记录快照
+        "snapshot.new.tables":"parallel",
+        // 数据库时区
+        "database.serverTimezone":"UTC",
+        // 是否记录全部DDL到history topic中
+        "database.history.store.only.monitored.tables.ddl":"true" 
     }
 }
 ```
