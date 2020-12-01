@@ -20,6 +20,13 @@
 * 支持各种文件格式，如TEXTFILE、SEQUENCEFILE、RCFile、Parquet。
 * 可以访问hive的metastore，对hive数据支持做数据分析。
 
+#### 性能优势
+
+* Impala性能优势有元数据缓存，而且impala会缓存HDFS上相应表数据在blog里的信息，因此查询时会有一个本地读，
+判断元数据是否在本地，通过本地转读方式，log才能连接数据。第二点并行计算，Query Planner生成执行计划将其发往周边节点，
+然后汇聚。第三个利用codegen技术，有些依据执行环境生成执行代码，会对性能提升很大。再一个就是很多算子下推，如果追求高性能不许实现算子下推，
+将存储层与计算层交互变得更小，在底层过滤而不是在计算层，这样对平台整体性能提升较大。
+
 #### MPP并行架构
 
 ![impala架构](./img/MPP去中心化.jpg)
@@ -44,13 +51,18 @@
 ![impala架构](../kudu/img/impala架构图.jpg)
 
 * Impalad
+  * SQL解析，执行计划生成
+  * 非DDL操作不需要catalogd参与
   * 接收client的请求、Query执行并返回给中心协调节点；
   * 子节点上的守护进程，负责向statestore保持通信，汇报工作。
   * Impala还区别于其他MPP架构的引擎的一点，是Impala有多个Coordinator和Executor，多个Coordinator可以同时对外提供服务。多Coordinator的架构设计让Impala可以有效防范单点故障的出现。
-* Catalog
+* Catalogd
   * 分发表的元数据信息到各个impalad中；
   * 接收来自statestore的所有请求。
-* Statestore
+  * 缓存表元数据，缓存HDFS数据块元数据
+  * DDL操作需要绑定catalogd
+* Statestore(sub/pub服务)
+  * 元数据信息
   * 负责收集分布在集群中各个impalad进程的资源信息、各节点健康状态，同步节点信息。
   * 负责query的协调调度。
 
