@@ -198,7 +198,9 @@ public KeyedStream<T, Tuple> keyBy(int... fields) {
 	} 
 ```
 
-### partitionCustom
+### 基于分区器
+
+#### partitionCustom
 
 * 使用自定义分区程序，对选择器返回的键上的DataStream进行分区。 此方法使用键选择器来获取要在其上进行分区的键，以及一个接受键类型的分区程序。
   注意：此方法仅适用于单个字段键，即选择器无法返回字段元组。
@@ -219,7 +221,7 @@ private <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, Keys<T> ke
 	}
 ```
 
-### broadcast
+#### broadcast
 
 ```java
 //设置DataStream的分区，以便将输出元素广播到下一个操作的每个并行实例。
@@ -235,7 +237,7 @@ public BroadcastStream<T> broadcast(final MapStateDescriptor<?, ?>... broadcastS
 	}
 ```
 
-### shuffle
+#### shuffle
 
 * 设置DataStream的分区，以便将输出元素均匀随机地随机混入下一个操作。
 
@@ -267,7 +269,7 @@ public class ShufflePartitioner<T> extends StreamPartitioner<T> {
 }
 ```
 
-### forward
+#### forward
 
 * 设置DataStream的分区，以便将输出元素转发到下一个操作的本地子任务。
 
@@ -291,7 +293,7 @@ public class ForwardPartitioner<T> extends StreamPartitioner<T> {
 }
 ```
 
-### rebalance
+#### rebalance
 
 * 设置DataStream的分区，以便以循环方式将输出元素平均分配给下一个操作的实例。
 
@@ -333,7 +335,7 @@ public class RebalancePartitioner<T> extends StreamPartitioner<T> {
 }
 ```
 
-### rescale
+#### rescale
 
 * 设置DataStream的分区，以便以循环方式将输出元素均匀地分布到下一操作实例的子集。
   上游操作向其发送元素的下游操作的子集取决于上游操作和下游操作两者的并行度。 例如，如果上游操作具有并行度2，而下游操作具有并行度4，则一个上游操作将元素分配给两个下游操作，而另一个上游操作将分配给另外两个下游操作。 另一方面，如果下游操作具有并行性2，而上游操作具有并行性4，则两个上游操作将分配给一个下游操作，而其他两个上游操作将分配给另一个下游操作。
@@ -365,7 +367,7 @@ public class RescalePartitioner<T> extends StreamPartitioner<T> {
 }
 ```
 
-### global
+#### global
 
 * 设置DataStream的分区，以便所有输出值都进入下一个处理运算符的第一个实例。 请谨慎使用此设置，因为它可能会导致应用程序出现严重的性能瓶颈。
 
@@ -389,5 +391,465 @@ public class GlobalPartitioner<T> extends StreamPartitioner<T> {
 		return "GLOBAL";
 	}
 }
+```
+
+### 单一输出算子
+
+#### map
+
+* map算子返回SingleOutputStreamOperator流，onetoone算子
+
+```java
+public <R> SingleOutputStreamOperator<R> map(MapFunction<T, R> mapper, TypeInformation<R> outputType) {
+		return transform("Map", outputType, new StreamMap<>(clean(mapper)));
+	}
+
+ // 转换算子为对应的stream，并且加入到transformations中
+	public <R> SingleOutputStreamOperator<R> transform(
+			String operatorName,
+			TypeInformation<R> outTypeInfo,
+			OneInputStreamOperatorFactory<T, R> operatorFactory) {
+
+		return doTransform(operatorName, outTypeInfo, operatorFactory);
+	}
+
+	protected <R> SingleOutputStreamOperator<R> doTransform(
+			String operatorName,
+			TypeInformation<R> outTypeInfo,
+			StreamOperatorFactory<R> operatorFactory) {
+
+		// read the output type of the input Transform to coax out errors about MissingTypeInfo
+		transformation.getOutputType();
+		// 创建单输入算子
+		OneInputTransformation<T, R> resultTransform = new OneInputTransformation<>(
+				this.transformation,
+				operatorName,
+				operatorFactory,
+				outTypeInfo,
+				environment.getParallelism());
+
+		@SuppressWarnings({"unchecked", "rawtypes"})
+		SingleOutputStreamOperator<R> returnStream = new SingleOutputStreamOperator(environment, resultTransform);
+
+		// 添加到dag算子链条
+		getExecutionEnvironment().addOperator(resultTransform);
+
+		return returnStream;
+	}
+```
+
+#### flatMap
+
+* oneToOne算子，单input单output类型算子
+
+```java
+public class StreamFlatMap<IN, OUT>
+		extends AbstractUdfStreamOperator<OUT, FlatMapFunction<IN, OUT>>
+		implements OneInputStreamOperator<IN, OUT> {
+
+	private static final long serialVersionUID = 1L;
+	private transient TimestampedCollector<OUT> collector;
+
+	public StreamFlatMap(FlatMapFunction<IN, OUT> flatMapper) {
+		super(flatMapper);
+		// 算子链策略，尽全力保证任务链优化，任务链运行非shuffle算子能够合并在相同jvm实例的thread，充分避免序列化和反序列化操作
+		chainingStrategy = ChainingStrategy.ALWAYS;
+	}
+
+	@Override
+	public void open() throws Exception {
+		super.open();
+		collector = new TimestampedCollector<>(output);
+	}
+
+	@Override
+	public void processElement(StreamRecord<IN> element) throws Exception {
+		// 是指处理元素的时间，如果不存在设置时间表示不存在
+		collector.setTimestamp(element);
+		userFunction.flatMap(element.getValue(), collector);
+	}
+}
+// one to one算子，无reduce、shuffle操作，因此可以进行chain优化
+public <R> SingleOutputStreamOperator<R> flatMap(FlatMapFunction<T, R> flatMapper, TypeInformation<R> outputType) {
+		return transform("Flat Map", outputType, new StreamFlatMap<>(clean(flatMapper)));
+	}
+```
+
+#### process
+
+```java
+public <R> SingleOutputStreamOperator<R> process(
+			ProcessFunction<T, R> processFunction,
+			TypeInformation<R> outputType) {
+
+		ProcessOperator<T, R> operator = new ProcessOperator<>(clean(processFunction));
+
+		return transform("Process", outputType, operator);
+	}
+
+public class ProcessOperator<IN, OUT>
+		extends AbstractUdfStreamOperator<OUT, ProcessFunction<IN, OUT>>
+		implements OneInputStreamOperator<IN, OUT> {
+
+	private static final long serialVersionUID = 1L;
+
+	private transient TimestampedCollector<OUT> collector;
+
+	private transient ContextImpl context;
+
+	/** We listen to this ourselves because we don't have an {@link InternalTimerService}. */
+	private long currentWatermark = Long.MIN_VALUE;
+
+	public ProcessOperator(ProcessFunction<IN, OUT> function) {
+		super(function);
+
+		chainingStrategy = ChainingStrategy.ALWAYS;
+	}
+
+	@Override
+	public void open() throws Exception {
+		super.open();
+		collector = new TimestampedCollector<>(output);
+
+		context = new ContextImpl(userFunction, getProcessingTimeService());
+	}
+
+	@Override
+	public void processElement(StreamRecord<IN> element) throws Exception {
+		collector.setTimestamp(element);
+		context.element = element;
+		// 处理元素
+		userFunction.processElement(element.getValue(), context, collector);
+		context.element = null;
+	}
+
+	// 处理watermark，维护processTime的Watermark
+	@Override
+	public void processWatermark(Watermark mark) throws Exception {
+		super.processWatermark(mark);
+		// 记录当前currentWatermark
+		this.currentWatermark = mark.getTimestamp();
+	}
+
+	/**
+	 * opeartor算子process函数，仅支持opeartor state，不支持keyedState和EventTime
+	 */
+	private class ContextImpl extends ProcessFunction<IN, OUT>.Context implements TimerService {
+		private StreamRecord<IN> element;
+
+		private final ProcessingTimeService processingTimeService;
+
+		ContextImpl(ProcessFunction<IN, OUT> function, ProcessingTimeService processingTimeService) {
+			function.super();
+			this.processingTimeService = processingTimeService;
+		}
+
+		@Override
+		public Long timestamp() {
+			checkState(element != null);
+
+			if (element.hasTimestamp()) {
+				return element.getTimestamp();
+			} else {
+				return null;
+			}
+		}
+
+		// 侧边输出
+		@Override
+		public <X> void output(OutputTag<X> outputTag, X value) {
+			if (outputTag == null) {
+				throw new IllegalArgumentException("OutputTag must not be null.");
+			}
+			// 将记录放入Output
+			output.collect(outputTag, new StreamRecord<>(value, element.getTimestamp()));
+		}
+
+		@Override
+		public long currentProcessingTime() {
+			return processingTimeService.getCurrentProcessingTime();
+		}
+
+		@Override
+		public long currentWatermark() {
+			return currentWatermark;
+		}
+
+		@Override
+		public void registerProcessingTimeTimer(long time) {
+			throw new UnsupportedOperationException(UNSUPPORTED_REGISTER_TIMER_MSG);
+		}
+
+		@Override
+		public void registerEventTimeTimer(long time) {
+			throw new UnsupportedOperationException(UNSUPPORTED_REGISTER_TIMER_MSG);
+		}
+
+		@Override
+		public void deleteProcessingTimeTimer(long time) {
+			throw new UnsupportedOperationException(UNSUPPORTED_DELETE_TIMER_MSG);
+		}
+
+		@Override
+		public void deleteEventTimeTimer(long time) {
+			throw new UnsupportedOperationException(UNSUPPORTED_DELETE_TIMER_MSG);
+		}
+
+		@Override
+		public TimerService timerService() {
+			return this;
+		}
+	}
+}
+```
+
+#### filter
+
+```java
+public SingleOutputStreamOperator<T> filter(FilterFunction<T> filter) {
+		return transform("Filter", getType(), new StreamFilter<>(clean(filter)));
+
+	}
+
+public class StreamFilter<IN> extends AbstractUdfStreamOperator<IN, FilterFunction<IN>> implements OneInputStreamOperator<IN, IN> {
+
+	private static final long serialVersionUID = 1L;
+
+	public StreamFilter(FilterFunction<IN> filterFunction) {
+		super(filterFunction);
+		chainingStrategy = ChainingStrategy.ALWAYS;
+	}
+
+	@Override
+	public void processElement(StreamRecord<IN> element) throws Exception {
+		// 调用udf
+		if (userFunction.filter(element.getValue())) {
+			output.collect(element);
+		}
+	}
+}
+```
+
+#### project
+
+```java
+public <R extends Tuple> SingleOutputStreamOperator<R> project(int... fieldIndexes) {
+		return new StreamProjection<>(this, fieldIndexes).projectTupleX();
+	}
+
+public class StreamProject<IN, OUT extends Tuple>
+		extends AbstractStreamOperator<OUT>
+		implements OneInputStreamOperator<IN, OUT> {
+
+	private static final long serialVersionUID = 1L;
+
+	private TypeSerializer<OUT> outSerializer;
+	private int[] fields;
+	private int numFields;
+
+	private transient OUT outTuple;
+
+	public StreamProject(int[] fields, TypeSerializer<OUT> outSerializer) {
+		this.fields = fields;
+		this.numFields = this.fields.length;
+		this.outSerializer = outSerializer;
+
+		chainingStrategy = ChainingStrategy.ALWAYS;
+	}
+
+	@Override
+	public void processElement(StreamRecord<IN> element) throws Exception {
+		for (int i = 0; i < this.numFields; i++) {
+			outTuple.setField(((Tuple) element.getValue()).getField(fields[i]), i);
+		}
+		output.collect(element.replace(outTuple));
+	}
+
+	@Override
+	public void open() throws Exception {
+		super.open();
+		outTuple = outSerializer.createInstance();
+	}
+}
+```
+
+### 多输出算子
+
+#### coGroup
+
+* 俩个Datastream group组合成CoGroupStream，apply操作数据为数据集合
+
+```java
+	public <T2> CoGroupedStreams<T, T2> coGroup(DataStream<T2> otherStream) {
+		return new CoGroupedStreams<>(this, otherStream);
+	}
+
+public class CoGroupedStreams<T1, T2> {
+
+	/** The first input stream. */
+	private final DataStream<T1> input1;
+
+	/** The second input stream. */
+	private final DataStream<T2> input2;
+
+	/**
+	 * Creates new CoGrouped data streams, which are the first step towards building a streaming
+	 * co-group.
+	 *
+	 * @param input1 The first data stream.
+	 * @param input2 The second data stream.
+	 */
+	public CoGroupedStreams(DataStream<T1> input1, DataStream<T2> input2) {
+		this.input1 = requireNonNull(input1);
+		this.input2 = requireNonNull(input2);
+	}
+
+	/**
+	 * Specifies a {@link KeySelector} for elements from the first input.
+	 *
+	 * @param keySelector The KeySelector to be used for extracting the first input's key for partitioning.
+	 */
+	public <KEY> Where<KEY> where(KeySelector<T1, KEY> keySelector)  {
+		Preconditions.checkNotNull(keySelector);
+		// 校验类型是否一致
+		final TypeInformation<KEY> keyType = TypeExtractor.getKeySelectorTypes(keySelector, input1.getType());
+		return where(keySelector, keyType);
+	}
+
+	/**
+	 * Specifies a {@link KeySelector} for elements from the first input with explicit type information.
+	 *
+	 * @param keySelector The KeySelector to be used for extracting the first input's key for partitioning.
+	 * @param keyType The type information describing the key type.
+	 */
+	public <KEY> Where<KEY> where(KeySelector<T1, KEY> keySelector, TypeInformation<KEY> keyType)  {
+		Preconditions.checkNotNull(keySelector);
+		Preconditions.checkNotNull(keyType);
+		// 指定关联键
+		return new Where<>(input1.clean(keySelector), keyType);
+	}
+
+	// ------------------------------------------------------------------------
+
+	/**
+	 * CoGrouped streams that have the key for one side defined.
+	 *
+	 * @param <KEY> The type of the key.
+	 */
+	@Public
+	public class Where<KEY> {
+
+		private final KeySelector<T1, KEY> keySelector1;
+		private final TypeInformation<KEY> keyType;
+
+		Where(KeySelector<T1, KEY> keySelector1, TypeInformation<KEY> keyType) {
+			this.keySelector1 = keySelector1;
+			this.keyType = keyType;
+		}
+
+		/**
+		 * Specifies a {@link KeySelector} for elements from the second input.
+		 *
+		 * @param keySelector The KeySelector to be used for extracting the second input's key for partitioning.
+		 */
+		public EqualTo equalTo(KeySelector<T2, KEY> keySelector)  {
+			Preconditions.checkNotNull(keySelector);
+			final TypeInformation<KEY> otherKey = TypeExtractor.getKeySelectorTypes(keySelector, input2.getType());
+			return equalTo(keySelector, otherKey);
+		}
+
+		/**
+		 * Specifies a {@link KeySelector} for elements from the second input with explicit type information for the key type.
+		 *
+		 * @param keySelector The KeySelector to be used for extracting the key for partitioning.
+		 * @param keyType The type information describing the key type.
+		 */
+		public EqualTo equalTo(KeySelector<T2, KEY> keySelector, TypeInformation<KEY> keyType)  {
+			Preconditions.checkNotNull(keySelector);
+			Preconditions.checkNotNull(keyType);
+
+			if (!keyType.equals(this.keyType)) {
+				throw new IllegalArgumentException("The keys for the two inputs are not equal: " +
+						"first key = " + this.keyType + " , second key = " + keyType);
+			}
+
+			return new EqualTo(input2.clean(keySelector));
+		}
+
+		// --------------------------------------------------------------------
+
+		/**
+		 * A co-group operation that has {@link KeySelector KeySelectors} defined for both inputs.
+		 */
+		@Public
+		public class EqualTo {
+
+			private final KeySelector<T2, KEY> keySelector2;
+
+			EqualTo(KeySelector<T2, KEY> keySelector2) {
+				this.keySelector2 = requireNonNull(keySelector2);
+			}
+
+			/**
+			 * 指定双流窗口函数
+			 * Specifies the window on which the co-group operation works.
+			 */
+			@PublicEvolving
+			public <W extends Window> WithWindow<T1, T2, KEY, W> window(WindowAssigner<? super TaggedUnion<T1, T2>, W> assigner) {
+				return new WithWindow<>(input1, input2, keySelector1, keySelector2, keyType, assigner, null, null, null);
+			}
+		}
+  }
+  
+```
+
+#### join
+
+* 底层处理逻辑与Cogroup类似,但是输出函数为一条记录一条记录处理
+
+```java
+public <T2> JoinedStreams<T, T2> join(DataStream<T2> otherStream) {
+		return new JoinedStreams<>(this, otherStream);
+	}
+
+ data1.coGroup(data2)
+                .where(new KeySelector<Tuple2<Integer, String>, Integer>() {
+                    @Override
+                    public Integer getKey(Tuple2<Integer, String> value) throws Exception {
+                        return value.f0;
+                    }
+                }).equalTo(new KeySelector<Tuple2<Integer, String>, Integer>() {
+                    @Override
+                    public Integer getKey(Tuple2<Integer, String> value) throws Exception {
+                        return value.f0;
+                    }
+                }).window(GlobalWindows.create())
+                .trigger(CountTrigger.of(1))
+                .apply(new CoGroupFunction<Tuple2<Integer, String>, Tuple2<Integer, String>, String>() {
+                    @Override
+                    public void coGroup(Iterable<Tuple2<Integer, String>> first, Iterable<Tuple2<Integer, String>> second, Collector<String> out) throws Exception {
+
+                    }
+                });
+
+  data1.join(data2)
+                .where(new KeySelector<Tuple2<Integer, String>, Integer>() {
+                    @Override
+                    public Integer getKey(Tuple2<Integer, String> value) throws Exception {
+                        return value.f0;
+                    }
+                }).equalTo(new KeySelector<Tuple2<Integer, String>, Integer>() {
+                    @Override
+                    public Integer getKey(Tuple2<Integer, String> value) throws Exception {
+                        return value.f0;
+                    }
+                }).window(GlobalWindows.create())
+                .trigger(CountTrigger.of(1))
+                .apply(new JoinFunction<Tuple2<Integer, String>, Tuple2<Integer, String>, String>() {
+                    @Override
+                    public String join(Tuple2<Integer, String> first, Tuple2<Integer, String> second) throws Exception {
+                        return null;
+                    }
+                });
 ```
 
