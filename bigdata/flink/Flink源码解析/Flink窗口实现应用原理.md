@@ -20,7 +20,7 @@
 
 ## Window编程接口
 
-![](./img/Window编程接口.jpg)
+![](../img/Window编程接口.jpg)
 
 ## Window Assigner
 
@@ -28,11 +28,11 @@
 * 记录窗口
 * 自定义窗口
 
-![](./img/WindowAssigner.jpg)
+![](../img/WindowAssigner.jpg)
 
 ## Window Trigger
 
-![](./img/WindowTrigger.jpg)
+![](../img/WindowTrigger.jpg)
 
 ### 默认Triggers
 
