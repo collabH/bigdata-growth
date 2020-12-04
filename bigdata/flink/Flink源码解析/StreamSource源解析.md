@@ -2600,5 +2600,164 @@ public class DataStreamSink<T> {
 }
 ```
 
+# KeyedStream
 
+* 用于keyby之后返回的数据流，支持keyedState，keyedWindowFunction等
+
+## process
+
+* ProcessFunction 过期API
+
+```java
+	public <R> SingleOutputStreamOperator<R> process(
+			ProcessFunction<T, R> processFunction,
+			TypeInformation<R> outputType) {
+
+		LegacyKeyedProcessOperator<KEY, T, R> operator = new LegacyKeyedProcessOperator<>(clean(processFunction));
+		// 将创建的算子传入transform，最终加入transforms dag图中
+		return transform("Process", outputType, operator);
+	}
+
+public class LegacyKeyedProcessOperator<K, IN, OUT>
+		extends AbstractUdfStreamOperator<OUT, ProcessFunction<IN, OUT>>
+		implements OneInputStreamOperator<IN, OUT>, Triggerable<K, VoidNamespace> {
+
+	private static final long serialVersionUID = 1L;
+
+	private transient TimestampedCollector<OUT> collector;
+
+	private transient ContextImpl context;
+
+	private transient OnTimerContextImpl onTimerContext;
+
+	public LegacyKeyedProcessOperator(ProcessFunction<IN, OUT> function) {
+		super(function);
+
+		chainingStrategy = ChainingStrategy.ALWAYS;
+	}
+
+	@Override
+	public void open() throws Exception {
+		super.open();
+		//创建时间戳收集器
+		collector = new TimestampedCollector<>(output);
+		//创建内部时间服务描述
+		InternalTimerService<VoidNamespace> internalTimerService =
+				getInternalTimerService("user-timers", VoidNamespaceSerializer.INSTANCE, this);
+
+		TimerService timerService = new SimpleTimerService(internalTimerService);
+
+		context = new ContextImpl(userFunction, timerService);
+		onTimerContext = new OnTimerContextImpl(userFunction, timerService);
+	}
+
+	@Override
+	public void onEventTime(InternalTimer<K, VoidNamespace> timer) throws Exception {
+		collector.setAbsoluteTimestamp(timer.getTimestamp());
+		// 触发processFunction
+		invokeUserFunction(TimeDomain.EVENT_TIME, timer);
+	}
+
+	@Override
+	public void onProcessingTime(InternalTimer<K, VoidNamespace> timer) throws Exception {
+		collector.eraseTimestamp();
+		// 触发processFunction
+		invokeUserFunction(TimeDomain.PROCESSING_TIME, timer);
+	}
+
+	@Override
+	public void processElement(StreamRecord<IN> element) throws Exception {
+		// 设置处理数据的时间
+		collector.setTimestamp(element);
+		// 数据传递给context
+		context.element = element;
+		// 执行processFunction#processElement
+		userFunction.processElement(element.getValue(), context, collector);
+		context.element = null;
+	}
+
+	private void invokeUserFunction(
+			TimeDomain timeDomain,
+			InternalTimer<K, VoidNamespace> timer) throws Exception {
+		onTimerContext.timeDomain = timeDomain;
+		onTimerContext.timer = timer;
+		userFunction.onTimer(timer.getTimestamp(), onTimerContext, collector);
+		onTimerContext.timeDomain = null;
+		onTimerContext.timer = null;
+	}
+
+	....
+}
+```
+
+* 传入keyedProcessFunction函数
+
+```java
+public <R> SingleOutputStreamOperator<R> process(
+			KeyedProcessFunction<KEY, T, R> keyedProcessFunction,
+			TypeInformation<R> outputType) {
+
+		KeyedProcessOperator<KEY, T, R> operator = new KeyedProcessOperator<>(clean(keyedProcessFunction));
+		return transform("KeyedProcess", outputType, operator);
+	}
+```
+
+## intervalJoin
+
+* 双流在一段间隔内join
+
+```java
+	public <T1> IntervalJoin<T, T1, KEY> intervalJoin(KeyedStream<T1, KEY> otherStream) {
+		return new IntervalJoin<>(this, otherStream);
+	}
+	
+	
+		public IntervalJoined<T1, T2, KEY> between(Time lowerBound, Time upperBound) {
+
+			TimeCharacteristic timeCharacteristic =
+				streamOne.getExecutionEnvironment().getStreamTimeCharacteristic();
+			// 边界流不支持eventTime时间语义
+			if (timeCharacteristic != TimeCharacteristic.EventTime) {
+				throw new UnsupportedTimeCharacteristicException("Time-bounded stream joins are only supported in event time");
+			}
+
+			checkNotNull(lowerBound, "A lower bound needs to be provided for a time-bounded join");
+			checkNotNull(upperBound, "An upper bound needs to be provided for a time-bounded join");
+
+			return new IntervalJoined<>(
+				streamOne,
+				streamTwo,
+				lowerBound.toMilliseconds(),
+				upperBound.toMilliseconds(),
+				true,
+				true
+			);
+		}
+		
+		
+		
+		public <OUT> SingleOutputStreamOperator<OUT> process(
+				ProcessJoinFunction<IN1, IN2, OUT> processJoinFunction,
+				TypeInformation<OUT> outputType) {
+			Preconditions.checkNotNull(processJoinFunction);
+			Preconditions.checkNotNull(outputType);
+			// 清理process函数
+			final ProcessJoinFunction<IN1, IN2, OUT> cleanedUdf = left.getExecutionEnvironment().clean(processJoinFunction);
+			// 创建IntervalJoinOperator
+			final IntervalJoinOperator<KEY, IN1, IN2, OUT> operator =
+				new IntervalJoinOperator<>(
+					lowerBound,
+					upperBound,
+					lowerBoundInclusive,
+					upperBoundInclusive,
+					left.getType().createSerializer(left.getExecutionConfig()),
+					right.getType().createSerializer(right.getExecutionConfig()),
+					cleanedUdf
+				);
+			return left
+				.connect(right)
+				.keyBy(keySelector1, keySelector2)
+				.transform("Interval Join", outputType, operator);
+		}
+```
 

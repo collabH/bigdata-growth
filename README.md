@@ -68,6 +68,7 @@
 ### Debezium
 
 * [DebeziumOverView](bigdata/debezium/DebeziumOverView.md)
+* [Debezium踩坑](bigdata/debezium/Debezium踩坑.xmind)
 
 ### Hive
 
@@ -142,7 +143,8 @@
 * [TaskExecutor内存模型原理深入](bigdata/flink/TaskExecutor内存模型原理深入.md)
 * [Flink窗口实现应用](bigdata/flink/Flink源码解析/Flink窗口实现应用原理.md)
 * [Flink运行环境源码解析](bigdata/flink/Flink源码解析/Flink运行环境源码解析.md)
-
+* [FlinkTimerService机制分析](bigdata/flink/Flink源码解析/FlinkTimerService机制分析.md)
+* [StreamSource源解析](bigdata/flink/Flink源码解析/StreamSource源解析.md)
 
 #### Application
 * [DataStream API](bigdata/flink/FlinkDataStream%20API.xmind)
