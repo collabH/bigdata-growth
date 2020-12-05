@@ -309,3 +309,32 @@ private void emitWindowContents(W window, ACC contents) throws Exception {
 
 # 源码分析
 
+## keyed#timeWindow算子
+
+### timeWindow(Time size)
+
+* 指定滚动窗口的窗口大小
+
+```java
+public WindowedStream<T, KEY, TimeWindow> timeWindow(Time size) {
+		// 根据不同的时间语义生成不同的WindowAssigner
+		if (environment.getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime) {
+			return window(TumblingProcessingTimeWindows.of(size));
+		} else {
+			return window(TumblingEventTimeWindows.of(size));
+		}
+	}
+```
+
+* 指定滑动窗口大小和步长
+
+```java
+public WindowedStream<T, KEY, TimeWindow> timeWindow(Time size, Time slide) {
+		if (environment.getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime) {
+			return window(SlidingProcessingTimeWindows.of(size, slide));
+		} else {
+			return window(SlidingEventTimeWindows.of(size, slide));
+		}
+	}
+```
+
