@@ -680,3 +680,122 @@ public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 	}
 ```
 
+### aggregate
+
+#### AggregateFunction
+
+```java
+public interface AggregateFunction<IN, ACC, OUT> extends Function, Serializable {
+
+	/**
+	 * 创建新的计数器，开始一个新的聚合
+	 */
+	ACC createAccumulator();
+
+	/**
+	 * 添加给定输入到给定计数器，返回新的计数器值
+	 */
+	ACC add(IN value, ACC accumulator);
+
+	/**
+	 * 得到计算器结果
+	 */
+	OUT getResult(ACC accumulator);
+
+	/**
+	 * 合并两个计数器
+	 */
+	ACC merge(ACC a, ACC b);
+}
+```
+
+#### aggregate方法
+
+```java
+public <ACC, R> SingleOutputStreamOperator<R> aggregate(AggregateFunction<T, ACC, R> function) {
+		checkNotNull(function, "function");
+		// agg不支持RichFunction
+		if (function instanceof RichFunction) {
+			throw new UnsupportedOperationException("This aggregation function cannot be a RichFunction.");
+		}
+		// 获取acc类型
+		TypeInformation<ACC> accumulatorType = TypeExtractor.getAggregateFunctionAccumulatorType(
+				function, input.getType(), null, false);
+
+		// 获取结果类型
+		TypeInformation<R> resultType = TypeExtractor.getAggregateFunctionReturnType(
+				function, input.getType(), null, false);
+
+		return aggregate(function, accumulatorType, resultType);
+	}
+
+	public <ACC, R> SingleOutputStreamOperator<R> aggregate(
+			AggregateFunction<T, ACC, R> function,
+			TypeInformation<ACC> accumulatorType,
+			TypeInformation<R> resultType) {
+
+		checkNotNull(function, "function");
+		checkNotNull(accumulatorType, "accumulatorType");
+		checkNotNull(resultType, "resultType");
+
+		if (function instanceof RichFunction) {
+			throw new UnsupportedOperationException("This aggregation function cannot be a RichFunction.");
+		}
+
+		// 传递默认窗口函数，只负责将窗口的数据输出
+		return aggregate(function, new PassThroughWindowFunction<K, W, R>(),
+			accumulatorType, resultType);
+	}
+```
+
+### apply
+
+```java
+private <R> SingleOutputStreamOperator<R> apply(InternalWindowFunction<Iterable<T>, R, K, W> function, TypeInformation<R> resultType, Function originalFunction) {
+
+		final String opName = generateOperatorName(windowAssigner, trigger, evictor, originalFunction, null);
+		KeySelector<T, K> keySel = input.getKeySelector();
+
+		WindowOperator<K, T, Iterable<T>, R, W> operator;
+
+		// 传入listState用了存储window内容
+		if (evictor != null) {
+			@SuppressWarnings({"unchecked", "rawtypes"})
+			TypeSerializer<StreamRecord<T>> streamRecordSerializer =
+					(TypeSerializer<StreamRecord<T>>) new StreamElementSerializer(input.getType().createSerializer(getExecutionEnvironment().getConfig()));
+
+			ListStateDescriptor<StreamRecord<T>> stateDesc =
+					new ListStateDescriptor<>("window-contents", streamRecordSerializer);
+
+			operator =
+				new EvictingWindowOperator<>(windowAssigner,
+					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+					keySel,
+					input.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+					stateDesc,
+					function,
+					trigger,
+					evictor,
+					allowedLateness,
+					lateDataOutputTag);
+
+		} else {
+			ListStateDescriptor<T> stateDesc = new ListStateDescriptor<>("window-contents",
+				input.getType().createSerializer(getExecutionEnvironment().getConfig()));
+
+			operator =
+				new WindowOperator<>(windowAssigner,
+					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
+					keySel,
+					input.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
+					stateDesc,
+					function,
+					trigger,
+					allowedLateness,
+					lateDataOutputTag);
+		}
+
+		return input.transform(opName, resultType, operator);
+	}
+```
+
