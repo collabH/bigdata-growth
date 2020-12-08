@@ -158,6 +158,10 @@
 * [DataSource API](bigdata/flink/Data%20Source.xmind)
 * [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
 
+#### feature
+
+* [Flink1.12新特性](bigdata/flink/Flink1.12新特性.md)
+
 ### olap
 #### Presto
 
