@@ -357,3 +357,8 @@ public class ProcTimeCommitTigger implements PartitionCommitTrigger {
 
 ```
 
+### runtime
+
+#### TableFunctionCollector
+
+* 表函数收集器，收集表函数计算的最终结果传递至下游
