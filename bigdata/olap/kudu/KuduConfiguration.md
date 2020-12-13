@@ -211,78 +211,11 @@ UPDATE test SET name='li' where id =1
 DELETE from test where id = 2;
 ```
 
-# Kudu的动态伸缩指南
 
-## 概念
 
-* 热副本：连续接收写操作的tablet副本。例如，在时间序列用例中，时间列上最近范围分区的平板副本将持续接收最新数据，并且将是热副本。
-* 冷副本:冷副本即不经常接收写操作的副本，例如，每隔几分钟一次。可以读取一个冷副本。例如，在时间序列用例中，一个时间列上以前的范围分区的tablet副本根本不会接收写操作，或者只是偶尔接收到最新的更新或添加操作，但可能会不断读取。
-* 磁盘上的数据:跨所有磁盘、复制后、压缩后和编码后存储在tablet server上的数据总量。
 
-## 内存
 
-* 通过`--memory_limit_hard_bytes`配置kudu tablet server可以使用的最大内存。tablet服务器使用的内存量随数据大小、写工作负载和读并发性而变化。
 
-**下表提供了可以用于粗略估计内存使用情况的数字**
 
-| Type                                        | Multiplier                                           | Description                                                  |
-| :------------------------------------------ | :--------------------------------------------------- | :----------------------------------------------------------- |
-| Memory required per TB of data on disk      | 1.5GB per 1TB data on disk                           | Amount of memory per unit of data on disk required for basic operation of the tablet server. |
-| Hot Replicas' MemRowSets and DeltaMemStores | minimum 128MB per hot replica                        | Minimum amount of data to flush per MemRowSet flush. For most use cases, updates should be rare compared to inserts, so the DeltaMemStores should be very small. |
-| Scans                                       | 256KB per column per core for read-heavy tables      | Amount of memory used by scanners, and which will be constantly needed for tables which are constantly read. |
-| Block Cache                                 | Fixed by `--block_cache_capacity_mb` (default 512MB) | Amount of memory reserved for use by the block cache.        |
 
-**使用示例负载的此信息可以得到以下内存使用情况的分解**
 
-| Type                                  | Amount                                  |
-| :------------------------------------ | :-------------------------------------- |
-| 8TB data on disk                      | 8TB * 1.5GB / 1TB = 12GB                |
-| 200 hot replicas                      | 200 * 128MB = 25.6GB                    |
-| 1 40-column, frequently-scanned table | 40 * 40 * 256KB = 409.6MB               |
-| Block Cache                           | `--block_cache_capacity_mb=512` = 512MB |
-| Expected memory usage                 | 38.5GB                                  |
-| Recommended hard limit                | 52GB                                    |
-
-### 验证内存限制是否足够
-
-* 设置完`--memory_limit_hard_bytes`后，内存使用应该保持在硬限制的50-75%左右，偶尔会出现高于75%但低于100%的峰值。如果tablet服务器始终运行在75%以上，则应该增加内存限制。
-* 另外，监视内存拒绝的日志也很有用，它类似于:
-
-```
-Service unavailable: Soft memory limit exceeded (at 96.35% of capacity)
-```
-
-* 查看内存拒绝指标
-  * `leader_memory_pressure_rejections`
-  * `follower_memory_pressure_rejections`
-  * `transaction_memory_pressure_rejections`
-* 偶尔由于内存压力而被拒绝是正常的，并作为对客户机的背压。客户端将透明地重试操作。但是，任何操作都不应该超时。
-
-## 文件描述符
-
-* 进程被分配了最大数量的打开的文件描述符(也称为fds)。如果一个tablet server试图打开太多的fds，它通常会崩溃，并显示类似“打开的文件太多”之类的信息。
-
-**下表总结了Kudu tablet服务器进程中文件描述符使用的来源**
-
-| Type          | Multiplier                                                   | Description                                                  |
-| :------------ | :----------------------------------------------------------- | :----------------------------------------------------------- |
-| File cache    | Fixed by `--block_manager_max_open_files` (default 40% of process maximum) | Maximum allowed open fds reserved for use by the file cache. |
-| Hot replicas  | 2 per WAL segment, 1 per WAL index                           | Number of fds used by hot replicas. See below for more explanation. |
-| Cold replicas | 3 per cold replica                                           | Number of fds used per cold replica: 2 for the single WAL segment and 1 for the single WAL index. |
-
-* 每个副本至少一个WAL segment和一个WAL index，并且应该有相同数量的段和索引。但是，如果一个副本的一个对等副本落后，那么它的段和索引的数量可能会更多。在对WALs进行垃圾收集时，关闭WAL段和索引fds。
-
-| Type               | Amount                                                       |
-| :----------------- | :----------------------------------------------------------- |
-| file cache         | 40% * 32000 fds = 12800 fds                                  |
-| 1600 cold replicas | 1600 cold replicas * 3 fds / cold replica = 4800 fds         |
-| 200 hot replicas   | (2 / segment * 10 segments/hot replica * 200 hot replicas) + (1 / index * 10 indices / hot replica * 200 hot replicas) = 6000 fds |
-| Total              | 23600 fds                                                    |
-
-* 因此，对于本例，tablet服务器进程有大约32000 - 23600 = 8400个fds
-
-## Threads
-
-* 如果Kudu tablet server的线程数超过操作系统限制，则它将崩溃，通常在日志中显示一条消息，例如“ pthread_create失败：资源暂时不可用”。 如果超出系统线程数限制，则同一节点上的其他进程也可能崩溃。
-* 整个Kudu都将线程和线程池用于各种目的，但几乎所有线程和线程池都不会随负载或数据/tablet大小而扩展； 而是，线程数可以是硬编码常量，由配置参数定义的常量，也可以是基于静态维度（例如CPU内核数）的常量。
-* 唯一的例外是WAL append线程，它存在于每个“热”副本中。注意，所有的副本在启动时都被认为是热的，因此tablet服务器的线程使用通常会在启动时达到峰值，然后稳定下来。
