@@ -30,7 +30,7 @@ id bigint  PRIMARY KEY
 * RLE:compress repeated values(when sorted in primary key order )by including a count
 * DICT_ENCODING:当不同字符串值的数量较低时，用数字ID替换原始字符串
 * BIT_SHUFFLE:重新排列值的位，以有效地压缩相同或仅根据主键顺序略有变化的值序列。生成的编码数据也用LZ4进行压缩。
-* pREFIX_ENCODING:压缩string相同前缀的值，主要用于kudu内部
+* PREFIX_ENCODING:压缩string相同前缀的值，主要用于kudu内部
 
 ### COMPRESSION属性
 
