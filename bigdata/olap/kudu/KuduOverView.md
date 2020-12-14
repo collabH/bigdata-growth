@@ -535,3 +535,55 @@ kudu-client
     spark.close()
   }
 ```
+
+## Kudu表备份和恢复
+
+### 备份
+
+* 要备份一个或多个Kudu表，可以使用KuduBackup Spark作业。 第一次为表运行作业时，将运行完整备份。 其他运行将执行增量备份，该增量备份将仅包含自初始完整备份以来已更改的行。 通过将`--forceFull`标志传递给备份作业，可以随时强制执行一组新的完全备份。
+* `--rootPath`:备份数据输出的根路径，接受任何spark兼容的路径
+* `--kuduMasterAddresses`:kudu master地址
+* `<table>`:备份表列表
+
+```shell
+# 备份表Spark任务
+spark-submit --class org.apache.kudu.backup.KuduBackup kudu-backup2_2.11-1.10.0.jar \
+  --kuduMasterAddresses master1-host,master-2-host,master-3-host \
+  --rootPath hdfs:///kudu-backups \
+  foo bar
+```
+
+### 恢复
+
+* `--rootPath`:备份数据输出的根路径，接受任何spark兼容的路径
+* `--kuduMasterAddresses`:kudu master地址
+* `--createTables`:如果为`true`，恢复时会创建这些表，如果目标表存在设置为false
+* `--tableSuffix`:如果设置，则将后缀添加到还原的表名称中。 仅在createTables为true时使用。
+* `--timestampMs`:UNIX时间戳（以毫秒为单位），用于定义选择还原候选者时要使用的最新时间。 默认值：System.currentTimeMillis（）
+* `<table>`:备份表列表
+
+```shell
+# 恢复备份表
+spark-submit --class org.apache.kudu.backup.KuduRestore kudu-backup2_2.11-1.10.0.jar \
+  --kuduMasterAddresses master1-host,master-2-host,master-3-host \
+  --rootPath hdfs:///kudu-backups \
+  foo bar
+```
+
+### 备份工具
+
+* `list`:列出rootPath中的备份。
+* `clean`:清理rootPath中旧的备份数据
+
+```shell
+java -cp $(hadoop classpath):kudu-backup-tools-1.10.0.jar org.apache.kudu.backup.KuduBackupCLI --help
+```
+
+### 备份目录结构
+
+```
+/<rootPath>/<tableId>-<tableName>/<backup-id>/
+   .kudu-metadata.json
+   part-*.<format>
+```
+
