@@ -32,7 +32,7 @@
 
 ### 缺点
 
-* Kudu因为支持update，在内存&磁盘上数据的存储采用Base+Delta形式，Base记录几本的数据，Delta记录修改的数据，所以数据读取时需要同时读取Base+Delta两部分数据。
+* Kudu因为支持update，在内存&磁盘上数据的存储采用Base+Delta形式，Base记录基本的数据，Delta记录修改的数据，所以数据读取时需要同时读取Base+Delta两部分数据。
 * 通过Impala查询性能与Parquet比有不小差距
 * 整个集群做的不够完善，缺乏像HBase这种Region的Split&Merge功能
 
