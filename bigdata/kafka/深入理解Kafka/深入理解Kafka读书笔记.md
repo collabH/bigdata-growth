@@ -4,13 +4,13 @@
 
 ![整体](./img/生产者整体架构.jpg)
 
-* 整个生产者客户端由两个线程协调运行，这两个线程分别为主线程和Sender线程（发送线程）。在主线程中由KafkaProducer创建消息，然后通过可能的拦截器、序列化器和分区器的作用之后缓存到消息累加器（RecordAccumulator，也称为消息收集器）中。Sender 线程负责从RecordAccumulator中获取消息并将其发送到Kafka中。
-* RecordAccumulator 主要`用来缓存消息以便 Sender 线程可以批量发送`，进而减少网络传输的资源消耗以提升性能。RecordAccumulator 缓存的大小可以`通过生产者客户端参数buffer.memory 配置，默认值为 33554432B，即 32MB。`如果生产者发送消息的速度超过发送到服务器的速度，则会导致生产者空间不足，这个时候KafkaProducer的send（）方法调用要么被阻塞，要么抛出异常，这个取决于参数max.block.ms的配置，此参数的默认值为60000，即60秒。
+* 整个生产者客户端由两个线程协调运行，这两个线程分别为主线程和Sender线程（发送线程）。在主线程中由KafkaProducer创建消息，然后通过可能的拦截器、序列化器和分区器的作用之后缓存到消息累加器（RecordAccumulator，也称为消息收集器）中。Sender线程负责从RecordAccumulator中获取消息并将其发送到Kafka中。
+* RecordAccumulator 主要`用来缓存消息以便 Sender 线程可以批量发送`，进而减少网络传输的资源消耗以提升性能。RecordAccumulator 缓存的大小可以`通过生产者客户端参数buffer.memory 配置，默认值为 33554432B，即 32MB。`如果生产者发送消息的速度超过发送到服务器的速度，则会导致生产者空间不足，这个时候KafkaProducer的send（）方法调用要么被阻塞，要么抛出异常，这个取决于参数`max.block.ms` 的配置，此参数的默认值为60000，即60秒。
 * 在RecordAccumulator的内部还有一个BufferPool，它主要用来`实现ByteBuffer的复用，以实现缓存的高效利用`。不过BufferPool`只针对特定大小的ByteBuffer进行管理，而其他大小的ByteBuffer不会缓存进BufferPool中`，这个特定的大小由`batch.size`参数来指定，默认值为16384B，即16KB。我们可以适当地调大batch.size参数以便多缓存一些消息。如果发送的消息不超过`batch.size`可以按照`batch.size`创建ProducerBatch，并且可以通过BufferPool进行复用，如果超过则没办法进行复用。
 
 ## 元数据更新
 
-* 当客户端中没有需要使用的元数据信息时，比如没有指定的主题信息，或者超过metadata.max.age.ms 时间没有更新元数据都会引起元数据的更新操作。客户端参数metadata.max.age.ms的默认值为300000，即5分钟。元数据的更新操作是在客户端内部进行的，对客户端的外部使用者不可见。当需要更新元数据时，会先挑选出leastLoadedNode，然后向这个Node发送MetadataRequest请求来获取具体的元数据信息。这个更新操作是由Sender线程发起的，在创建完MetadataRequest之后同样会存入InFlightRequests，之后的步骤就和发送消息时的类似。元数据虽然由Sender线程负责更新，但是主线程也需要读取这些信息，这里的数据同步通过synchronized和final关键字来保障。
+* 当客户端中没有需要使用的元数据信息时，比如没有指定的主题信息，或者超过`metadata.max.age.ms `时间没有更新元数据都会引起元数据的更新操作。客户端参数`metadata.max.age.ms`的默认值为300000，即5分钟。元数据的更新操作是在客户端内部进行的，对客户端的外部使用者不可见。当需要更新元数据时，会先挑选出leastLoadedNode，然后向这个Node发送MetadataRequest请求来获取具体的元数据信息。这个更新操作是由Sender线程发起的，在创建完MetadataRequest之后同样会存入InFlightRequests，之后的步骤就和发送消息时的类似。元数据虽然由Sender线程负责更新，但是主线程也需要读取这些信息，这里的数据同步通过synchronized和final关键字来保障。
 
 # 生产者参数
 
@@ -23,11 +23,11 @@
 ## max.request.size
 
 * 限制生产者客户端能发送的消息的最大值，默认值为 1048576B，即 1MB。
-* 如果broker端的message.max.bytes参数，如果配置错误可能会引起一些不必要的异常。比如将broker端的message.max.bytes参数配置为10，而max.request.size参数配置为20，那么当我们发送一条大小为15B的消息时，生产者客户端就会报出异常。
+* 如果broker端的`message.max.bytes`参数，如果配置错误可能会引起一些不必要的异常。比如将broker端的`message.max.bytes`参数配置为10，而`max.request.size`参数配置为20，那么当我们发送一条大小为15B的消息时，生产者客户端就会报出异常。
 
 ## retries和retry.backoff.ms
 
-* retries参数用来配置生产者重试的次数，默认值为0，即在发生异常的时候不进行任何重试动作。消息在从生产者发出到成功写入服务器之前可能发生一些临时性的异常，比如网络抖动、leader副本的选举等，这种异常往往是可以自行恢复的，生产者可以通过配置retries大于0的值，以此通过内部重试来恢复而不是一味地将异常抛给生产者的应用程序。如果重试达到设定的次数，那么生产者就会放弃重试并返回异常。不过并不是所有的异常都是可以通过重试来解决的，比如消息太大，超过max.request.size参数配置的值时，这种方式就不可行了。
+* retries参数用来配置生产者重试的次数，默认值为0，即在发生异常的时候不进行任何重试动作。消息在从生产者发出到成功写入服务器之前可能发生一些临时性的异常，比如网络抖动、leader副本的选举等，这种异常往往是可以自行恢复的，生产者可以通过配置retries大于0的值，以此通过内部重试来恢复而不是一味地将异常抛给生产者的应用程序。如果重试达到设定的次数，那么生产者就会放弃重试并返回异常。不过并不是所有的异常都是可以通过重试来解决的，比如消息太大，超过`max.request.size`参数配置的值时，这种方式就不可行了。
 * 重试还和另一个参数retry.backoff.ms有关，这个参数的默认值为100，它用来设定两次重试之间的时间间隔，避免无效的频繁重试。在配置 retries 和 retry.backoff.ms之前，最好先估算一下可能的异常恢复时间，这样可以设定总的重试时间大于这个异常恢复时间，以此来避免生产者过早地放弃重试。
 * 当`max.in.flight.requests.per.connection`配置大于1，出现重试时会出现错序。
 
@@ -53,7 +53,7 @@
 
 ## request.timeout.ms
 
-* 这个参数用来配置Producer等待请求响应的最长时间，默认值为30000（ms）。请求超时之后可以选择进行重试。注意这个参数需要比broker端参数replica.lag.time.max.ms的值要大，这样可以减少因客户端重试而引起的消息重复的概率。
+* 这个参数用来配置Producer等待请求响应的最长时间，默认值为30000（ms）。请求超时之后可以选择进行重试。注意这个参数需要比broker端参数`replica.lag.time.max.ms`的值要大，这样可以减少因客户端重试而引起的消息重复的概率。
 
 # 消费者和消费组
 
@@ -114,7 +114,7 @@
 }
 ```
 
-* kafka-reassign-partitions.sh --zookeeper localhost:2181/kafka --generate --topics-to-move-json-file test.json --broker-list 0,2
+* ```kafka-reassign-partitions.sh --zookeeper localhost:2181/kafka --generate --topics-to-move-json-file test.json --broker-list 0,2```
 
 # 日志存储
 
