@@ -97,7 +97,7 @@ job.setNumReduceTasks(4);
 
 ## 排序
 
-* MapTask和ReduceTask均会对数据`按照key`进行排序。该操作是Hadoop的默认行为。任何程序中的数据均会排序，会使用快排来对key排序，字典排序。
+* MapTask和ReduceTask均会对数据`按照key`进行排序。该操作是Hadoop的默认行为。任何程序中的数据均会`排序`，会使用快排来对key排序，字典排序。
 
 ### map阶段
 
@@ -569,7 +569,7 @@ Configuration类(或者旧版MapReduce API的JobConf类)的各种setter方法能
 
 ### 存在的问题
 
-* 这种方式使用的时MapReduce组件的JVM内存，所以回增大内存的开销，因此不适合传输几千字节的数据量。作业配置总是由客户端、AM和任务JVM读取，每次读取配置，所有项都被读取到内存，因此造成NM的内存开销。
+* 这种方式使用的时MapReduce组件的JVM内存，所以会`增大内存`的开销，因此不适合传输几千字节的数据量。作业配置总是由客户端、AM和任务JVM读取，每次读取配置，所有项都被读取到内存，因此造成NM的内存开销。
 
 ## 分布式缓存
 
@@ -585,7 +585,7 @@ Configuration类(或者旧版MapReduce API的JobConf类)的各种setter方法能
 
 ### 使用Reducer的setup方法
 
-```
+```java
 public class DistributedCacheDriver extends Configured implements Tool {
 
     static class StationTemperatureMapper extends Mapper<LongWritable, Text, Text, IntWritable> {
@@ -674,7 +674,7 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 
 ## 数据输入
 
-* 合并小文件:在执行MR任务前将小文件进行合并，大量的小文件会产生大量的Map任务，增大Map任务装载次数，而任务的装载比较耗时，导致MR运行较慢。
+* 合并小文件:在执行MR任务前将小文件进行合并，大量的小文件会产生`大量的Map任务`(因为一个文件对应一个split，可以观看MR源码)，增大Map任务装载次数，而任务的装载比较耗时，导致MR运行较慢。
 * 使用`CombineTextInputFormat`作为输入，解决输入端大量小文件。
 
 ## Reduce端
@@ -689,7 +689,7 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 
 ### reduce端调优属性
 
-* 合理设置Map和Reduce数:基于InputSplit设置
+* 合理设置Map和Reduce数:基于InputSplit设置，基于split的个数
 * 设置Map、Reduce共存:调整`slowstart,completedmaps`参数，是Map运行到一定程度后，Reduce也开始运行，减少Reduce等待时间。
 * 规避使用Reduce:不需要Reduce可以设置ReduceTaskNum为0，这样就不会只想shuffle
 * 合理设置Reduce端的Buffer:默认情况下，数据达到一定阈值的时候，Buffer中的数据会写入磁盘，然后Reduce会从磁盘中获得所有磁盘。`mapred.job.reduce.input.buffer.percent`，默认为0.0.当值大于0时，会保留指定比例的内存读Buffer中的数据直接拿给Reduce使用。
@@ -707,7 +707,7 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 ## I/O传输
 
 * 采用数据压缩方式:减少网络Io的时间，设置Map端、输入端、reduce输出端的压缩编码器，按照业务使用。
-* 使用SequenceFile文件，支持按Block压缩
+* 使用SequenceFile文件，支持按`Block`压缩
 
 ## 数据倾斜问题
 
