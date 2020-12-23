@@ -23,7 +23,7 @@
 * 结果输出
 ## 输入输出
 
-```
+```java
 MapReduce框架仅对<key,value>键值对运行，该框架将作业的输入视为一组<key，value>对，并生成一组<key，value>对作为其输出。该键值对必须由框架序列化，因此需要实现Writable接口，关键类必须实现WritableComparable接口，以方便框架进行排序。
 # 如下数据
    public class MyWritableComparable implements WritableComparable<MyWritableComparable> {
@@ -71,7 +71,7 @@ MapReduce框架仅对<key,value>键值对运行，该框架将作业的输入视
   * HDFS:blocksize是HDFS最小的存储单元，默认128MB
   * 默认情况下，Split和blocksize一一对应，也可以手工设置Split的计算单元大小和blocksize的大小
 * InputFormat:输入
-```
+```java
 将我们输入数据进行分片(split):InputSplit[] getSplits(JobConf job, int numSplits)
 TextInputFormat:处理文本格式数据
 ```
@@ -114,7 +114,7 @@ TextInputFormat:处理文本格式数据
 
 ## 自定义Mapper类
 
-```
+```java
 @Slf4j
 public class MyMapper extends Mapper<LongWritable, Text, Text, LongWritable> {
 
@@ -135,7 +135,7 @@ public class MyMapper extends Mapper<LongWritable, Text, Text, LongWritable> {
 ```
 ## 自定义Reducer类
 
-```
+```java
 public class MyReducer extends Reducer<Text, LongWritable, Text, LongWritable> {
     /**
      * reduce方法
@@ -159,7 +159,7 @@ public class MyReducer extends Reducer<Text, LongWritable, Text, LongWritable> {
 ```
 ## 编写启动驱动
 
-```
+```java
 public class WordCountApp {
     /**
      * Driver:封装MapReduce作业的所有信息
@@ -201,7 +201,7 @@ public class WordCountApp {
 
 ### 相同的代码和脚本再次执行会报错
 
-```
+```java
 在MapReduce中，输出文件是不能事先存在的
 1.先手工通过hdfs shell方式手动删除
    hdfs dfs -rm /a.txt
@@ -215,7 +215,7 @@ if (fileSystem.exists(path)) {
 ```
 # MapReduce如何使用三方包或二方包
 
-```
+```xml
 1. 将jar包上传至HDFS中，然后使用
 //将jar包上传至hdfs集群中，然后代码中设置jar包依赖 
 job.addArchiveToClassPath(new Path("hdfs://hadoop:8020/hello/commons-lang3-3.9.jar"));
@@ -275,7 +275,7 @@ job.setCombinerClass(MyReducer.class);
 
 ### 配置
 
-```
+```xml
 1.修改mapped-site.xml配置
         <property>
                 <name>mapreduce.jobhistory.address</name>
@@ -305,15 +305,10 @@ job.setCombinerClass(MyReducer.class);
 ```
 ### 启动脚本
 
-```
+```shell
 # 重启yarn
 ./sbin/stop-yarn.sh
 ./sbin/start-yarn.sh
 # 启动mr-jobhistory-daemon.sh
 ./sbin/mr-jobhistory-daemon.sh start historyserver
-```
-### 查看路径
-
-```
-http://hadoop:19888/
 ```
