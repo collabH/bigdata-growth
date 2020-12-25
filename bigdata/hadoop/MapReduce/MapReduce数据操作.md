@@ -17,7 +17,7 @@ HDFS会对写入的所有数据计算校验和，并在读取数据时验证校�
 
 * 存储数据校验
 ```
-datanode负责在收到数据后存储该数据 及其校验和之前对数据进行验证，它在收到客户端的数据或复制其他datanode的数据时执行这个操作。正在写数据的客户端将数据及其校验和发送到由一系列datanode组成的管线，管线中最后一个datanode负责校验校验和。如果检测到错误，客户端便会收到一个IOException异常的一个子类，对于该异常应以应用程序特定的方式来处理，比如充实这个操作。
+datanode负责在收到数据后存储该数据及其校验和之前对数据进行验证，它在收到客户端的数据或复制其他datanode的数据时执行这个操作。正在写数据的客户端将数据及其校验和发送到由一系列datanode组成的管线，管线中最后一个datanode负责校验校验和。如果检测到错误，客户端便会收到一个IOException异常的一个子类，对于该异常应以应用程序特定的方式来处理，比如重试这个操作。
 ```
 * 读取数据校验
 ```
@@ -37,7 +37,7 @@ client在读取数据块时，如果检测到错误，首先向namenode报告已
 ## LocalFileSystem
 
 ```
-Hadoop的LocalFileSytem执行客户端的校验和验证，当你写入一个名为filename的文件时，文件系统客户端会明确在包含每个文件块校验和的同一个目录内新建一个.filename.crc隐藏文件。文件快的大小由属性file.bytes-per-checksum控制，默认512字节。文件快的大小作为元数据存储在.crc文件中，所以文件快大小的设置已经发生变化，仍然可以正确读取文件。
+Hadoop的LocalFileSytem执行客户端的校验和验证，当你写入一个名为filename的文件时，文件系统客户端会明确在包含每个文件块校验和的同一个目录内新建一个.filename.crc隐藏文件。文件快的大小由属性file.bytes-per-checksum控制，默认512字节。文件块的大小作为元数据存储在.crc文件中，所以文件块大小的设置已经发生变化，仍然可以正确读取文件。
 ```
 ## ChecksumFileSystem
 
@@ -274,7 +274,7 @@ Text通过整型(边长编码的方式)来存储字符串编码中所需的 字�
 ```
 ## 序列化框架
 
-```
+```java
 Hadoop的Serialization接口是可以提供自定义实现的序列化框架
 @InterfaceAudience.LimitedPrivate({"HDFS", "MapReduce"})
 @InterfaceStability.Evolving

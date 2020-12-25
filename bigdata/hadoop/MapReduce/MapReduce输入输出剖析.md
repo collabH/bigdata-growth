@@ -40,7 +40,7 @@ FileInputFormat类是所有使用文件作为其数据源的InputFormat实现的
 
 #### InputFormat的应用过程
 
-* 运行作业的客户端通过调用getSplits计算分片，然后将它们发送到AM上，AM使用其存储位置信息来调度map任务从而在集群上处理这些分片数据。map任务把输入分片传给InputFormat的createRecordReader方法来获得这个分片的RecordReader。RecordReader就像是记录上的迭代器。map任务用一个RecordReader来生成记录的键值对，然后再传递给map函数。
+* 运行作业的客户端通过调用getSplits计算分片，然后将它们发送到AM上，AM使用其存储位置信息来调度map任务从而在集群上处理这些分片数据。map任务把输入分片传给InputFormat的`createRecordReader`方法来获得这个分片的RecordReader。RecordReader就像是记录上的迭代器。map任务用一个RecordReader来生成记录的键值对，然后再传递给map函数。
 * Hadoop提供MapRunner、MultithreadedMapRunner等运行器，`mapreduce.mapper.multithreadedmapper.threads`设置多线程map的线程数。
 
 #### 输入路径
@@ -285,7 +285,7 @@ CombineFileInputFormat可以缓解这个问题，它是针对小文件而设计�
 
 * 虚拟存储切片最大值设置
 
-  ```
+  ```Java
   CombineFileInputFormat.setMaxInputSplitSize(job,4194304)//4m
   虚拟存储切片最大值设置最好根据实际小文件大小情况设置具体的值
   ```
@@ -542,7 +542,7 @@ public class SmallFileMergeDriver extends Configured implements Tool {
 
 ### 多个输入
 
-```
+```java
 使用MultipleInputs来进行数据关联
 public class MutilInputTest extends Configured implements Tool {
     public static void main(String[] args) throws Exception {
