@@ -81,7 +81,7 @@ hdfs dfs -chmod g+w /user/hive/warehouse
 
 ### 查询后信息显示配置 
 
-```shell
+```xml
 # 查询显示列名 
 <property> 
     <name>hive.cli.print.header</name> 
@@ -173,7 +173,7 @@ export HIVE_AUX_JARS_PATH=/Users/babywang/Documents/reserch/studySummary/module/
 
 ### 配置hive-site.xml
 
-```shell
+```xml
 <property>
     <name>hive.execution.engine</name>
     <value>tez</value>
