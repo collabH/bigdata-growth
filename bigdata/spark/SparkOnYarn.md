@@ -1,4 +1,4 @@
-* Spark部署方式灵活多变，包含Local、Standalone、Mesos和Yarn、K8s的比你难过，如果是单机部署可以使用Local或者伪分布式模式运行。
+*  Spark部署方式灵活多变，包含Local、Standalone、Mesos和Yarn、K8s的比你难过，如果是单机部署可以使用Local或者伪分布式模式运行。
 
 # YARN概述
 
