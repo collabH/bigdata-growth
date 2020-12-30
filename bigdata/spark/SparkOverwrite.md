@@ -9,7 +9,7 @@
 #### 中间结果
 
 * 基于MR的计算引擎通常将中间结果输出到磁盘，以达到存储和容错的目的。因此涉及到中间结果的迭代处理就会导致多个MR任务串联执行，此时就会导致数据处理延迟缓慢等问题。
-* Spark将执行操作抽象成DAG，将多个Stage任务串联或冰箱执行，无需将Stage中间结果存储到HDFS。
+* Spark将执行操作抽象成DAG，将多个Stage任务串联或并行执行，无需将Stage中间结果存储到HDFS。
 
 #### 执行策略
 
@@ -31,7 +31,7 @@
 
 ### 分布式系统架构
 
-* 每个计算单元时松耦合的，并且计算单元包含自己的CPU、内存、总线及硬盘等私有计算资源。分布架构的问题在于共享资源的问题，因此为了资源的共享又不会导致IO的瓶颈，`分布式计算的原则是数据本地化计算`。
+* 每个计算单元是松耦合的，并且计算单元包含自己的CPU、内存、总线及硬盘等私有计算资源。分布架构的问题在于共享资源的问题，因此为了资源的共享又不会导致IO的瓶颈，`分布式计算的原则是数据本地化计算`。
 
 ### Spark架构
 
@@ -244,7 +244,7 @@ mkdir -p /Users/xiamuguizhi/Documents/develop/learn/bigdata/hadoop-dir/datanode
 
 * 将所有从节点主机名加入slaves中
 
-```
+```properties
 192.168.1.2 hadoop1
 192.168.1.3 hadoop2
 192.168.1.4 hadoop3
@@ -257,7 +257,7 @@ mkdir -p /Users/xiamuguizhi/Documents/develop/learn/bigdata/hadoop-dir/datanode
 * 下载Spark安装包
 * 配置Spark环境变量
 
-```
+```shell
 export SPARK_HOME=/user/spark
 PATH=$SPARK_HOME/bin
 ```
@@ -305,7 +305,7 @@ worker3
 
 #### RDD依赖
 
-* RDD可以相互依赖，如果RDD的每个分区最多只能被一个Child RDD的分区使用，则为窄依赖(narrow dependency);若多个Child RDD分区都可以依赖，则称之为宽依赖(wide dependency)。
+* RDD可以相互依赖，如果RDD的每个分区最多只能被一个Child RDD的分区使用，则为`窄依赖(narrow dependency)`;若多个Child RDD分区都可以依赖，则称之为`宽依赖(wide dependency)`。
 
 #### RDD容错性
 
@@ -348,7 +348,7 @@ worker3
 
 #### Spark Application执行组件
 
-* Task: RDD中的一个分区对应一个Task，Task是单个分区的最小处理流程但愿。
+* Task: RDD中的一个分区对应一个Task，Task是单个分区的最小处理流程单元。
 * TaskSet:一组关联的，但相互之间没有Shuffle依赖关系的Task集合。
 * Stage:一个TaskSet对应的调度阶段，每个Job会根据RDD的宽依赖关系被切分成很多Stage，每个Stage都包含一个TaskSet。
 * Job:由Action算子触发生成的由一个或多个Stage组成的计算作业。
@@ -362,7 +362,7 @@ worker3
 * 用户启动Client端，在Client端启动Driver进程。在Driver中启动或实例化DAGScheduler等组件
   * Driver向Master注册
   * Worker向Master注册，Master通过指令让那个Worker启动Executor。
-  * Worker通过创建ExecutorRunner线程，进而ExecutorRunner现场启动ExecutBackend进程。
+  * Worker通过创建ExecutorRunner线程，进而ExecutorRunner线程启动ExecutBackend进程。
   * ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进行就可以发现计算资源。
   * Driver的DAGScheduler解析应用中的RDD DAG并生成Stage，每个Stage包含的Taskset通过TaskScheduler分配给Executor。在Executor内部启动线程池并行化启动Task。
 
@@ -474,11 +474,12 @@ worker3
 ![Spark Shuffle](./源码分析/img/shuffle consolidation.jpg)
 
 * 在Shuffle consolidation中，每个bucket并非对应一个文件，而对应文件中的一个segement。同时Shuffle consolidation产生的Shuffle文件数量与Spark core的个数有关系。
-* 假设job有4个Mapper和4个Reduce，有2个core能并行运行两个task，那么spark shuffle write需要16个bucket，也就是16个write handler。job中有4个Mapper分为两批运行，在第一批2个Mapper运行时会生成时会申请8个bucket，产生8个SHuffle文件。
+* 假设job有4个Mapper和4个Reduce，有2个core能并行运行两个task，那么spark shuffle write需要16个bucket，也就是16个write handler。job中有4个Mapper分为两批运行，在第一批2个Mapper运行时会生成8个bucket，产生8个Shuffle文件。
 * 理论上Shuffle consolidation产生的Shuffle文件数量为C X R，C时spark的core number数，R时Reduce的个数。如果core数和Mapper个数相同就和基于Hash的方式没太大区别了。
 
 ### Shuffle Fetch
 
 ![Spark Shuffle](./源码分析/img/Shuffle Fetch.jpg)
 
-* Shuffle fetch过来的数据会进行归并排序，根据相同key下不同的value会发送到同一个reducer使用，Aggregator本质是HashMap，它以map output的key为key，以仁义所要的combine的类型为value的hashmap。shuffle fetch到的每一个key-value对更新或插入hashmap中，这样就不需要预先把所有的key-value进行merge sort，而是来一个处理一个省去外部排序的阶段。
+* Shuffle fetch过来的数据会进行归并排序，根据相同key下不同的value会发送到同一个reducer使用，Aggregator本质是HashMap，它以map output的key为key，以所要的combine的类型为value的hashmap。shuffle fetch到的每一个key-value对更新或插入hashmap中，这样就不需要预先把所有的key-value进行merge sort，而是来一个处理一个省去外部排序的阶段。
+
