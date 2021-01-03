@@ -1003,7 +1003,7 @@ private[spark] abstract class MemoryManager(
 
 ![MemoryManager内存模型](./img/MemoryManager内存模型.jpg)
 
-* 毫不相干的onHeapStorageMemoryPool和onHeapExecutionMemory-Pool合在了一起，将堆内存作为一个整体看待。而且onHeapStorageMemoryPool与onHeap-ExecutionMemoryPool之间，offHeapStorageMemoryPool与offHeapExecutionMemoryPool之间的实线也调整为虚线，表示它们之间都是“软”边界。存储方或计算方的空闲空间（即memoryFree表示的区域）都可以借给另一方使用。
+* 毫不相干的onHeapStorageMemoryPool和onHeapExecutionMemory-Pool合在了一起，将堆内存作为一个整体看待。而且onHeapStorageMemoryPool与onHeap-ExecutionMemoryPool之间，offHeapStorageMemoryPool与offHeapExecutionMemoryPool之间的实线也调整为虚线，表示它们之间都是“软”边界。存储方或计算方的空闲空间（即memoryFree表示的区域）都可以借给`另一方使用`。
 
 ### UnifiedMemoryManager
 

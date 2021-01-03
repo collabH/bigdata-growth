@@ -63,7 +63,7 @@ val conf=new SparkConf()
       .registerKryoClasses(Array(classOf[MyClass], classOf[MyClass2]))
 ```
 
-* 序列化对象过大时可以使用spark.kryoserializer.buffer.mb的值，该属性的默认值时32，但是该属性需要足够大，以便能偶容纳需要序列化的最大对象。
+* 序列化对象过大时可以使用·spark.kryoserializer.buffer.mb·的值，该属性的默认值时32，但是该属性需要足够大，以便能偶容纳需要序列化的最大对象。
 
 ## 内存优化
 
@@ -77,7 +77,7 @@ java对象的访问速度虽然快，但是占用的空间通常比内部的属�
 1.Java对象包含一个“对象头部（object header），该头部大约占16字节，包含了指向对象对应的类的指针等信息。”
 2. Java String在实际的字符串数据之外，还需要大约40字节的额外开销（因为String将字符串保存在Char数组利，还需要保存类似长度等的其他数据）；同时，因为Unicode编码，一个字符占2个字节，一个长度10的字符串需要占60个字节。
 3. 通用的集合类，如HashMap、LinkedList都采用了链表数据结构，对每个条目(entry)都进行了包装(wrapper)。每个条目有对象头，还有下一个条目的指针。
-4. 几本类型的集合通常保存为对应的类，一些包装类，内部有一些CachePool等对象。
+4. 基本类型的集合通常保存为对应的类，一些包装类，内部有一些CachePool等对象。
 ```
 
 ### 确定内存消耗
@@ -90,7 +90,7 @@ java对象的访问速度虽然快，但是占用的空间通常比内部的属�
 * 使用对象数组以及原始类型的数组代替Java或Scala集合类。fastuitl库为原始类型提供了方便的集合类，同时这些集合兼容Java标准类库。
 * 避免使用含有指针和小对象的嵌套结构
 * 考虑采用数字ID或枚举代替String类型的key
-* 当内存少于32GB时，可设置JVM参数为-XX:+UseCompressedOps，以便与江8字节指针修改为4字节。设置JVM参数-XX:+UseCompressedStrings，以8bit来编码每一个ASCII自负。
+* 当内存少于32GB时，可设置JVM参数为`-XX:+UseCompressedOps`，以将8字节指针修改为4字节。设置JVM参数`-XX:+UseCompressedStrings`，以8bit来编码每一个ASCII字符。
 
 ### 序列化RDD存储
 
@@ -117,7 +117,7 @@ java对象的访问速度虽然快，但是占用的空间通常比内部的属�
 
 * 调整非堆内存
 
-```shell
+```properties
 spark.yarn.driver.memoryOverhead
 ```
 
