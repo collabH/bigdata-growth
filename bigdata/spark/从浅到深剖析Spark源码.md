@@ -182,7 +182,7 @@ exec "${CMD[@]}"
 ## Spark RPC框架
 
 * spark各个组件间的消息互通、用户文件与Jar包的上传、节点间的Shuffle过程、Block数据的复制与备份等。
-* Spark2.x.x基于NettyStreamManager实现Shuffle过程和Block数据的复制与备份。
+* Spark2.x.x基于`NettyStreamManager`实现Shuffle过程和Block数据的复制与备份。
 
 ![RPC](./img/RPC.jpg)
 
@@ -192,7 +192,7 @@ exec "${CMD[@]}"
 
 ### 相关参数
 
-```scala
+```properties
 # rpc的io线程数根据核数决定
 spark.rpc.io.threads默认为numUsableCores
 # rpc网络连接超时时间
@@ -233,7 +233,7 @@ spark.rpc.netty.dispatcher.numThreads
 
 ```java
   /**
-     * 配置提供起
+     * 配置提供器
      */
     private final ConfigProvider conf;
 
@@ -266,7 +266,7 @@ spark.rpc.netty.dispatcher.numThreads
 ### TransportClientFactory
 
 ```java
-// 客户端连接池，存储的是传输客户端数组和不同的所对象，保证不同的客户端有不同的锁。
+// 客户端连接池，存储的是传输客户端数组和不同的锁对象，保证不同的客户端有不同的锁。
 private static class ClientPool {
         TransportClient[] clients;
         Object[] locks;
@@ -389,7 +389,7 @@ private void init(String hostToBind, int portToBind) {
     EventLoopGroup workerGroup =  NettyUtils.createEventLoop(ioMode, conf.serverThreads(),
       conf.getModuleName() + "-server");
 
-    // 穿线byte申请器
+    // byte申请器
     PooledByteBufAllocator allocator = NettyUtils.createPooledByteBufAllocator(
       conf.preferDirectBufs(), true /* allowCache */, conf.serverThreads());
 
@@ -1596,7 +1596,7 @@ val mapOutputTracker = if (isDriver) {
 
 #### 参数配置
 
-```
+```properties
 # 用于广播的最小大小,默认为512KB。minSizeForBroadcast必须小于maxRpcMessageSize。
 spark.shuffle.mapOutput.minSizeForBroadcast
 # 是否为reduce任务计算本地性的偏好，默认为true
