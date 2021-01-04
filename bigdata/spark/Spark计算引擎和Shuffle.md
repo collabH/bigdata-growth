@@ -30,7 +30,7 @@
 #### 解决方法
 
 1. 将map任务给每个partition的reduce任务输出的bucket合并到同一个文件中，这解决了bucket数量很多，但是数据本身的体积不大时，造成Shuffle频繁，磁盘I/O成为性能瓶颈的问题。
-2. map任务逐条输出计算结果，而不是一次性输出到内存，并使用AppendOnlyMap缓存及其聚合算法对中间结果进行聚合，这大大减小了中间结果所占的内存大小。
+2. map任务逐条输出计算结果，而不是一次性输出到内存，并使用`AppendOnlyMap`缓存及其聚合算法对中间结果进行聚合，这大大减小了中间结果所占的内存大小。
 3. 对SizeTrackingAppendOnlyMap、SizeTrackingPairBuffer及Tungsten的Page进行溢出判断，当超出溢出限制的大小时，将数据写入磁盘，防止内存溢出。
 4. reduce任务对拉取到的map任务中间结果逐条读取，而不是一次性读入内存，并在内存中进行聚合（其本质上也使用了AppendOnlyMap缓存）和排序，这也大大减小了数据占用的内存大小。
 5. reduce任务将要拉取的Block按照BlockManager地址划分，然后将同一Block Manager地址中的Block累积为少量网络请求，减少网络I/O。
@@ -374,7 +374,7 @@ private[spark] class IndexShuffleBlockResolver(
 
 # AppendOnlyMap
 
-* AppendOnlyMap是在内存中对任务执行结果进行聚合运算的利器，最大可以支持375809 638（即0.7×2^29）个元素。
+* AppendOnlyMap是在内存中对任务执行结果进行聚合运算的利器，最大可以支持375809638（即0.7×2^29）个元素。
 
 ```scala
 class AppendOnlyMap[K, V](initialCapacity: Int = 64)
@@ -689,7 +689,7 @@ private[spark] class SizeTrackingAppendOnlyMap[K, V]
 
 ### PartitionedAppendOnlyMap
 
-*  PartitionedAppendOnlyMap实现了特质WritablePartitionedPairCol lection定义的partitionedDestructiveSortedIterator接口和insert接口。
+*  PartitionedAppendOnlyMap实现了特质WritablePartitionedPairCollection定义的partitionedDestructiveSortedIterator接口和insert接口。
 
 ```scala
 private[spark] class PartitionedAppendOnlyMap[K, V]
@@ -1285,7 +1285,7 @@ private[spark] object SortShuffleWriter {
 
 ### BypassMergeSortShuffleWriter
 
-* 当mao端不需要在持久化数据之前进行聚合、排序等操作，可以使用BypassMergeSortShuffleWriter，需要满足shuffle的输出文件没有指定排序、聚合函数，并且分区数小于`spark.shuffle.sort.bypassMergeThreshold`
+* 当map端不需要在持久化数据之前进行聚合、排序等操作，可以使用BypassMergeSortShuffleWriter，需要满足shuffle的输出文件没有指定排序、聚合函数，并且分区数小于`spark.shuffle.sort.bypassMergeThreshold`
 
 #### write
 
