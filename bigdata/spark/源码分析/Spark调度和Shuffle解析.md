@@ -15,17 +15,17 @@
 ## Spark Stage级别调度
 
 ### DAGScheduler负责Stage级的调度。
-​	 一个Stage是否被提交需要看他的parent的stage是否被提交，如果被提交则提交该stage，否则提交parent stage。DAGScheduler提交Stage会将stage中的task打包成一个TaskSet集，并且序列化传递给TaskScheduler。
+
+* 一个Stage是否被提交需要看他的parent的stage是否被提交，如果被提交则提交该stage，否则提交parent stage。DAGScheduler提交Stage会将stage中的task打包成一个TaskSet集，并且序列化传递给TaskScheduler。
 
 ## Spark Task级别调度
 
-`TaskScheduler负责Task级的调度，将DAGScheduler给过来的TaskSet按照指定的调度策略分发到Executor上执行，调度过程中SchedulerBackend负责提供可用资源。`
-
-* TaskScheduler会将TaskSet封装为TaskSetManager加入到调度队列中。 
+* `TaskScheduler负责Task级的调度，将DAGScheduler给过来的TaskSet按照指定的调度策略分发到Executor上执行，调度过程中SchedulerBackend负责提供可用资源。`
+  * TaskScheduler会将TaskSet封装为TaskSetManager加入到调度队列中。 
 
 ![TaskSetManager结构](./img/TaskManager结构.jpg)
 
-* TaskSetManager负责监控管理同一个Stage中的Tasks，TaskScheduler就是以TaskSetManager为单元来调度任务。
+* ​	TaskSetManager负责监控管理同一个Stage中的Tasks，TaskScheduler就是以TaskSetManager为单元来调度任务。
 
 ![Task调度流程](./img/Task调度流程.jpg)
 
@@ -87,7 +87,7 @@ val schedulableQueue = new ConcurrentLinkedQueue[Schedulable]
 
 * SparkShuffle**分为map和reduce阶段**，或者称为**ShuffleRead阶段和ShuffleWrite阶段**，map过程和reduce都会由若干个task来执行。
 * 例如，spark任务从HDFS中读取数据，初始**RDD分区个数由该文件split个数决定**，也就是一个split对应生成的RDD的一个partition，假设为N。初始RDD经过一系列算子计算后，假设分区个数布标，当执行到Shuffle操作时，**map端的task个数和partition个数一致**，即map task为N个。
-* reduce端的stage默认取spark.default.parallelism这个配置项作为分区数，如果没有配置，**则以map端的最后一个RDD的分区数作为其分区数(也就是N)，那么分区数就决定reduce端的task的个数**。
+* reduce端的stage默认取`spark.default.parallelism`这个配置项作为分区数，如果没有配置，**则以map端的最后一个RDD的分区数作为其分区数(也就是N)，那么分区数就决定reduce端的task的个数**。
 
 ### 源码分析
 
