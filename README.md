@@ -186,6 +186,12 @@
 * [Kudu表和Schema设计](bigdata/olap/kudu/KuduSchemaDesgin.md)
 * [KuduConfiguration](bigdata/olap/kudu/KuduConfiguration.md)
 * [Kudu原理分析](bigdata/olap/kudu/Kudu原理分析.md)
+* [Kudu踩坑](bigdata/olap/kudu/Kudu踩坑.xmind)
+* [Kudu存储结构drawio架构图](bigdata/olap/kudu/Kudu存储结构)
+
+##### paper
+
+* [Kudu论文阅读](bigdata/olap/kudu/paper/KuduPaper阅读.md)
 
 #### Impala
 
