@@ -212,6 +212,3 @@ Kudu 与 Impala 结合更为紧密，额外提供下面的能力:
 
 - 数据表定义/修改 (DDL extensions)
 - 数据曾删除查改 (DML extensions)
-
-# 性能测试
-
