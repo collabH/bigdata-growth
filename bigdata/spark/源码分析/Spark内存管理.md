@@ -7,7 +7,7 @@
 
 # 堆内和堆外内存规划
 
-* 作为JVM进程，**Executor的内存管理建立在JVM的内存管理上，Spark堆JVM的堆内(On-heap)空间进行了更为详细的分配，以充分利用内存。** Spark也引入了堆外(Off-heap)内存，使之可以直接在工作节点的系统内存中开辟空间，进一步优化了内存的使用。
+* 作为JVM进程，**Executor的内存管理建立在JVM的内存管理上，Spark对JVM的堆内(On-heap)空间进行了更为详细的分配，以充分利用内存。** Spark也引入了堆外(Off-heap)内存，使之可以直接在工作节点的系统内存中开辟空间，进一步优化了内存的使用。
 
 * **堆内内存受到JVM统一管理，堆外内存是直接向操作系统进行内存的申请和释放。**
 
@@ -42,7 +42,7 @@
 ## 堆外内存
 
 * 为了进一步优化shuffle时排序的效率，引入堆外内存可以直接在工作节点的系统内存中开辟空间，存储经过序列化的二进制数据。将内存对象分配在Jvm的堆以外的内存，这些内存直接受操作系统管理，从而减少JVM GC堆应用的影响。
-* 默认情况下不启用堆外内存不启用，通过配置**spark.memory.offHeap.enabled**参数启用，由**spark.memory.offHeap.size**参数设定堆外空间的大小。除了没有other空间，堆外内存与堆内内存划分方式相同，所有运行中的并发任务共享存储。
+* 默认情况下不启用堆外内存，通过配置**spark.memory.offHeap.enabled**参数启用，由**spark.memory.offHeap.size**参数设定堆外空间的大小。除了没有other空间，堆外内存与堆内内存划分方式相同，所有运行中的并发任务共享存储。
 
 ## 内存管理接口
 
@@ -87,7 +87,7 @@ def releaseUnrollMemory(numBytes: Long, memoryMode: MemoryMode): Unit
 
 ![静态内存管理](./img/静态内存划分.jpg)
 
-```text
+```
 可用的存储内存 = systemMaxMemory * spark.storage.memoryFraction * spark.storage.safetyFraction
 可用的执行内存 = systemMaxMemory * spark.shuffle.memoryFraction * spark.shuffle.safetyFraction
 
@@ -126,7 +126,7 @@ def releaseUnrollMemory(numBytes: Long, memoryMode: MemoryMode): Unit
 ## RDD的持久化机制
 
 * RDD是Spark最基本的数据抽象，是只读的分区记录(Partition)集合，**只能基于在稳定存储中的数据集上创建，或者其他RDD上转换产生新的RDD。**转换后的RDD和旧的RDD存在依赖关系，构成了"血统(Lineage)"。凭借血统，Spark 保证了每一个 RDD 都可以被重新恢复。但 RDD 的**所有转换都是惰性的，即只有当一个返回结果给 Driver 的行动（Action）发生时，Spark 才会创建任务读取 RDD，然后真正触发转换的执行**。
-* Task 在启动之初读取一个分区时，会先判断这个分区是否已经被持久化，如果没有则需要检查 Checkpoint 或按照血统重新计算。所以如果一个 RDD 上要执行多次行动，可以在第一次行动中使用 persist 或 cache 方法，在内存或磁盘中持久化或缓存这个 RDD，从而在后面的行动时提升计算速度。事实上，cache 方法是使用默认的 MEMORY_ONLY 的存储级别将 RDD 持久化到内存，故缓存是一种特殊的持久化。 **堆内和堆外存储内存的设计，便可以对缓存** **RDD** **时使用的内存做统一的规划和管理** 
+* Task 在启动之初读取一个分区时，会先判断这个分区是否已经被持久化，如果没有则需要检查 Checkpoint 或按照血统重新计算。所以如果一个 RDD 上要执行多次Action，可以在第一次行动中使用 persist 或 cache 方法，在内存或磁盘中持久化或缓存这个 RDD，从而在后面的行动时提升计算速度。事实上，cache 方法是使用默认的 MEMORY_ONLY 的存储级别将 RDD 持久化到内存，故缓存是一种特殊的持久化。 **堆内和堆外存储内存的设计，便可以对缓存** **RDD** **时使用的内存做统一的规划和管理** 
 * RDD 的持久化由 **Spark 的 Storage 模块** [7] 负责，实现了 **RDD 与物理存储的解耦合**。Storage 模块**负责管理 Spark 在计算过程中产生的数据，将那些在内存或磁盘、在本地或远程存取数据的功能封装了起来**。在具体实现时 **Driver 端和 Executor 端的 Storage 模块构成了主从式的架构**，即 **Driver 端的 BlockManager 为 Master，Executor 端的 BlockManager 为 Slave**。Storage 模块在逻辑上以 **Block 为基本存储单位，RDD 的每个 Partition 经过处理后唯一对应一个 Block**（BlockId 的格式为 rdd_RDD-ID_PARTITION-ID ）。**Master 负责整个 Spark 应用程序的 Block 的元数据信息的管理和维护，而 Slave 需要将 Block 的更新等状态上报到 Master，同时接收 Master 的命令，例如新增或删除一个 RDD**。
 
 ![Storage](./img/Spark Storage模板.jpg)
