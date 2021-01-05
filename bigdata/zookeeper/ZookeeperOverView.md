@@ -4,7 +4,7 @@
 
 ### 集群角色
 
-* Zookeeper使用Leader、Follower、Observer三种橘色，所有机器通过Leader选举过程来选定一台称为"Leader"的机器，Leader服务提供读和写服务。
+* Zookeeper使用Leader、Follower、Observer三种角色，所有机器通过Leader选举过程来选定一台称为"Leader"的机器，Leader服务提供读和写服务。
 * Follower和Observer都可以提供读服务，但是Observer不参与选举过程，也不参与写操作的"过半写成功"策略。
 
 ### 会话(Session)
@@ -73,7 +73,7 @@
 | dataVersion    | 节点数据的更新次数.                                          |
 | cversion       | 其子节点的更新次数                                           |
 | aclVersion     | 节点 ACL(授权信息)的更新次数.                                |
-| ephemeralOwner | 如果该节点为 ephemeral 节点, ephemeralOwner 值表示与该节点绑定的 session id. 如果该节点不是ephemeral节点, ephemeralOwner 值为 0. 至于什么是 ephemeral节点 |
+| ephemeralOwner | 如果该节点为 ephemeral 节点, ephemeralOwner 值表示与该节点绑定的 session id. 如果该节点不是ephemeral节点, ephemeralOwner 值为 0. |
 | **dataLength** | 节点数据的字节数. |
 | **numChildren** | 子节点个数 |
 
@@ -104,7 +104,7 @@
 
 ## 选举机制
 
-* `半数机制:集群中半数以上集群存货，集群可用。所有Zookeeper适合安装奇数台服务器`。
+* `半数机制:集群中半数以上集群存在，集群可用。所有Zookeeper适合安装奇数台服务器`。
 * Zookeeper虽然在配置文件中没有指定`Master和Slave`。但是Zookeeper工作时是有一个节点为Leader，其他则为Follower，Leader是通过内部的选举机制临时产生的。
 
 ![Zookeeper特点](./img/Zookeeper特点.jpg)
@@ -216,8 +216,8 @@
 
 * Zookeeper的一个会话实体，主要包含以下4个基本属性
   * sessionID:会话ID，用来唯一标识一个会话，每次客户端创建新会话的时候，Zookeeper会为其分配一个全局唯一的sessionID。
-  * TimeOut:会话超时时间，客户端在构造Zookeeper实例时可以指定sessionTimeout参数来指定会话的超时时间，客户端会向服务端发送这个超时时间后，服务器会根据自己的超时时间限制最终确定会话的超时时间。
-  * TickTIme:下次会话超时时间点。
+  * timeOut:会话超时时间，客户端在构造Zookeeper实例时可以指定sessionTimeout参数来指定会话的超时时间，客户端会向服务端发送这个超时时间后，服务器会根据自己的超时时间限制最终确定会话的超时时间。
+  * tickTime:下次会话超时时间点。
   * isClosing:标记一个会话是否已经被关闭。
 
 ## 会话管理
@@ -241,7 +241,7 @@
 2. 接收来自各个服务器的投票
 
 ```
-每个服务器都会接收来自服其他服务器的投票，集群中的每个服务器在接收到投票后，首先会判断该投票的有效性，包括检测是否是本轮投票、是否来自LOOKING状态的服务器。
+每个服务器都会接收来自其他服务器的投票，集群中的每个服务器在接收到投票后，首先会判断该投票的有效性，包括检测是否是本轮投票、是否来自LOOKING状态的服务器。
 ```
 
 3. 处理投票
@@ -326,7 +326,7 @@
 
 #### 变更规则
 
-1. 如果vote_sid大于self_zxid，就认可当前收到的投票，并再次将该投票发送出去
+1. 如果vote_zxid大于self_zxid，就认可当前收到的投票，并再次将该投票发送出去
 2. 如果vote_zxid小于self_zxid，不做变更
 3. 如果vote_zxid等于self_zxid，比较sid，如果vote_sid大于self_sid，变更该投票，并在此发送出去
 4. 如果vote_zxid等于self_zxid，比较sid，如果vote_sid小于self_sid，不做变更
@@ -406,7 +406,7 @@ public class Vote{
 
  ## 内存数据
 
-* Zookeeper类似于内存数据库，存储整棵树的内容，包括所有节点路径、节点数据以及ACL信息等，Zookeeper会定时讲这些数据溢写到磁盘上。
+* Zookeeper类似于内存数据库，存储整棵树的内容，包括所有节点路径、节点数据以及ACL信息等，Zookeeper会定时将这些数据溢写到磁盘上。
 
 ### DataTreee
 
