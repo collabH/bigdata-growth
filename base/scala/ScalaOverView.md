@@ -18,7 +18,7 @@
 ### val和var的区别
 
 ```properties
-  不管是val还是var，都可以用来定义变量。用val定义的变量是不可变得，初始化之后值就固定类似于java的final关键字修饰的变量，用var定义的变量是可变的，可以修改多次。
+  不管是val还是var，都可以用来定义变量。用val定义的变量是不可变，初始化之后值就固定类似于java的final关键字修饰的变量，用var定义的变量是可变的，可以修改多次。
   不可变只作用于变量本身，而不作用于变量所引用的实例，比如val buffer=new StringBuffer(),这里不可以将buffer重新指向其他stringBuffer但是可以使用buffer的append方法。
 ```
 
@@ -37,7 +37,7 @@ Range(start,end,step)
 
 ```scala
   def getName = {
-    // 元祖
+    // 元组
     ("hsm", "hello", "laoge")
   }
 
