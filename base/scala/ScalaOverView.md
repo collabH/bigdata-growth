@@ -168,7 +168,7 @@ list2 = list1 // Compilation Error”
 ### Any类型
 
 * Any类型下包含AnyRef和AnyVal，最下层是Nothing，它是所有类的子类，Any是一个抽象类。
-* AnyRef会直接映射为Object，AnyVal和Any会类似于反型擦除的操作映射给Object
+* AnyRef会直接映射为Object，AnyVal和Any会类似于泛型擦除的操作映射给Object
 
 ### Option类型
 
