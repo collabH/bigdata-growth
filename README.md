@@ -1,4 +1,8 @@
 # repository
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT/)
+
+[![Stargazers over time](https://starchart.cc/collabH/repository.svg)](#)
+
 ## 概述
 * 个人学习知识库涉及到数据仓库建模、实时计算、大数据、Java、算法等。
 
