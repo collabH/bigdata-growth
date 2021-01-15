@@ -207,6 +207,11 @@
 * [数据仓库建模](datawarehouse/数据仓库建模.xmind)
 * [数据仓库](datawarehouse/数据仓库实战.md)
 * [基于Flink的实时数仓建设](datawarehouse/基于Flink的实时数仓建设.md)
+* [自研数据中台设计](datawarehouse/数据中台设计/数据中台设计.md)
+
+### 读书笔记
+
+* [数据中台读书笔记](datawarehouse/数据中台读书笔记.md)
 
 ## devops
 
