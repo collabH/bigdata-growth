@@ -162,9 +162,13 @@
 * [DataSource API](bigdata/flink/Data%20Source.xmind)
 * [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
 
-#### feature
+#### Feature
 
 * [Flink1.12新特性](bigdata/flink/Flink1.12新特性.md)
+
+#### Wheel
+
+* [自定义Table Connector](bigdata/flink/connector/自定义TableConnector.md)
 
 ### olap
 #### Presto
