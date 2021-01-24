@@ -1,0 +1,4 @@
+# 概述
+
+* RocksDB是基于key/value的存储引擎，其中键和值是任意字节流。它是在Facebook上基于LevelDB开发的，并为LevelDB api提供向后兼容支持。它支持点查找和范围扫描，并提供不同类型的ACID保证。
+* RocksDB有三种基本的数据结构：mentable，sstfile以及logfile。mentable是一种内存数据结构——所有写入请求都会进入mentable，然后选择性进入logfile。logfile是一种有序写存储结构。当mentable被填满的时候，他会被刷到sstfile文件并存储起来，然后相关的logfile会在之后被安全地删除。sstfile内的数据都是排序好的，以便于根据key快速搜索。
