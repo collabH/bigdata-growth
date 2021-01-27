@@ -181,3 +181,95 @@
 * **预备写(WritePrepared)**：一种悲观事务的写策略，会把写请求缓存在内存，如果是二阶段提交，就在准备阶段写入DB，否则，在提交的时候写入DB。
 * **未预备写(WriteUnprepared)**：一种悲观事务的写策略，由于这个是事务发送过来的请求，所以直接写入DB，以此避免写数据的时候需要使用过大的内存。
 
+# RocksJava
+
+## 快速开始
+
+### Maven依赖
+
+```xml
+<dependency>
+  <groupId>org.rocksdb</groupId>
+  <artifactId>rocksdbjni</artifactId>
+  <version>6.6.4</version>
+</dependency>
+```
+
+### 打开一个Database
+
+```java
+public class RocksDbTest {
+    private static final String DB_PATH = "/Users/babywang/Desktop/testrocksdb";
+
+    public static void main(String[] args) {
+        // 一个静态方法加载RocksDB C++ lib
+        RocksDB.loadLibrary();
+        try (final Options options = new Options().setCreateIfMissing(true)) {
+            try (RocksDB open = RocksDB.open(options, DB_PATH)) {
+               // do something
+            }
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+### Reads和Write
+
+```java
+public class RocksDbTest {
+    private static final String DB_PATH = "/Users/babywang/Desktop/testrocksdb";
+
+    public static void main(String[] args) {
+        // 一个静态方法加载RocksDB C++ lib
+        RocksDB.loadLibrary();
+        try (final Options options = new Options().setCreateIfMissing(true)) {
+            try (RocksDB open = RocksDB.open(options, DB_PATH)) {
+                open.put("a".getBytes(), "hehe".getBytes(StandardCharsets.UTF_8));
+                open.flush(new FlushOptions().setWaitForFlush(true));
+                System.out.println(Arrays.toString(open.get("a".getBytes())));
+            }
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+### 通过列族开启一个Db
+
+```java
+ public void openDataBaseWithColumnFamilies() {
+        RocksDB.loadLibrary();
+        try (final ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions().optimizeUniversalStyleCompaction()) {
+            final List<ColumnFamilyDescriptor> cfDes = Arrays.asList(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions),
+                    new ColumnFamilyDescriptor("my-first-columnfamily".getBytes(), columnFamilyOptions));
+            final List<ColumnFamilyHandle> columnFamilyHandleList =
+                    new ArrayList<>();
+            try (final DBOptions options = new DBOptions()
+                    .setCreateIfMissing(true)
+                    .setCreateMissingColumnFamilies(true);
+                 final RocksDB db = RocksDB.open(options,
+                         DB_PATH, cfDes,
+                         columnFamilyHandleList)) {
+                try {
+
+                    // do something
+
+
+                } finally {
+
+                    // NOTE frees the column family handles before freeing the db
+                    for (final ColumnFamilyHandle columnFamilyHandle :
+                            columnFamilyHandleList) {
+                        columnFamilyHandle.close();
+                    }
+                } // frees the db and the db options
+            } catch (RocksDBException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+```
+
