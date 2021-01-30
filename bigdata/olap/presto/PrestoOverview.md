@@ -37,3 +37,14 @@
 
 * 数据压缩可以减少节点间数据传输对IO带宽压力，对于即席查询需要快速解压，建议使用Snappy压缩。
 
+# 安装
+
+## docker部署
+
+```sh
+# 启动presto
+docker run -d -p 127.0.0.1:8080:8080 --name presto starburstdata/presto
+# 启动presto-cli
+docker exec -it presto presto-cli
+```
+
