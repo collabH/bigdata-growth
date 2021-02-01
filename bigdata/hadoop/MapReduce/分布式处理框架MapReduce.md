@@ -3,6 +3,11 @@
 * 源自Google的MapReduce论文，论文发表于2014.12
 * 优点:海量数据离线处理&易开发&易运行
 * 无法实时流式计算
+* MapReduce 作业通过将输入的数据集拆分为独立的块，这些块由 `map` 以并行的方式处理，框架对 `map` 的输出进行排序，然后输入到 `reduce` 中。MapReduce 框架专门用于 `<key，value>` 键值对处理，它将作业的输入视为一组 `<key，value>` 对，并生成一组 `<key，value>` 对作为输出。输入和输出的 `key` 和 `value` 都必须实现[Writable](http://hadoop.apache.org/docs/stable/api/org/apache/hadoop/io/Writable.html) 接口。
+
+```
+(input) <k1, v1> -> map -> <k2, v2> -> combine -> <k2, v2> -> reduce -> <k3, v3> (output)
+```
 
 **官方文档:**[https://hadoop.apache.org/docs/r3.2.1/hadoop-mapreduce-client/hadoop-mapreduce-client-core/MapReduceTutorial.html](https://hadoop.apache.org/docs/r3.2.1/hadoop-mapreduce-client/hadoop-mapreduce-client-core/MapReduceTutorial.html)
 
@@ -11,7 +16,7 @@
 
 **实际为分治算法**
 
-![图片](https://uploader.shimo.im/f/BnsXXhBV2fMzx9rT.png!thumbnail)
+<div align="center"> <img width="600px" src="https://uploader.shimo.im/f/BnsXXhBV2fMzx9rT.png"/> </div>
 
 >输入文件可以拆分为多个快，通常这个块于HDFS的blocksize对应，然后一个Map处理一个块处理完的结果存在本地，再经过Shuffle网络传输把相同的key写入到一个reduce中，最终写到文件系统。
 ## MapReduce编程模型执行流程
@@ -61,9 +66,9 @@ MapReduce框架仅对<key,value>键值对运行，该框架将作业的输入视
 ```
 # MapReduce多节点流程图
 
-![图片](https://uploader.shimo.im/f/a3VY3eRGQGMCS8v7.png!thumbnail)
+<div align="center"> <img width="600px" src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/Detailed-Hadoop-MapReduce-Data-Flow-14.png"/> </div>
 
-![图片](https://uploader.shimo.im/f/vqUj6KEBxnEYHT2B.png!thumbnail)
+<div align="center"> <img width="600px" src="https://uploader.shimo.im/f/vqUj6KEBxnEYHT2B.png!thumbnail"/> </div>
 
 ## 核心概念
 
