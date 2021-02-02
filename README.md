@@ -57,7 +57,7 @@
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
 * [HadoopCommon分析](bigdata/hadoop/HDFS/Common包解析.md)
 * [HDFS集群相关管理](bigdata/hadoop/HDFS/HDFS集群管理.md)
-
+* [HDFS Shell](bigdata/hadoop/HDFS/HDFS%20Shell命令.md)
 #### MapReduce
 
 * [分布式处理框架MapReduce](bigdata/hadoop/MapReduce/分布式处理框架MapReduce.md)
