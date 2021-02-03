@@ -1,10 +1,26 @@
-# HA概述
+# NameNode-HA概述
 
 * Hadoop2.0，在HDFS集群中NameNode存在单点故障(SPOF)
 * NameNode主要以下两个方面影响HDFS集群
   * NameNode机器发生意外，如宕机，集群将无法使用。
   * NameNode机器需要升级，包括软件、硬件升级，此时集群无法使用。
 * HDFS HA功能通过配置Active/Standby两个nameNode实现在集群中对NameNode的热备来解决问题，如果出现故障，如机器崩溃活机器需要升级维护，这时可通过此种方式将NameNode很快切换到另外一台机器。
+
+## 高可用架构
+
+<div align="center"> <img  src="./img/hadoop高可用架构.jpg"/> </div>
+
+HDFS 高可用架构主要由以下组件所构成：
+
++ **Active NameNode 和 Standby NameNode**：两台 NameNode 形成互备，一台处于 Active 状态，为主 NameNode，另外一台处于 Standby 状态，为备 NameNode，只有主 NameNode 才能对外提供读写服务。
+
++ **主备切换控制器 ZKFailoverController**：ZKFailoverController 作为独立的进程运行，对 NameNode 的主备切换进行总体控制。ZKFailoverController 能及时检测到 NameNode 的健康状况，在主 NameNode 故障时借助 Zookeeper 实现自动的主备选举和切换，当然 NameNode 目前也支持不依赖于 Zookeeper 的手动主备切换。
+
++ **Zookeeper 集群**：为主备切换控制器提供主备选举支持。
+
++ **共享存储系统**：共享存储系统是实现 NameNode 的高可用最为关键的部分，共享存储系统保存了 NameNode 在运行过程中所产生的 HDFS 的元数据。主 NameNode 和 NameNode 通过共享存储系统实现元数据同步。在进行主备切换的时候，新的主 NameNode 在确认元数据完全同步之后才能继续对外提供服务。
+
++ **DataNode 节点**：除了通过共享存储系统共享 HDFS 的元数据信息之外，主 NameNode 和备 NameNode 还需要共享 HDFS 的数据块和 DataNode 之间的映射关系。DataNode 会同时向主 NameNode 和备 NameNode 上报数据块的位置信息。
 
 ## 工作机制
 
@@ -13,9 +29,24 @@
 * **NameNode**
 * **JournalNode**
 
-```
-运行JournalNodes的计算机。 JournalNode守护程序相对较轻，因此可以合理地将这些守护程序与其他Hadoop守护程序（例如NameNode，JobTracker或YARN ResourceManager）并置在计算机上。 注意：必须至少有3个JournalNode守护程序，因为必须将edit日志修改写入大多数JN中。 这将允许系统容忍单个计算机的故障。 您可能还会运行3个以上的JournalNode，但是为了实际增加系统可以容忍的故障数量，您应该运行奇数个JN（即3、5、7等）。 请注意，当与N个JournalNode一起运行时，系统最多可以容忍（N-1）/ 2个故障，并继续正常运行。
-```
+### JournalNode工作机制
+
+目前 Hadoop 支持使用 Quorum Journal Manager (QJM) 或 Network File System (NFS) 作为共享的存储系统，这里以 QJM 集群为例进行说明：Active NameNode 首先把 EditLog 提交到 JournalNode 集群，然后 Standby NameNode 再从 JournalNode 集群定时同步 EditLog，当 Active NameNode  宕机后， Standby  NameNode 在确认元数据完全同步之后就可以对外提供服务。
+
+需要说明的是向 JournalNode 集群写入 EditLog 是遵循 “过半写入则成功” 的策略，所以你至少要有 3 个 JournalNode 节点，当然你也可以继续增加节点数量，但是应该保证节点总数是奇数。同时如果有 2N+1 台 JournalNode，那么根据过半写的原则，最多可以容忍有 N 台 JournalNode 节点挂掉。
+
+<div align="center"> <img  src="./img/JournalNode工作机制.jpg"/> </div>
+
+### NameNode准备切换
+
+<div align="center"> <img  src="./img/nameNode主备切换.jpg"/> </div>
+
+1. HealthMonitor 初始化完成之后会启动内部的线程来定时调用对应 NameNode 的 HAServiceProtocol RPC 接口的方法，对 NameNode 的健康状态进行检测。
+2. HealthMonitor 如果检测到 NameNode 的健康状态发生变化，会回调 ZKFailoverController 注册的相应方法进行处理。
+3. 如果 ZKFailoverController 判断需要进行主备切换，会首先使用 ActiveStandbyElector 来进行自动的主备选举。
+4. ActiveStandbyElector 与 Zookeeper 进行交互完成自动的主备选举。
+5. ActiveStandbyElector 在主备选举完成后，会回调 ZKFailoverController 的相应方法来通知当前的 NameNode 成为主 NameNode 或备 NameNode。
+6. ZKFailoverController 调用对应 NameNode 的 HAServiceProtocol RPC 接口的方法将 NameNode 转换为 Active 状态或 Standby 状态。
 
 # HA 配置
 
@@ -229,11 +260,11 @@ hdfs haadmin -transitionToActive nn1
 
 ### 原理
 
-![HDFS自动故障转移](../../zookeeper/img/HDFS自动故障转移.jpg)
+![HDFS自动故障转移](../zookeeper/img/HDFS自动故障转移.jpg)
 
 * 动态故障转移依赖于Zookeeper quorum和ZKFailoverController(Hadoop进程)进程。
 
-* `故障检查`:集群中的每个Namenode在Zookeeper维护了一个持久绘画，如果机器崩溃，Zookeeper中的会话将会终止，Zookeeper通知另一个Namenode需要触发故障转移。
+* `故障检查`:集群中的每个Namenode在Zookeeper维护了一个持久会话，如果机器崩溃，Zookeeper中的会话将会终止，Zookeeper通知另一个Namenode需要触发故障转移。
 * `Active Namenode选举`:ZooKeeper提供了一种简单的机制来专门选择一个节点为active节点。 如果当前active的NameNode崩溃，则另一个节点可能会在ZooKeeper中采取特殊的排他锁，指示它应该成为下一个活动的NameNode。
 * `监控监控`:ZKFC使用运行状况检查命令定期ping其本地NameNode。 只要NameNode以健康状态及时响应，ZKFC就会认为该节点是健康的。 如果节点已崩溃，冻结或以其他方式进入不正常状态，则运行状况监视器将其标记为不正常。
 * `Zookeeper会话管理`:当本地Namenode是监控的，ZKFC在Zookeeper持有一个打开的会话，如果本地Namenode是active的，它还会持有一个特殊的'lock'Znode节点。这个锁使用Zookeeper支持的临时节点。如果会话过期，这个锁节点将会被动态删除。（分布式锁）
