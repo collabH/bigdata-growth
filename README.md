@@ -82,6 +82,8 @@
 
 * [DebeziumOverView](bigdata/debezium/DebeziumOverView.md)
 * [Debezium踩坑](bigdata/debezium/Debezium踩坑.xmind)
+* [Debezium监控系统搭建](bigdata/debezium/Debezium监控系统搭建.md)
+* [Debezium使用改造](bigdata/debezium/Debezium使用改造.md)
 
 ### Hive
 
