@@ -93,6 +93,7 @@
 * [Hive踩坑解决方案](bigdata/hive/Hive踩坑解决方案.xmind)
 * [Hive编程指南读书笔记](bigdata/hive/hive编程指南)
 * [Hive Shell Beeline](bigdata/hive/Hive%20Shell和Beeline命令.md)
+* [Hive分区表和分桶表](bigdata/hive/Hive分区表和分桶表.md)
 
 ### Spark
 
