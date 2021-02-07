@@ -1,4 +1,4 @@
-![logo](img/logo.png)
+![img.png](./img/logo.png)
 
 # repository
 
