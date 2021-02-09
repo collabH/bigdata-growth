@@ -37,7 +37,7 @@
 
 * `基于Master-Slave模型`，Master负责控制整个集群的运行，Worker节点负责计算，接受Master节点指令并返回计算进程到Master；Executor负责任务的执行；Client是用户提交应用的客户端；Driver负责协调提交后的分布式应用。
 
-![Spark架构](./源码分析/img/Spark架构.jpg)
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/spark-集群模式.png"/> </div>
 
 * worker负责管理计算节点并创建Executor来并行处理Task任务，Task执行过程所需文件和包由Driver序列化后传输给对应的Worker节点，Executor对相应分区的任务进行处理。
 
@@ -296,6 +296,11 @@ worker3
 ### 简介
 
 * RDD是一个容错的、并行的数据结构，可以让用户显式地出将数据存储到磁盘或内存中，并控制数据的分区。RDD是Spark的核心，通过RDD的`依赖关系形成Spark的调度顺序`。
+* 一个 RDD 由一个或者多个分区（Partitions）组成。对于 RDD 来说，每个分区会被一个计算任务所处理，用户可以在创建 RDD 时指定其分区个数，如果没有指定，则默认采用程序所分配到的 CPU 的核心数；
+* RDD 拥有一个用于计算分区的函数 compute；
+* RDD 会保存彼此间的依赖关系，RDD 的每次转换都会生成一个新的依赖关系，这种 RDD 之间的依赖关系就像流水线一样。在部分分区数据丢失后，可以通过这种依赖关系重新计算丢失的分区数据，而不是对 RDD 的所有分区进行重新计算；
+* Key-Value 型的 RDD 还拥有 Partitioner(分区器)，用于决定数据被存储在哪个分区中，目前 Spark 中支持 HashPartitioner(按照哈希分区) 和 RangeParationer(按照范围进行分区);
+* 一个优先位置列表 (可选)，用于存储每个分区的优先位置 (prefered location)。对于一个 HDFS 文件来说，这个列表保存的就是每个分区所在的块的位置，按照“移动数据不如移动计算“的理念，Spark 在进行任务调度的时候，会尽可能的将计算任务分配到其所要处理数据块的存储位置。
 
 ### 深入理解RDD
 
@@ -387,11 +392,11 @@ worker3
 
 ![Spark Job调度详细流程](./源码分析/img/Spark Job调度详细流程.jpg)
 
-### stage和TaskSetManager调度
+### Stage和TaskSetManager调度
 
-* 当Job提交后，DAGScheduler会从RDD依赖链的末端触发，遍历整个RDD依赖链，根据SHuffleDependency划分Stage。
+* 当Job提交后，DAGScheduler会从RDD依赖链的末端触发，遍历整个RDD依赖链，根据ShuffleDependency划分Stage。
 
-#### stage调度
+#### Stage调度
 
 * 执行Action算子的RDD所在的Stage称为Final Stage，提交Stage，DAGScheduler会先判断该Stage的父Stage的执行结果是否可用，如果所有父Stage的执行结果可用，则提交该Stage。如果存在任意一个父Stage的结果不可用，则尝试迭代提交该父Stage。`不可用的Stage将会加入到waiting队列,等待执行`。
 
@@ -450,6 +455,10 @@ worker3
 ## Shuffle机制
 
 * Spark Shuffle机制是将一组无规则的数据转换为一组有一定规则的过程。Shuffle产生的经过排序的或者有规则的数据分片会溢写到磁盘，每个分片对应一个文件或所有分片放到一个数据文件中，在通过索引文件来记录每个分片在数据文件中的offset（类比Kafka存储的数据）。
+
+### Shuffle的影响
+
+* Shuffle 是一项昂贵的操作，因为它通常会跨节点操作数据，这会涉及磁盘 I/O，网络 I/O，和数据序列化。某些 Shuffle 操作还会消耗大量的堆内存，因为它们使用堆内存来临时存储需要网络传输的数据。Shuffle 还会在磁盘上生成大量中间文件，从 Spark 1.3 开始，这些文件将被保留，直到相应的 RDD 不再使用并进行垃圾回收，这样做是为了避免在计算时重复创建 Shuffle 文件。如果应用程序长期保留对这些 RDD 的引用，则垃圾回收可能在很长一段时间后才会发生，这意味着长时间运行的 Spark 作业可能会占用大量磁盘空间，通常可以使用 `spark.local.dir` 参数来指定这些临时文件的存储目录。
 
 ### 基于key的Hash方式
 
