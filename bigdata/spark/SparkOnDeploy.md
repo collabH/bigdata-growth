@@ -1,5 +1,129 @@
 *  Spark部署方式灵活多变，包含Local、Standalone、Mesos和Yarn、K8s的比你难过，如果是单机部署可以使用Local或者伪分布式模式运行。
 
+# 作业提交
+
+## spark-submit
+
+* Spark 所有模式均使用 `spark-submit` 命令提交作业，其格式如下：
+
+```shell
+./bin/spark-submit \
+  --class <main-class> \        # 应用程序主入口类
+  --master <master-url> \       # 集群的 Master Url
+  --deploy-mode <deploy-mode> \ # 部署模式
+  --conf <key>=<value> \        # 可选配置       
+  ... # other options    
+  <application-jar> \           # Jar 包路径 
+  [application-arguments]       #传递给主入口类的参数  
+```
+
+需要注意的是：在集群环境下，`application-jar` 必须能被集群中所有节点都能访问，可以是 HDFS 上的路径；也可以是本地文件系统路径，如果是本地文件系统路径，则要求集群中每一个机器节点上的相同路径都存在该 Jar 包。
+
+## deploy-mode
+
+deploy-mode 有 `cluster` 和 `client` 两个可选参数，默认为 `client`。这里以 Spark On Yarn 模式对两者进行说明 ：
+
+- 在 cluster 模式下，Spark Drvier 在应用程序的 Master 进程内运行，该进程由群集上的 YARN 管理，提交作业的客户端可以在启动应用程序后关闭；
+- 在 client 模式下，Spark Drvier 在提交作业的客户端进程中运行，Master 进程仅用于从 YARN 请求资源。
+
+## master-url
+
+master-url 的所有可选参数如下表所示：
+
+| Master URL                        | Meaning                                                      |
+| --------------------------------- | ------------------------------------------------------------ |
+| `local`                           | 使用一个线程本地运行 Spark                                   |
+| `local[K]`                        | 使用 K 个 worker 线程本地运行 Spark                          |
+| `local[K,F]`                      | 使用 K 个 worker 线程本地运行 , 第二个参数为 Task 的失败重试次数 |
+| `local[*]`                        | 使用与 CPU 核心数一样的线程数在本地运行 Spark                |
+| `local[*,F]`                      | 使用与 CPU 核心数一样的线程数在本地运行 Spark 第二个参数为 Task 的失败重试次数 |
+| `spark://HOST:PORT`               | 连接至指定的 standalone 集群的 master 节点。端口号默认是 7077。 |
+| `spark://HOST1:PORT1,HOST2:PORT2` | 如果 standalone 集群采用 Zookeeper 实现高可用，则必须包含由 zookeeper 设置的所有 master 主机地址。 |
+| `mesos://HOST:PORT`               | 连接至给定的 Mesos 集群。端口默认是 5050。对于使用了 ZooKeeper 的 Mesos cluster 来说，使用 `mesos://zk://...` 来指定地址，使用 `--deploy-mode cluster` 模式来提交。 |
+| `yarn`                            | 连接至一个 YARN 集群，集群由配置的 `HADOOP_CONF_DIR` 或者 `YARN_CONF_DIR` 来决定。使用 `--deploy-mode` 参数来配置 `client` 或 `cluster` 模式。 |
+
+# Standalone模式
+
+Standalone 是 Spark 提供的一种内置的集群模式，采用内置的资源管理器进行管理。下面按照如图所示演示 1 个 Mater 和 2 个 Worker 节点的集群配置，这里使用两台主机进行演示：
+
+- hadoop001： 由于只有两台主机，所以 hadoop001 既是 Master 节点，也是 Worker 节点;
+- hadoop002 ： Worker 节点。
+
+![](./img/spark-集群模式.png)
+
+## 环境设置
+
+* 首先需要保证 Spark 已经解压在两台主机的相同路径上。然后进入 hadoop001 的 `${SPARK_HOME}/conf/` 目录下，拷贝配置样本并进行相关配置：
+
+```shell
+# cp spark-env.sh.template spark-env.sh
+```
+
+* 在 `spark-env.sh` 中配置 JDK 的目录，完成后将该配置使用 scp 命令分发到 hadoop002 上：
+
+```shell
+# JDK安装位置
+JAVA_HOME=/usr/java/jdk1.8.0_201
+```
+
+## 集群配置
+
+* 在 `${SPARK_HOME}/conf/` 目录下，拷贝集群配置样本并进行相关配置：
+
+```shell
+# cp slaves.template slaves
+```
+
+* 指定所有 Worker 节点的主机名：
+
+```shell
+# A Spark Worker will be started on each of the machines listed below.
+hadoop001
+hadoop002
+```
+
+* 这里需要注意以下三点：
+  - 主机名与 IP 地址的映射必须在 `/etc/hosts` 文件中已经配置，否则就直接使用 IP 地址；
+  - 每个主机名必须独占一行；
+  - Spark 的 Master 主机是通过 SSH 访问所有的 Worker 节点，所以需要预先配置免密登录。
+
+## 启动
+
+* 使用 `start-all.sh` 代表启动 Master 和所有 Worker 服务。
+
+```shell
+./sbin/start-all.sh 
+# 访问 8080 端口，查看 Spark 的 Web-UI 界面,
+```
+
+## 提交作业
+
+```shell
+# 以client模式提交到standalone集群 
+spark-submit \
+--class org.apache.spark.examples.SparkPi \
+--master spark://hadoop001:7077 \
+--executor-memory 2G \
+--total-executor-cores 10 \
+/usr/app/spark-2.4.0-bin-hadoop2.6/examples/jars/spark-examples_2.11-2.4.0.jar \
+100
+
+# 以cluster模式提交到standalone集群 
+spark-submit \
+--class org.apache.spark.examples.SparkPi \
+--master spark://207.184.161.138:7077 \
+--deploy-mode cluster \
+--supervise \  # 配置此参数代表开启监督，如果主应用程序异常退出，则自动重启 Driver
+--executor-memory 2G \
+--total-executor-cores 10 \
+/usr/app/spark-2.4.0-bin-hadoop2.6/examples/jars/spark-examples_2.11-2.4.0.jar \
+100
+```
+
+
+
+
+
 # YARN概述
 
 * Hadoop的资源协调者(Yet Another Resource Negotiator,YARN)是一个通用的资源管理系统，能够为上层应用提供统一的资源管理和资源调度。YARN的引入为集群在`利用率、资源统一管理和数据共享`带来巨大好处。
@@ -114,7 +238,7 @@ spark.jar 10
 
 ### Container log处理
 
-* 如果log application开启(yarn.log-aggregation-enable)，container log会复制到HDFS中，然后在本地删除。这些log可以通过yarn logs -applicationId查看。也可以在HDFS shell或API查看container log文件，这些log文件目录通过以下参数指定
+* 如果log application开启(yarn.log-aggregation-enable)，`container log`会复制到`HDFS`中，然后在本地删除。这些log可以通过yarn logs -applicationId查看。也可以在HDFS shell或API查看container log文件，这些log文件目录通过以下参数指定
 
 ```shell
 yarn.nodemanger.remote-app-log-dir
