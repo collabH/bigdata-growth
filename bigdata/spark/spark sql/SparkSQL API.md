@@ -230,3 +230,85 @@ df.createGlobalTempView("gemp")
 // 使用限定名称进行引用
 spark.sql("SELECT ename,job FROM global_temp.gemp").show()
 ```
+
+# 聚合函数
+
+## 简单聚合
+
+### count
+
+```scala
+df.select(count($"id")).show()
+```
+
+### countDistinct
+
+```scala
+// 计算姓名不重复的员工人数
+empDF.select(countDistinct("deptno")).show()
+```
+
+### approx_count_distinct
+
+* 通常在使用大型数据集时，你可能关注的只是近似值而不是准确值，这时可以使用 approx_count_distinct 函数，并可以使用第二个参数指定最大允许误差。
+
+```scala
+empDF.select(approx_count_distinct ("ename",0.1)).show()
+```
+
+###  first & last
+
+* 获取 DataFrame 中指定列的第一个值或者最后一个值。
+
+```scala
+empDF.select(first("ename"),last("job")).show()
+```
+
+### min & max
+
+* 获取 DataFrame 中指定列的最小值或者最大值。
+
+```scala
+empDF.select(min("sal"),max("sal")).show()
+```
+
+### sum & sumDistinct
+
+* 求和以及求指定列所有不相同的值的和。
+
+```scala
+empDF.select(sum("sal")).show()
+empDF.select(sumDistinct("sal")).show()
+```
+
+### avg
+
+* 内置的求平均数的函数。
+
+```scala
+empDF.select(avg("sal")).show()
+```
+
+### 聚合数据到集合
+
+```scala
+ empDF.agg(collect_set("job"), collect_list("ename")).show()
+```
+
+# Join
+
+Spark 中支持多种连接类型：
+
++ **Inner Join** : 内连接；
++ **Full Outer Join** :  全外连接；
++ **Left Outer Join** :  左外连接；
++ **Right Outer Join** :  右外连接；
++ **Left Semi Join** :  左半连接；
++ **Left Anti Join** :  左反连接；
++ **Natural Join** :  自然连接；
++ **Cross (or Cartesian) Join** :  交叉 (或笛卡尔) 连接。
+
+其中内，外连接，笛卡尔积均与普通关系型数据库中的相同，如下图所示：
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/sql-join.jpg"/> </div>
+
