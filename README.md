@@ -202,6 +202,7 @@
 * [Flink运行环境源码解析](bigdata/flink/sourcecode/Flink运行环境源码解析.md)
 * [FlinkTimerService机制分析](bigdata/flink/sourcecode/FlinkTimerService机制分析.md)
 * [StreamSource源解析](bigdata/flink/sourcecode/StreamSource源解析.md)
+* [Flink状态管理与检查点机制](bigdata/flink/sourcecode/Flink状态管理与检查点机制.xmind)
 
 #### Feature
 
@@ -247,7 +248,7 @@
 * [KuduConfiguration](bigdata/olap/kudu/KuduConfiguration.md)
 * [Kudu原理分析](bigdata/olap/kudu/Kudu原理分析.md)
 * [Kudu踩坑](bigdata/olap/kudu/Kudu踩坑.xmind)
-* [Kudu存储结构drawio架构图](bigdata/olap/kudu/Kudu存储结构)
+* [Kudu存储结构架构图](bigdata/olap/kudu/Kudu存储结构)
 
 ##### paper
 
