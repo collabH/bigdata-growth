@@ -31,6 +31,58 @@
   * spark是批计算，将DAG划分为不同的stage，一个stage完成后才可以计算下一个。
   * flink是标准的流执行模式，一个事件在一个节点处理完后可以直接发往下一个节点进行处理。
 
+# Flink集群架构
+
+## 核心组件
+
+按照上面的介绍，Flink 核心架构的第二层是 Runtime 层， 该层采用标准的 Master - Slave 结构， 其中，Master 部分又包含了三个核心组件：Dispatcher、ResourceManager 和 JobManager，而 Slave 则主要是 TaskManager 进程。它们的功能分别如下：
+
+- **JobManagers** (也称为 *masters*) ：JobManagers 接收由 Dispatcher 传递过来的执行程序，该执行程序包含了作业图 (JobGraph)，逻辑数据流图 (logical dataflow graph) 及其所有的 classes 文件以及第三方类库 (libraries) 等等 。紧接着 JobManagers 会将 JobGraph 转换为执行图 (ExecutionGraph)，然后向 ResourceManager 申请资源来执行该任务，一旦申请到资源，就将执行图分发给对应的 TaskManagers 。因此每个作业 (Job) 至少有一个 JobManager；高可用部署下可以有多个 JobManagers，其中一个作为 *leader*，其余的则处于 *standby* 状态。
+- **TaskManagers** (也称为 *workers*) : TaskManagers 负责实际的子任务 (subtasks) 的执行，每个 TaskManagers 都拥有一定数量的 slots。Slot 是一组固定大小的资源的合集 (如计算能力，存储空间)。TaskManagers 启动后，会将其所拥有的 slots 注册到 ResourceManager 上，由 ResourceManager 进行统一管理。
+- **Dispatcher**：负责接收客户端提交的执行程序，并传递给 JobManager 。除此之外，它还提供了一个 WEB UI 界面，用于监控作业的执行情况。
+- **ResourceManager** ：负责管理 slots 并协调集群资源。ResourceManager 接收来自 JobManager 的资源请求，并将存在空闲 slots 的 TaskManagers 分配给 JobManager 执行任务。Flink 基于不同的部署平台，如 YARN , Mesos，K8s 等提供了不同的资源管理器，当 TaskManagers 没有足够的 slots 来执行任务时，它会向第三方平台发起会话来请求额外的资源。
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-application-submission.png"/> </div>
+
+## Task & SubTask
+
+上面我们提到：TaskManagers 实际执行的是 SubTask，而不是 Task，这里解释一下两者的区别：
+
+在执行分布式计算时，Flink 将可以链接的操作 (operators) 链接到一起，这就是 Task。之所以这样做， 是为了减少线程间切换和缓冲而导致的开销，在降低延迟的同时可以提高整体的吞吐量。 但不是所有的 operator 都可以被链接，如下 keyBy 等操作会导致网络 shuffle 和重分区，因此其就不能被链接，只能被单独作为一个 Task。  简单来说，一个 Task 就是一个可以链接的最小的操作链 (Operator Chains) 。如下图，source 和 map 算子被链接到一块，因此整个作业就只有三个 Task：
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-task-subtask.png"/> </div>
+
+
+解释完 Task ，我们在解释一下什么是 SubTask，其准确的翻译是： *A subtask is one parallel slice of a task*，即一个 Task 可以按照其并行度拆分为多个 SubTask。如上图，source & map 具有两个并行度，KeyBy 具有两个并行度，Sink 具有一个并行度，因此整个虽然只有 3 个 Task，但是却有 5 个 SubTask。Jobmanager 负责定义和拆分这些 SubTask，并将其交给 Taskmanagers 来执行，每个 SubTask 都是一个单独的线程。
+
+## 资源管理
+
+理解了 SubTasks ，我们再来看看其与 Slots 的对应情况。一种可能的分配情况如下：
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-tasks-slots.png"/> </div>
+
+
+
+
+这时每个 SubTask 线程运行在一个独立的 TaskSlot， 它们共享所属的 TaskManager 进程的TCP 连接（通过多路复用技术）和心跳信息 (heartbeat messages)，从而可以降低整体的性能开销。此时看似是最好的情况，但是每个操作需要的资源都是不尽相同的，这里假设该作业 keyBy 操作所需资源的数量比 Sink 多很多 ，那么此时 Sink 所在 Slot 的资源就没有得到有效的利用。
+
+基于这个原因，Flink 允许多个 subtasks 共享 slots，即使它们是不同 tasks 的 subtasks，但只要它们来自同一个 Job 就可以。假设上面 souce & map 和 keyBy 的并行度调整为 6，而 Slot 的数量不变，此时情况如下：
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-subtask-slots.png"/> </div>
+
+
+
+
+可以看到一个 Task Slot 中运行了多个 SubTask 子任务，此时每个子任务仍然在一个独立的线程中执行，只不过共享一组 Sot 资源而已。那么 Flink 到底如何确定一个 Job 至少需要多少个 Slot 呢？Flink 对于这个问题的处理很简单，默认情况一个 Job 所需要的 Slot 的数量就等于其 Operation 操作的最高并行度。如下， A，B，D 操作的并行度为 4，而 C，E 操作的并行度为 2，那么此时整个 Job 就需要至少四个 Slots 来完成。通过这个机制，Flink 就可以不必去关心一个 Job 到底会被拆分为多少个 Tasks 和 SubTasks。
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-task-parallelism.png"/> </div>
+
+## 组件通讯
+
+Flink 的所有组件都基于 Actor System 来进行通讯。Actor system是多种角色的 actor 的容器，它提供调度，配置，日志记录等多种服务，并包含一个可以启动所有 actor 的线程池，如果 actor 是本地的，则消息通过共享内存进行共享，但如果 actor 是远程的，则通过 RPC 的调用来传递消息。
+
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-process.png"/> </div>
+
 # Flink安装
 
 ## Local部署模式
@@ -439,13 +491,13 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 * JobManager,作业管理器
   * 控制应用程序的主进程，每个应用程序会被一个不同的JobManager所控制执行。
-  * JobManger会先接收到执行的应用程序，这个应用程序包含：作业图(JobGrap)、逻辑数据流图(logic dataflow graph)和打包了所有的累、库和其他资源的jar包。
+  * JobManger会先接收到执行的应用程序，这个应用程序包含：作业图(JobGrap)、逻辑数据流图(logic dataflow graph)和打包了所有的类、库和其他资源的jar包。
   * jobManager会把JobGraph转换成一个物理层面的数据流图，这个图被叫做“执行图”（ExecutionGraph），包含了所有可以并行执行的任务。
   * JobManager会向RM请求执行任务必要的资源，就是tm所需的slot。一旦获取足够的资源，就会将执行图分发到真正运行它们的tm上。运行过程中，Jm负责所需要中央协调的操作，比如checkpoint、savepoint的元数据存储等。
 * TaskManager，任务管理器
-  * 任务管理器中资源调度的最小单元是任务槽。任务管理器中的任务槽数表示并发处理任务的数量。
-  * flink的工作进程，存在多个每个存在多个slot，slot的个数限制了tm执行任务的数量。
-  * 启动后tm会想rm注册它的slot，收到rm的指令后，tm会将一个或多个slot提供给jm调用。dm可以向slot分配tasks来执行。
+  * 任务管理器中资源调度的最小单元是taskSlot。taskManager中的taskSlot数表示并发处理任务的数量。
+  * flink的工作进程存在多个，每个存在多个slot，slot的个数限制了tm执行任务的数量。
+  * 启动后tm向rm注册它的slot，收到rm的指令后，tm会将一个或多个slot提供给jm调用。jm可以向slot分配tasks来执行。
   * 执行的过程中，一个tm可以跟其他运行同一个应用程序的tm交换数据。
 * ResourceManager，资源管理器
   * ResourceManager负责Flink集群中的资源取消/分配和供应-它管理任务插槽，这些任务插槽是Flink集群中资源调度的单位（请参阅TaskManagers）。 Flink为不同的环境和资源提供者（例如YARN，Mesos，Kubernetes和独立部署）实现了多个ResourceManager。 在独立设置中，ResourceManager只能分配可用TaskManager的插槽，而不能自行启动新的TaskManager。
@@ -470,7 +522,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 ### 任务和算子调用链
 
-* 对于分布式执行，Flink将操作符子任务连接到一起，形成多个任务。每个任务由一个线程执行。将操作符链接到任务中是一种有用的优化:它减少了线程到线程的切换和缓冲开销，提高了总体吞吐量，同时减少了延迟。
+* 对于分布式执行，Flink将操作符subtask连接到一起，形成多个task。每个task由一个线程执行。将操作符链接到任务中是一种有用的优化:它减少了线程到线程的切换和缓冲开销，提高了总体吞吐量，同时减少了延迟。
 * 一个特定算子的子任务(subtask)的个数被称之为其并行度(parallelism)。一般情况下，一个stream的并行度，可以任务就是其所有算子中的最大并行度（`因为slot共享的原因`）。
 
 ![Operator chaining into Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_chains.svg)
@@ -479,14 +531,14 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 #### task和slot的关系
 
-* Flink中每一个TaskManager都是一个JVM进程，它坑会在独立的线程上运行一个或多个subtask
-* 为了控制一个taskmanager能接受多个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)
+* Flink中每一个TaskManager都是一个JVM进程，它会在独立的线程上运行一个或多个subtask
+* 为了控制一个taskmanager能接收多个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)
 
 ![A TaskManager with Task Slots and Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_slots.svg)
 
 #### slot共享
 
-* 默认情况下，flink允许字任务共享slot，即使是不同任务的字任务，这样的结果是一个slot可以保存作业的整个管道。
+* 默认情况下，flink允许字任务共享slot，即使是不同任务的子任务，这样的结果是一个slot可以保存作业的整个管道。
 * 如果是同一步操作的并行subtask需要放到不同的slot，如果是先后发生的不同的subtask可以放在同一个slot中，实现slot的共享。
 * 自定义slot共享组
 
@@ -547,7 +599,7 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 
 ## 状态一致性剖析
 
-### 什么事状态一致性
+### 什么是状态一致性
 
 * 有状态的流处理，内部每个算子任务都可以有自己的状态，对于流处理器内部来说，所谓的状态一致性，就是计算结果要保证准确。
 * 一条数据不应该丢失也不应该重复计算，再遇到故障时可以恢复状态，恢复以后可以重新计算，结果应该也是完全正确的。
@@ -561,7 +613,7 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 
 ### 一致性检查点(Checkpoints)
 
-* Flkink使用轻量级快照机制-检查点(checkpoint)来保证exactly-once语义
+* Flink使用轻量级快照机制-检查点(checkpoint)来保证exactly-once语义
 * 有状态流应用的一致检查点，其实就是所有任务的状态，在某个时间点的一份拷贝，这个时间点，应该是所有任务都恰好处理完一个相同的输入数据的时候，应用状态的一致检查点事flink故障恢复机制的核心。
 
 ### 端到端状态一致性
@@ -585,15 +637,15 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 * 幂等写入
 * 事务写入
   * Write-Ahead-Log WAL
-    * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性携入sink系统
+    * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性写入sink系统
     * 简单已于实现，由于数据提前在状态后端中做了缓存，所以无论什么sink系统，都能一批搞定
-    * DataStream API提供一个模版类:GenericWriteAheadSink来实现。
+    * DataStream API提供一个模版类:`GenericWriteAheadSink`来实现。
     * 存在的问题，延迟性大，如果存在批量写入失败时需要考虑回滚重放。
   * 2PAC（Two-Phase-Commit）
     * 对于每个checkpoint，sink任务会启动一个事务，并将接下来所有接受的数据添加到事务里。
     * 然后将这些数据写入外部sink系统，但不提交它们--这时只是"预提交"
     * 当它收到checkpoint完成的通知时，它才正式提交事务，实现结果真正写入（参考checkpoint barrier sink端写入完成后的ack checkpoint通知）
-    * Flink提供TwoPhaseCommitSinkFunction接口,参考`FlinkKafkaProducer`
+    * Flink提供`TwoPhaseCommitSinkFunction`接口,参考`FlinkKafkaProducer`
     * 对外部sink系统的要求
       * 外部sink系统提供事务支持，或者sink任务必须能够模拟外部系统上的事务
       * 在checkpoint的间隔期间，必须能够开启一个事务并接收数据写入
@@ -613,7 +665,7 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 
 #### 预提交阶段
 
-* 当checkpoint启动时，jobmanager会将checkpoint barrier注入数据流，进过barrier对齐然后barrier会在算子间传递到下游。
+* 当checkpoint启动时，jobmanager会将checkpoint barrier注入数据流，经过barrier对齐然后barrier会在算子间传递到下游。
 * 每个算子会对当前的状态做个快照，保存到状态后端，barrier最终sink后会给JobManger一个ack checkpoint完成。
 * 每个内部的transform任务遇到barrier时，都会把状态存到checkpoint里，sink任务首先把数据写入到外部kafka，这些数据都属于预提交的事务；遇到barrier时，把状态保存到状态后端，并开启新的预提交事务。
 * 当所有算子任务的快照完成，也就是checkpoint完成时，jobmanager会向所有任务发送通知，确认这次checkpoint完成，sink任务收到确认通知，正式提交事务，kafka中未确认数据改为"已确认"
