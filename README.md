@@ -7,6 +7,7 @@
 [![Stargazers over time](https://starchart.cc/collabH/repository.svg)](#)
 
 ## 概述
+
 * 个人学习知识库涉及到数据仓库建模、实时计算、大数据、Java、算法等。
 
 ## RoadMap
@@ -16,7 +17,6 @@
 ## 基础能力
 
 ### 数据结构
-
 
 ### 分布式理论
 
@@ -32,9 +32,10 @@
 
 ### JVM
 
-
 ### Java
+
 #### JDK源码
+
 #### todo
 
 ## 算法
@@ -42,7 +43,9 @@
 * [算法题解](base/algorithm/算法题解.md)
 
 ## BigData
+
 ### datalake
+
 #### iceberg
 
 * [IceBerg整合Flink](bigdata/datalake/iceberg/icebergWithFlink.md)
@@ -52,6 +55,9 @@
 * [rocksDB概述](bigdata/rocksdb/RocksdbOverview.md)
 
 ### Hadoop
+
+* 广义上的Hadoop生态圈的学习笔记，主要记录HDFS、MapReduce、Yarn相关读书笔记及源码分析等。
+
 #### HDFS
 
 * [Hadoop快速入门](bigdata/hadoop/Hadoop快速开始.xmind)
@@ -61,6 +67,7 @@
 * [HadoopCommon分析](bigdata/hadoop/HDFS/Common包解析.md)
 * [HDFS集群相关管理](bigdata/hadoop/HDFS/HDFS集群管理.md)
 * [HDFS Shell](bigdata/hadoop/HDFS/HDFS%20Shell命令.md)
+
 #### MapReduce
 
 * [分布式处理框架MapReduce](bigdata/hadoop/MapReduce/分布式处理框架MapReduce.md)
@@ -71,6 +78,7 @@
 * [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
 
 #### Yarn
+
 * [Yarn快速入门](bigdata/hadoop/Yarn/YARN快速入门.md)
 
 #### 高可用配置
@@ -99,6 +107,8 @@
 * [Hive分区表和分桶表](bigdata/hive/Hive分区表和分桶表.md)
 
 ### Spark
+
+* 主要包含Spark相关书籍读书笔记、Spark核心组件分析、Spark相关API实践以及Spark生产踩坑等。
 
 * [Spark基础入门](bigdata/spark/Spark基础入门.xmind)
 * [SparkOnDeploy](bigdata/spark/SparkOnDeploy.md)
@@ -157,7 +167,6 @@
 * [HBaseJavaAPI](bigdata/hbase/HBase%20Java%20API.xmind)
 * [HBase整合MapReduce](bigdata/hbase/HBase整合第三方组件.md)
 
-
 ### Sqoop
 
 * [SqoopOverview](bigdata/sqoop/SqoopOverview.md)
@@ -167,41 +176,53 @@
 
 * [DolphinScheduler快速开始](bigdata/scheduler/DolphinScheduler快速开始.md)
 
-
 ### Flink
 
-#### Base
-* [FlinkOverView](bigdata/flink/FlinkOverview.md)
-* [TableSQLOverview](bigdata/flink/TableSQLOverview.md)
+* 主要包含对Flink文档阅读的总结和相关Flink源码的阅读，以及Flink新特性记录等等
 
-#### Theory
-* [TaskExecutor内存模型原理深入](bigdata/flink/TaskExecutor内存模型原理深入.md)
-* [Flink窗口实现应用](bigdata/flink/Flink源码解析/Flink窗口实现应用原理.md)
-* [Flink运行环境源码解析](bigdata/flink/Flink源码解析/Flink运行环境源码解析.md)
-* [FlinkTimerService机制分析](bigdata/flink/Flink源码解析/FlinkTimerService机制分析.md)
-* [StreamSource源解析](bigdata/flink/Flink源码解析/StreamSource源解析.md)
+#### Core
 
-#### Application
-* [DataStream API](bigdata/flink/FlinkDataStream%20API.xmind)
-* [ProcessFunction API](bigdata/flink/ProcessFunction%20API.xmind)
-* [Data Source](bigdata/flink/Data%20Source.xmind)
-* [Table API](bigdata/flink/TABLE%20API.xmind)
-* [Flink SQL](bigdata/flink/FlinkSQL.xmind)
-* [Flink Hive](bigdata/flink/Flink%20Hive.xmind)
-* [Flink CEP](bigdata/flink/Flink%20Cep.xmind)
-* [Flink Function](bigdata/flink/Flink%20Function.xmind)
-* [DataSource API](bigdata/flink/Data%20Source.xmind)
-* [Flink踩坑指南](bigdata/flink/Flink踩坑.xmind)
+* [FlinkOverView](bigdata/flink/core/FlinkOverview.md)
+* [TableSQLOverview](bigdata/flink/core/TableSQLOverview.md)
+* [DataStream API](bigdata/flink/core/FlinkDataStream%20API.xmind)
+* [ProcessFunction API](bigdata/flink/core/ProcessFunction%20API.xmind)
+* [Data Source](bigdata/flink/core/Data%20Source.xmind)
+* [Table API](bigdata/flink/core/TABLE%20API.xmind)
+* [Flink SQL](bigdata/flink/core/FlinkSQL.xmind)
+* [Flink Hive](bigdata/flink/core/Flink%20Hive.xmind)
+* [Flink CEP](bigdata/flink/core/Flink%20Cep.xmind)
+* [Flink Function](bigdata/flink/core/Flink%20Function.xmind)
+* [DataSource API](bigdata/flink/core/Data%20Source.xmind)
+
+#### SourceCode
+
+* [FlinkSQL源码解析](bigdata/flink/sourcecode/FlinkSQL源码解析.md)
+* [TaskExecutor内存模型原理深入](bigdata/flink/sourcecode/TaskExecutor内存模型原理深入.md)
+* [Flink窗口实现应用](bigdata/flink/sourcecode/Flink窗口实现应用原理.md)
+* [Flink运行环境源码解析](bigdata/flink/sourcecode/Flink运行环境源码解析.md)
+* [FlinkTimerService机制分析](bigdata/flink/sourcecode/FlinkTimerService机制分析.md)
+* [StreamSource源解析](bigdata/flink/sourcecode/StreamSource源解析.md)
 
 #### Feature
 
-* [Flink1.12新特性](bigdata/flink/Flink1.12新特性.md)
+* [Flink1.12新特性](bigdata/flink/feature/Flink1.12新特性.md)
 
-#### Wheel
+#### Practice
+
+* [Flink踩坑指南](bigdata/flink/practice/Flink踩坑.xmind)
+
+#### Connector
 
 * [自定义Table Connector](bigdata/flink/connector/自定义TableConnector.md)
 
+#### monitor
+
+* [搭建Flink任务指标监控系统](bigdata/flink/monitor/搭建Flink任务指标监控系统.md)
+
 ### olap
+
+* 主要核心包含Kudu、Impala相关Olap引擎，生产实践及论文记录等。
+
 #### Presto
 
 * [presto概述](bigdata/olap/presto/PrestoOverview.md)
@@ -219,7 +240,7 @@
 
 * [Kylin概述](bigdata/olap/kylin/KylinOverWrite.md)
 
-#### Kudu 
+#### Kudu
 
 * [KuduOverView](bigdata/olap/kudu/KuduOverView.md)
 * [Kudu表和Schema设计](bigdata/olap/kudu/KuduSchemaDesgin.md)
@@ -260,6 +281,7 @@
 * [maven命令](devops/maven/Maven命令.md)
 
 ## 服务监控
+
 * [Prometheus](servicemonitor/Prometheus/Prometheus实战.md)
 
 ## mac
