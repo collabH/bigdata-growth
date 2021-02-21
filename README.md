@@ -166,6 +166,7 @@
 * [HBaseShell](bigdata/hbase/HBase%20Shell.xmind)
 * [HBaseJavaAPI](bigdata/hbase/HBase%20Java%20API.xmind)
 * [HBase整合MapReduce](bigdata/hbase/HBase整合第三方组件.md)
+* [HBase过滤器](bigdata/hbase/Hbase过滤器.md)
 
 ### Sqoop
 
