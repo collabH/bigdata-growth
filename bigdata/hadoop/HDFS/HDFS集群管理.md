@@ -146,12 +146,12 @@ Hadoop也支持为所有master机器和worker机器采用同一套配置文件�
 
 ![图片](https://uploader.shimo.im/f/aPUdXiOvzHci1Ghy.png!thumbnail)
 
-* 日志名称通过hadoop-env.sh中的HADOOP_IDENT_STRING中配置
+* 日志名称通过hadoop-env.sh中的`HADOOP_IDENT_STRING`中配置
 ### SSH配置
 
 * 借助SSH协议，用户在主节点上使用控制脚本就就能在远程工作节点上运行一些列指令。自定义的SSH配置，可以减少连接超时设定可以避免控制脚本长时间等待宕机节点想要。
 * StricHostKeyChecking是一个很好的SSH设置，设置为no会自动将新主机键加到已知主机文件之中，该项默认值是ask，提示用户确认是否已验证来键指纹，因此不适合大型集群环境。
-* hadoop-env.sh中定义HADOOP_SSH_OPTS环境变量能够项SSH很多配置
+* hadoop-env.sh中定义`HADOOP_SSH_OPTS`环境变量能够项SSH很多配置
 ## Hadoop守护进程的关键属性
 
 * 通过`[http://localhost:8088/conf](http://localhost:8088/conf)`查看当前RM的配置
@@ -180,7 +180,7 @@ Hadoop也支持为所有master机器和worker机器采用同一套配置文件�
 dfs.namenode.name.dir提供namenode存储永久性文件系统元数据(编辑日志和文件系统映象)，这些元数据文件会同时备份到所有指定目录中，通常配置dfs.namenode.name.dir属性可以将namenode元数据写到一两个本地磁盘和远程磁盘之中，这样的话即使本地磁盘故障，甚至整个namenode发生故障，都可以恢复元数据文件并且重构新的namenode(辅助namenode只是定期保存namenode的检查点，不维护namenode的最新备份)
 指定辅助namenode存储文件系统的检查点目录，dfs.namenode.checkpoint.dir指定一些列目录来保存检查点。
 # datanode
-dfs.datanode.name.dir可以设定datanode存储数据块的目录列表，datanode描述的一系列目录是为了使datanode循环地在各个目录中写数据。为了提高性能，最好分别为各个本地磁盘指定一个存储目录，这样数据库块磁盘分布，针对不同数据块的读操作可以并发执行，从而提升读取性能。
+dfs.datanode.data.dir可以设定datanode存储数据块的目录列表，datanode描述的一系列目录是为了使datanode循环地在各个目录中写数据。为了提高性能，最好分别为各个本地磁盘指定一个存储目录，这样数据库块磁盘分布，针对不同数据块的读操作可以并发执行，从而提升读取性能。
 ```
 * HDFS关键属性
 
@@ -188,14 +188,14 @@ dfs.datanode.name.dir可以设定datanode存储数据块的目录列表，datano
 
 ![图片](https://uploader.shimo.im/f/0Txnh5YO2TY90tzm.png!thumbnail)
 
-* 默认情况下，HDFS的存储目录存放在Hadoop的临时目录下(通过hadoop.tmp.dir配置，默认为/tmp/hadoop-${user.name})，在配置以上配置后，即使临时目录被情况数据仍然不会丢失。
+* 默认情况下，HDFS的存储目录存放在Hadoop的临时目录下(通过hadoop.tmp.dir配置，默认为`/tmp/hadoop-${user.name})`，在配置以上配置后，即使临时目录被情况数据仍然不会丢失。
 ### YARN
 
 * 运行YARN需要指定一台服务器为RM，将属性`yarn.resourcemanager.hostname`设置为运行RM的机器的主机名或IP地址。
 * 通过`yarn.resourcemanager.address`设置RM服务器地址，格式为主机-端口名
 * MapReduce作业过程中产生的中间数据和工作文件被写道临时本地文件中，由于这些数据包括map任务输出数据，数据量可能非常大，因此必须保证YARN容器本地临时存储空间(由`yarn.nodemanager.local-dirs`属性设置)的容量足够大。`yarn.nodemanager.local-dirs`属性使用一个逗号分割的目录名称列表，最后将这些目录分散到所有本地磁盘，以提升I/O操作的效率。
 * 通常情况下，YARN本地存储会使用与datanode数据块存储相同的磁盘和分区(但是不同的目录)。datanode数据块存储目录由`dfs.datanode.data.dir`属性指定。
-* 与MapReduce1不同，YARN没有tasktracker，它依赖shuffle句柄将map任务的输出送到reduce任务，Shuffle句柄是长期运行于NM的附加服务。可以在yarn-site.xml中配置`yarn.nodemanager.aux-services`属性设置为mapreduce_shuffle来显示启用MapReduce的shuffle句柄。
+* 与MapReduce1不同，YARN没有tasktracker，它依赖shuffle句柄将map任务的输出送到reduce任务，Shuffle句柄是长期运行于NM的附加服务。可以在yarn-site.xml中配置`yarn.nodemanager.aux-services`属性设置为`mapreduce_shuffle`来显示启用MapReduce的shuffle句柄。
 * YARN的关键配置
 
 ![图片](https://uploader.shimo.im/f/naSx06NFnggoWORS.png!thumbnail)
@@ -204,8 +204,8 @@ dfs.datanode.name.dir可以设定datanode存储数据块的目录列表，datano
 
 ```
 与MapReduce1基于slot模型相比，YARN以更精细化的方式来管理内存，YARN不会立刻指定一个节点上可以运行的map和reduce slot的最大数目，相反，它允许应用程序为一个任务请求任意规模的内存，因此在一个特定节点上运行任务数量取决于这些任务对内存的总需求量，而不简单取决于固定的slot数量。
-默认Hadoop的守护进程使用1000MB，因此一个datanode和NM需要2000MB，为机器运行其他进程留出足够内存后，可以通过yarn.nodemanager.resource.memory-mb设置总分配量(单位是MB)，剩余的内存就是可以被指定给NM的容器使用，默认是8192MB。
-容器大小由属性mapreduce.map.memory.mb和mapreduce.reduce.memory.mb决定，默认都是1024MB。AM会使用这些设置从集群中请求资源，此外NM也会使用这些设置运行、监控任务容器。java进程的堆大小由mapred.child.java.opts设置，默认为200MB，也可以单独为map和reduce任务设置java选项。
+默认Hadoop的守护进程使用1000MB，因此一个datanode和NM需要2000MB，为机器运行其他进程留出足够内存后，可以通过`yarn.nodemanager.resource.memory-mb`设置总分配量(单位是MB)，剩余的内存就是可以被指定给NM的容器使用，默认是8192MB。
+容器大小由属性`mapreduce.map.memory.mb`和`mapreduce.reduce.memory.mb`决定，默认都是1024MB。AM会使用这些设置从集群中请求资源，此外NM也会使用这些设置运行、监控任务容器。java进程的堆大小由`mapred.child.java.opts`设置，默认为200MB，也可以单独为map和reduce任务设置java选项。
 ```
 * MapReduce作业内存属性
 
@@ -224,7 +224,7 @@ dfs.datanode.name.dir可以设定datanode存储数据块的目录列表，datano
 ## Hadoop守护进程的地址和端口
 
 ```
-Hadoop守护进程一般同时运行RPC和HTTP两个服务器，RPC服务器支持所有守护进程间的通信，HTTP服务器则提供于用户交互的Web页面。需要为每个服务器破诶之网络地址和监听端口号，端口号0表示会选择一个空闲的端口号。
+Hadoop守护进程一般同时运行RPC和HTTP两个服务器，RPC服务器支持所有守护进程间的通信，HTTP服务器则提供于用户交互的Web页面。需要为每个服务器交互的网络地址和监听端口号，端口号0表示会选择一个空闲的端口号。
 ```
 ### Rpc服务器属性
 
@@ -260,7 +260,7 @@ Hadoop使用一个4KB的缓冲区辅助I/O操作，对于现代硬件和操作�
 ### 回收站
 
 * Hadoop文件系统也有回收站，被删除的文件并未真正删除，仅只转移到回收站(一个特定文件夹)，回收站的文件在被永久删除之前仍会至少保留一段时间。通过core-site.xml的fs.trash.interval属性(分钟单位)设置，默认情况下为0，表示回收站特性无效
-* Hadoop回收站设施是用户级特性，有文件系统shell直接删除的文件才会被放到回收站，用程序删除的会被直接删除。如果使用Trash类，构造一个Trash实例，调用moveToTrash()方法会把指定路径的文件移动到回收站。
+* Hadoop回收站设施是用户级特性，有文件系统shell直接删除的文件才会被放到回收站，用程序删除的会被直接删除。如果使用Trash类，构造一个Trash实例，调用`moveToTrash()`方法会把指定路径的文件移动到回收站。
 * 当回收站特性被启用，每个用户都有独立的回收站目录，即，home目录下的.Trash目录，恢复文件也容易:在.Trash的子目录找到文件，并将其移出.Trash目录
 * HDFS会自动删除回收站中的文件，手动删除超过时间的文件
   * hdfs dfs -expunge
@@ -272,7 +272,7 @@ Hadoop使用一个4KB的缓冲区辅助I/O操作，对于现代硬件和操作�
 ```
 ### 慢启动reduce
 
-* 默认情况下，调度器会一直等待，直到该作业的5%的map任务已经结束才会调度reduce任务，对于大型作业来说，这个会降低集群利用率，在等待的过程中占用率reduce容器，可以将mapreduce.job.reduce.slowstart.completedmaps的值设置更大，如0.80,能够提供吞吐率。
+* 默认情况下，调度器会一直等待，直到该作业的5%的map任务已经结束才会调度reduce任务，对于大型作业来说，这个会降低集群利用率，在等待的过程中占用率reduce容器，可以将`mapreduce.job.reduce.slowstart.completedmaps`的值设置更大，如0.80,能够提供吞吐率。
 ### 短回路本地读
 
 ![图片](https://uploader.shimo.im/f/a5f7Ooz5Q4AZXFF1.png!thumbnail)
