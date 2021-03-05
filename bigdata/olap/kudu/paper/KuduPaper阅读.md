@@ -50,7 +50,7 @@
 
 ### Catalog manager
 
-* Kudu Master 内部维护了一个 单tablet 的 Catalog table, 用于记录表meta信息(不能被用户访问)。
+* Kudu Master 内部维护了一个单tablet 的 Catalog table, 用于记录表meta信息(不能被用户访问)。
 * Catalog table 将会一直在内存缓存，并且维护了一些最基础的信息，如当前表的状态(running, deleting ...)、Table 包含哪些 tablet。
 * Catalog table 和其余的表一样通过 Raft 协议进行多副本同步，但不同的是，Follower 不参与处理请求。所以 Master Leader 节点将会是系统的一个单点瓶颈。
 * Kudu 在 Client 进行了一些缓存，避免 Client 需要频繁与 Master 进行交互。
@@ -61,7 +61,7 @@
 
 与多数分布式系统不同的是，Kudu Master 对系统更像是一个观察者。Master 并不会去主动探测副本状态，坏掉的副本是通过以下方式提交给 Master:
 
-- 首先 tablet 的多个副本通关 Raft 协议进行复制
+- 首先 tablet 的多个副本通过`Raft协议`进行复制
 - 当一个副本宕掉时(一段时间没有心跳)，tablet leader 会发起提议，驱逐宕掉的副本
 - 一旦提议通过，tablet leader 会将副本被驱逐报告给 Master，由 Master 做进一步处理
 - Master 根据集群的全局视野，选取一个合适的服务节点放置新的副本，并建议 tablet leader 进行配置
