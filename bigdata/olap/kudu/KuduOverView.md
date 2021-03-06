@@ -360,7 +360,7 @@ t=20个table server
 * HDFS JournalNode的共享edits文件
 * Zookeeper日志
 * Kudu master服务器的数据
-* Kudi master服务器的WAL
+* Kudu master服务器的WAL
 
 ### 部署问题
 
