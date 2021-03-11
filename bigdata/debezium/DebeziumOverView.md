@@ -903,7 +903,9 @@ binlog_rows_query_log_events=ON
         // 数据库时区
         "database.serverTimezone":"UTC",
         // 是否记录全部DDL到history topic中
-        "database.history.store.only.monitored.tables.ddl":"true" 
+        "database.history.store.only.monitored.tables.ddl":"true",
+        // 设置snapshot时是否需要计算总count
+        "min.row.count.to.stream.results": 0
     }
 }
 ```
