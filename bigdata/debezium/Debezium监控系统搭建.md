@@ -110,3 +110,29 @@ rules:
 # 添加KAFKA_OPTS
  export KAFKA_OPTS="-javaagent:/opt/cloudera/parcels/CDH/lib/kafka/monitor/jmx_prometheus_javaagent-0.3.1.jar=8080:/opt/cloudera/parcels/CDH/lib/kafka/monitor/config.yml"
 ```
+
+# 配置监控大盘
+
+## 配置prometheus
+
+* 配置prometheus.yml文件
+
+```yaml
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'debezium'
+    static_configs:
+    #  export KAFKA_OPTS="-javaagent:/opt/cloudera/parcels/CDH/lib/kafka/monitor/jmx_prometheus_javaagent-0.3.1.jar=8080:/opt/cloudera/parcels/CDH/lib/kafka/monitor/config.yml"
+      - targets: [这里填写的是kafkaconnect的ip地址和jmx暴露的web端口，如上就是8080]
+      
+```
+
+## 配置grafana
+
+* 导入dashboard uid
+* MySQL dashboard uid:11523,https://grafana.com/grafana/dashboards/11523
+* debezium dashboard uid:13546
+
