@@ -905,7 +905,11 @@ binlog_rows_query_log_events=ON
         // 是否记录全部DDL到history topic中
         "database.history.store.only.monitored.tables.ddl":"true",
         // 设置snapshot时是否需要计算总count
-        "min.row.count.to.stream.results": 0
+        "min.row.count.to.stream.results": 0,
+        // 每批快照处理的速度
+        "max.batch.size": 4096,
+         // 正整数值，指定在此连接器的每次迭代期间应处理的每批事件的最大大小。 默认为2048。
+        "max.queue.size": 8192
     }
 }
 ```

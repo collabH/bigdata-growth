@@ -14,7 +14,7 @@
 
 * 俩套系统，同时保证低延迟和结果准确。
 
-![lambda架构](./img/lambda架构.jpg)
+![lambda架构](../img/lambda架构.jpg)
 
 * 开发维护、迭代比较麻烦，涉及到离线数仓和实时数仓的异构架构，难度偏大。
 
@@ -22,7 +22,7 @@
 
 * stream and micro-batching
 
-![SparkStreamingVsFlink](./img/SparkStreamingVsFlink.jpg)
+![SparkStreamingVsFlink](../img/SparkStreamingVsFlink.jpg)
 
 * 数据模型
   * spark采用RDD模型，spark Streaming的DStream相当于对RDD序列的操作，是一小批一小批的RDD集合。
@@ -268,7 +268,7 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 
 #### 一致性检查点
 
-![一致性检查点](./img/一致性检查点.jpg)
+![一致性检查点](../img/一致性检查点.jpg)
 
 * Flink故障恢复机制的核心，就是应用状态的一致性检查点
 * 有状态流应用的一只检查点，其实就是所有任务的状态，在某个时间点的一份拷贝；这个时间点，`应该是所有任务恰好处理完一个相同的输入数据的时候,如果各个算子单独处理对应的offset，`就会存在source端和算子端checkpoint的offset存在异常，导致数据无法恢复。
@@ -301,11 +301,11 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
   * 当收到所有输入分区的barrier时，任务就将其状态保存到状态后端的checkpoint中，然后将barrier继续向下游转发，下游继续正常处理数据。
   * Sink任务向JobManager确认状态保存到checkpoint完毕，当所有任务都确认已成功将状态保存到checkpoint时，checkpoint完毕。
 
-  ![checkpoint1](./img/checkpoint1.jpg)
+  ![checkpoint1](../img/checkpoint1.jpg)
 
-  ![checkpoint1](./img/checkpoint2.jpg)
+  ![checkpoint1](../img/checkpoint2.jpg)
 
-  ![checkpoint1](./img/checkpoint3.jpg)
+  ![checkpoint1](../img/checkpoint3.jpg)
 
 #### checkpoint配置
 
@@ -379,6 +379,7 @@ state.backend: rocksdb
 state.backend.async: true
 state.checkpoints.dir: hdfs://hadoop:8020/flink1.11.1/checkpoints
 state.savepoints.dir: hdfs://hadoop:8020/flink1.11.1/savepoints
+state.backend.incremental: true
 state.backend.incremental: true
 # 故障转移策略，默认为region，按照区域恢复
 jobmanager.execution.failover-strategy: region
@@ -518,7 +519,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 * Yarn提交流程
 
-![Yarn任务提交流程](./img/任务提交流程(yarn).jpg)
+![Yarn任务提交流程](../img/任务提交流程(yarn).jpg)
 
 ### 任务和算子调用链
 
@@ -551,7 +552,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 ### 并行子任务的分配
 
-![并行子任务的分配](./img/并行子任务的分配.jpg)
+![并行子任务的分配](../img/并行子任务的分配.jpg)
 
 ## Flink执行分析
 
@@ -567,7 +568,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 * **ExecutionGraph**：JobManager 根据 JobGraph 生成ExecutionGraph。**ExecutionGraph是JobGraph的并行化版本**，是调度层最核心的数据结构。
 * **物理执行图**：JobManager 根据 ExecutionGraph 对 Job 进行调度后，在各个TaskManager 上部署 Task 后形成的“图”，并不是一个具体的数据结构。
 
-![执行图](./img/执行图.jpg)
+![执行图](../img/执行图.jpg)
 
 ### 数据传输形式
 
@@ -582,7 +583,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 * `相同的并行度`的one-to-one操作，flink这样相连的算子链接在一起形成一个task，原来的算子成为里面的subtask。
 * `并行度相同，并且是one-to-one`操作，可以将俩个task合并。
 
-![执行图](./img/任务链.jpg)
+![执行图](../img/任务链.jpg)
 
 * 禁止合并任务链优化
 
@@ -670,5 +671,5 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 * 每个内部的transform任务遇到barrier时，都会把状态存到checkpoint里，sink任务首先把数据写入到外部kafka，这些数据都属于预提交的事务；遇到barrier时，把状态保存到状态后端，并开启新的预提交事务。
 * 当所有算子任务的快照完成，也就是checkpoint完成时，jobmanager会向所有任务发送通知，确认这次checkpoint完成，sink任务收到确认通知，正式提交事务，kafka中未确认数据改为"已确认"
 
-![kafka](./img/kafka俩阶段提交.jpg)
+![kafka](../img/kafka俩阶段提交.jpg)
 
