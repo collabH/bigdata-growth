@@ -184,6 +184,7 @@
 #### Core
 
 * [FlinkOverView](bigdata/flink/core/FlinkOverview.md)
+* [CheckPoint机制](bigdata/flink/core/Checkpoint机制.md)  
 * [TableSQLOverview](bigdata/flink/core/TableSQLOverview.md)
 * [DataStream API](bigdata/flink/core/FlinkDataStream%20API.xmind)
 * [ProcessFunction API](bigdata/flink/core/ProcessFunction%20API.xmind)
