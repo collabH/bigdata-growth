@@ -1,4 +1,4 @@
-# 概览
+#  概览
 
 ## 基本程序结构
 
@@ -47,7 +47,7 @@ table.executeInsert()
 
 ## 表（Table）
 
-* TableEnvironment可以注册目录Catalog，并可以基于Catalog注册表
+* TableEnvironment可以注册Catalog，并可以基于Catalog注册表
 * 表是由一个标识符来指定，由catalog名、数据库名和对象名组成。
 * 表可以是常规的，也可以是虚拟表（视图）
 * 常规表一般可以用来描述外部数据，比如文件、数据库或消息队列数据，也可以从DataStream转换而来
@@ -65,6 +65,8 @@ table.executeInsert()
 * 动态表可以像静态的批处理表一样进行查询，查询一个动态表产生持续查询(Continuous Query)
 * 连续查询永远不会终止，并会生成另一个动态表。
 * 查询会不断更新其动态结果表，以反映动态输入表上的更改。
+
+![Continuous Non-Windowed Query](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/table-streaming/query-groupBy-cnt.png)
 
 ### 流式表查询的处理过程
 
@@ -91,7 +93,7 @@ table.executeInsert()
 
 ## Old Planner架构
 
-![](./img/Oldplannerr架构.jpg)
+![](../img/Oldplannerr架构.jpg)
 
 * 存在的问题:虽然面向用户的 Table API & SQL 是统一的，但是流式和批式任务在翻译层分别对应了 DataStreamAPI 和 DataSetAPI，在 Runtime 层面也要根据不同的 API 获取执行计划，两层的设计使得整个架构能够复用的模块有限，不易扩展。
 
@@ -99,11 +101,11 @@ table.executeInsert()
 
 * Blink Planner将批 SQL 处理作为流 SQL 处理的特例，尽量对通用的处理和优化逻辑进行抽象和复用，通过 Flink 内部的 Stream Transformation API 实现流 & 批的统一处理，替代原 Flink Planner 将流 & 批区分处理的方式。
 
-![](./img/BlinkPlanner架构.jpg)
+![](../img/BlinkPlanner架构.jpg)
 
 ## Flink SQL工作流
 
-![](./img/FlinkSQL工作流.jpeg)
+![](../img/FlinkSQL工作流.jpeg)
 
 * 将FLink SQL/Table API程序转换为可执行的JobGraph经历以下阶段
   * 将SQL文本/TableAPI代码转化为逻辑执行计划(Logical Plan)
@@ -114,7 +116,7 @@ table.executeInsert()
 
 * Flink SQL 引擎使用 Apache Calcite SQL Parser 将 SQL 文本解析为词法树，SQL Validator 获取 Catalog 中元数据的信息进行语法分析和验证，转化为关系代数表达式（RelNode），再由 Optimizer 将关系代数表达式转换为初始状态的逻辑执行计划。
 
-![](./img/LogicalPlan.jpg)
+![](../img/LogicalPlan.jpg)
 
 #### Flink SQL优化器优化方式
 
@@ -164,7 +166,7 @@ table.executeInsert()
 * Blink Planner使用二进制数据结构的BinaryRow来表示Record。BinaryRow 作用于默认大小为 32K 的 Memory Segment，直接映射到内存。BinaryRow 内部分为 Header，定长区和变长区。Header 用于存储 Retraction 消息的标识，定长区使用 8 个 bytes 来记录字段的 Nullable 信息及所有 primitive 和可以在 8 个 bytes 内表示的类型。其它类型会按照基于起始位置的 offset 存放在变长区。
 * 首先存储上更为紧凑，去掉了额外开销；其次在序列化和反序列化上带来的显著性能提升，可根据 offset 只反序列化需要的字段，在开启 Object Reuse 后，序列化可以直接通过内存拷贝完成。
 
-![](./img/BinaryRow.jpg)
+![](../img/BinaryRow.jpg)
 
 ### Mini-batch Processing
 
@@ -367,7 +369,7 @@ catalog.partitionExists(new ObjectPath("mydb", "mytable"), new CatalogPartitionS
 
 // list partitions of a table
 catalog.listPartitions(new ObjectPath("mydb", "mytable"));
-
+  
 // list partitions of a table under a give partition spec
 catalog.listPartitions(new ObjectPath("mydb", "mytable"), new CatalogPartitionSpec(...));
 

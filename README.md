@@ -213,6 +213,7 @@
 #### Practice
 
 * [Flink踩坑指南](bigdata/flink/practice/Flink踩坑.xmind)
+* [Flink SQL实践调优](bigdata/flink/practice/Flink%20SQL调优.xmind)
 
 #### Connector
 
