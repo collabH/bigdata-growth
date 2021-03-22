@@ -297,7 +297,7 @@ public void add(IN value) throws IOException {
 
 ## Window Function
 
-* 根据指定的window function，将window的记录放入prcoess中
+* 根据指定的`window function`，将window的记录放入prcoess中
 
 ```java
 private void emitWindowContents(W window, ACC contents) throws Exception {
