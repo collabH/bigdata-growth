@@ -45,7 +45,7 @@
 ## StreamEnv执行
 
 * Transformations->StreamGraph->JobGraph
-* 核型类方法
+* 核心类方法
 
 ```java
 	public JobClient executeAsync(StreamGraph streamGraph) throws Exception {
@@ -161,7 +161,7 @@ public static LocalStreamEnvironment createLocalEnvironment(int parallelism, Con
 * 将本地文件或者分布式文件注册到分布式缓存中，如果需要，运行时会将文件临时复制到本地缓存中。
 * 可以通过RuntimeContext#getDistibutedCache读取
 
-```
+```java
 	public void registerCachedFile(String filePath, String name, boolean executable) {
 		// 文件映射存储Tuple2元组
 		this.cacheFile.add(new Tuple2<>(name, new DistributedCache.DistributedCacheEntry(filePath, executable)));
@@ -206,7 +206,7 @@ private static ExecutionEnvironmentFactory contextEnvironmentFactory = null;
 
 ## 任务执行
 
-* dataSinks->Plan->JobGraph(这里和Stream一致，最终都需要转换成JobGraph提交给对应的集群环境)
+* `dataSinks->Plan->JobGraph`(这里和Stream一致，最终都需要转换成JobGraph提交给对应的集群环境)
 
 ```java
 # dataSinks转换Plan
@@ -394,7 +394,7 @@ public class PlanGenerator {
 # TableEnvironment
 
 * 链接外部系统
-* 通过catalog注册和检索其他元数据对象
+* 通过catalog注册和检索其他元数据对象 
 * 执行SQL语句
 * 设置配置参数
 
@@ -507,7 +507,7 @@ public Table fromValues(AbstractDataType<?> rowType, Expression... values) {
 ### registerCatalog
 
 ```java
-public void registerCatalog(String catalogName, Catalog catalog) {
+  public void registerCatalog(String catalogName, Catalog catalog) {
 		catalogManager.registerCatalog(catalogName, catalog);
 	}
 	
@@ -859,6 +859,8 @@ public interface ComponentFactory extends TableFactory {
 
 ## ExecutorFactory
 
+* 执行器工厂
+
 ```java
 public interface ExecutorFactory extends ComponentFactory {
 
@@ -868,6 +870,8 @@ public interface ExecutorFactory extends ComponentFactory {
 ```
 
 ## BlinkExecutorFactory
+
+* Blink执行器工厂
 
 ```java
 public class BlinkExecutorFactory implements ExecutorFactory {
