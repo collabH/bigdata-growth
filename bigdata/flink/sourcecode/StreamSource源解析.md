@@ -84,7 +84,7 @@ BATCH_FORCED:此模式以严格的批处理方式执行程序，包括将数据�
 */
 private ExecutionMode executionMode = ExecutionMode.PIPELINED;
 /*RECURSIVE:递归全部字段
-* TOP_LEVEL:递归最长层字段
+* TOP_LEVEL:递归最上层字段
 * NONE:不进行clean
 */
 private ClosureCleanerLevel closureCleanerLevel = ClosureCleanerLevel.RECURSIVE;
@@ -203,7 +203,7 @@ public KeyedStream<T, Tuple> keyBy(int... fields) {
 #### partitionCustom
 
 * 使用自定义分区程序，对选择器返回的键上的DataStream进行分区。 此方法使用键选择器来获取要在其上进行分区的键，以及一个接受键类型的分区程序。
-  注意：此方法仅适用于单个字段键，即选择器无法返回字段元组。
+  **注意：**此方法仅适用于单个字段键，即选择器无法返回字段元组。
 
 ```java
 	public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, KeySelector<T, K> keySelector) {
@@ -277,6 +277,7 @@ public class ShufflePartitioner<T> extends StreamPartitioner<T> {
 public class ForwardPartitioner<T> extends StreamPartitioner<T> {
 	private static final long serialVersionUID = 1L;
 
+  // 固定发向channel 0
 	@Override
 	public int selectChannel(SerializationDelegate<StreamRecord<T>> record) {
 		return 0;
@@ -397,7 +398,7 @@ public class GlobalPartitioner<T> extends StreamPartitioner<T> {
 
 #### map
 
-* map算子返回SingleOutputStreamOperator流，onetoone算子
+* map算子返回SingleOutputStreamOperator流，`oneToOne`算子
 
 ```java
 public <R> SingleOutputStreamOperator<R> map(MapFunction<T, R> mapper, TypeInformation<R> outputType) {
@@ -440,7 +441,7 @@ public <R> SingleOutputStreamOperator<R> map(MapFunction<T, R> mapper, TypeInfor
 
 #### flatMap
 
-* oneToOne算子，单input单output类型算子
+* `oneToOne`算子，单input单output类型算子
 
 ```java
 public class StreamFlatMap<IN, OUT>
@@ -1464,7 +1465,7 @@ public class TimeEvictor<W extends Window> implements Evictor<Object, W> {
 			return;
 		}
 
-		// 获取纪律中最大时间
+		// 获取记录中最大时间
 		long currentTime = getMaxTimestamp(elements);
 		// 获取可以读取的timestamp
 		long evictCutoff = currentTime - windowSize;
@@ -1616,6 +1617,8 @@ public class DeltaEvictor<T, W extends Window> implements Evictor<T, W> {
 ```
 
 #### Trigger
+
+* 窗口触发器机制，当满足阈值触发对应动作
 
 ##### CountTrigger
 
