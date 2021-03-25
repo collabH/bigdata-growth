@@ -12,7 +12,7 @@ public interface ProcessingTimeService {
 	long getCurrentProcessingTime();
 
 	/**
-	 * 注册一个timer 异步
+	 * 注册一个timer异步
 	 */
 	ScheduledFuture<?> registerTimer(long timestamp, ProcessingTimeCallback target);
 
