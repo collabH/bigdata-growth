@@ -4,7 +4,7 @@
 
 ### data
 
-* binary：blink中将原生planner的row格式修改为BinaryRow，减少序列化和让数据存储更加紧凑。
+* binary：blink中将原生planner的Row格式修改为BinaryRow，减少序列化和让数据存储更加紧凑。
 
 #### MemorySegment
 
@@ -259,7 +259,7 @@ public class PartitionTimeCommitTigger implements PartitionCommitTrigger {
 	}
 
 	/**
-	 * 苦熬找状态
+	 * 快照状态
 	 * @param checkpointId
 	 * @param watermark
 	 * @throws Exception
@@ -286,7 +286,7 @@ public class PartitionTimeCommitTigger implements PartitionCommitTrigger {
 
 #### ProcTimeCommitTigger
 
-* 
+* processTime提交触发器
 
 ```java
 public class ProcTimeCommitTigger implements PartitionCommitTrigger {
