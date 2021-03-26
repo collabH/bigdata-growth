@@ -4,11 +4,11 @@
 
 ### 配置概览
 
-![](./img/TaskExecutor内存配置.jpg)
+![](../img/TaskExecutor内存配置.jpg)
 
 ### 严格和非严格配置
 
-![](./img/Flink内存配置.jpg)
+![](../img/Flink内存配置.jpg)`
 
 * 不建议total process、total flink、task Heap&Managed同时配置两项以上，因为子项和总内存都配置的话会因为严格匹配的原因导致冲突，所以其中至少有一项配置。
 
