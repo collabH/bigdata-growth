@@ -10,7 +10,7 @@
 
 ![](../img/Flink内存配置.jpg)`
 
-* 不建议total process、total flink、task Heap&Managed同时配置两项以上，因为子项和总内存都配置的话会因为严格匹配的原因导致冲突，所以其中至少有一项配置。
+* 不建议`total process`、`total flink`、`task Heap&Managed`同时配置两项以上，因为子项和总内存都配置的话会因为严格匹配的原因导致冲突，所以其中至少有一项配置。
 
 ### 配置参数描述
 
@@ -33,11 +33,11 @@
 
 ![Simple memory model](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/detailed-mem-model.svg)
 
-![](./img/TaskExecutor内存模型.jpg)
+![](../img/TaskExecutor内存模型.jpg)
 
 #### Frameworks和Task 的区别
 
-![](./img/TaskExecutorFlink内存分布.jpg)
+![](../img/TaskExecutorFlink内存分布.jpg)
 
 * 区别:是否计入Slot资源
 * 总用量限制
@@ -83,7 +83,7 @@ subpartitions 下游subtask数量
   * 统一个TaskExecutor的各个slot之间严格隔离
   * 与性能挂钩
 * RocksDB内存限制
-  * state.backend.srocksdb.memory.managed(default:true)
+  * `state.backend.rocksdb.memory.managed(default:true)`
   * 设置RocksDB使用内存大小为Managed Memory大小
   * 目的:防止容器内存超用
 
@@ -106,14 +106,14 @@ subpartitions 下游subtask数量
 
 ###Java内存类型
 
-![](./img/Jvm内存分类.jpg)
+![](../img/Jvm内存分类.jpg)
 
 * Heap和OffHeap
 * 底层又分为Young和Old区域
 
 ### Heap Memory特性
 
-* 包括:Framework Heap Memory和Task heap Memory
+* 包括:`Framework Heap Memory`和`Task heap Memory` 
 * 用量上限受于JVM控制
   * -Xmx:Framework Heap+Task heap
   * 达到上限后触发GC
@@ -125,7 +125,7 @@ subpartitions 下游subtask数量
 
 * 包括Framework和Task的Off-Heap以及Netowrk memory
 * 用量受-XX:MaxDirectMemorySize限制
-* 达到上限时触发GC，GC后仍然空间不足触发OOM异常并推出
+* 达到上限时触发GC，GC后仍然空间不足触发OOM异常并退出
 
 #### Metaspace
 
