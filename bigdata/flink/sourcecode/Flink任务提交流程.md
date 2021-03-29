@@ -5,6 +5,7 @@
 ## 提交脚本分析
 
 * `flink run`入口类`org.apache.flink.client.cli.CliFrontend `，通过`config.sh`读取Flink相关环境信息；
+* 核心逻辑main方法，具体代码分析可以跟进`CliFrontend#run`方法
 
 ```java
 public static void main(final String[] args) {
@@ -43,4 +44,3 @@ public static void main(final String[] args) {
 		}
 	}
 ```
-
