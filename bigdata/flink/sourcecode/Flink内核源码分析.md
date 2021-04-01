@@ -45,5 +45,5 @@ public static void main(final String[] args) {
 	}
 ```
 
-
+* 提交流程创建对应的AM、RM、Dispatcher，核型流程查看flink源码
 
