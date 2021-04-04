@@ -149,3 +149,21 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 ```
 
 * 核心逻辑查看github flink源码的StreamGraph和StreamNode及StreamEdge相关源码。
+
+## JobGraph在Client生成
+
+### JobGraph生成流程
+
+```
+-->PipelineExecutor#execute()
+   -->PipelineExecutorUtils.getJobGraph(pipeline, configuration);
+      -->StreamGraphTranslator#translateToJobGraph
+```
+
+
+
+### StreamGraph到JobGraph的转换
+
+* StreamNode转换JobVertex
+* StreamEdge转换JobEdge
+* JobEdge和JobVertex之间创建IntermediateDataSet来连接
