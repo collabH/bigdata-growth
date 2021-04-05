@@ -160,10 +160,11 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
       -->StreamGraphTranslator#translateToJobGraph
 ```
 
-
-
 ### StreamGraph到JobGraph的转换
 
 * StreamNode转换JobVertex
+  * 每个JobVertex都对应可序列化的StreamConfig，用来发送给JobManager和TaskManager。最后在TM中起Task时，需要从这里反序列化出所需要的配置信息，包含用户代码含有的StreamOpeator。
+  * setChaining会对source调用createChain方法，将StreamNode转换成JobVertex放置在内存里，并将配置放入StreamConfig中。
 * StreamEdge转换JobEdge
 * JobEdge和JobVertex之间创建IntermediateDataSet来连接
+  * connect方法创建JobEdge和创建中间结果集连接。
