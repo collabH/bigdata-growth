@@ -168,3 +168,21 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 * StreamEdge转换JobEdge
 * JobEdge和JobVertex之间创建IntermediateDataSet来连接
   * connect方法创建JobEdge和创建中间结果集连接。
+
+## ExecutionGraph在JobManager生成
+
+* 将JobGraph并行化，JobVertex转换为ExecutionJobVertex，interalmediaDataset转换IntermediateResult，JobEdge转换ExecutionJobEdge。
+
+### ExecutionGraph生成方式
+
+```
+-->Dispatcher#runJob()
+	-->Dispatcher#createJobManagerRunner
+		 -->DefaultJobManagerRunnerFactory#createJobManagerRunner
+		   -->DefaultJobMasterServiceFactory#createJobMasterService
+		   		-->JobMaster构造方法的createScheduler方法
+		   			-->DefaultSchedulerFactory#createInstance
+		   			   -->SchedulerBase#createAndRestoreExecutionGraph
+```
+
+* createAndRestoreExecutionGraph内部涉及到jobGraph各个组件转换的ExecutionGraph的操作。
