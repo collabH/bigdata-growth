@@ -186,3 +186,49 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 ```
 
 * createAndRestoreExecutionGraph内部涉及到jobGraph各个组件转换的ExecutionGraph的操作。
+
+## 物理执行图(Task的调度和执行)
+
+* ExecutionGraph各个组件拆分执行逻辑流程
+
+```
+-->JobMaster#startJobExecution
+	-->JobMaster#resetAndStartScheduler
+		-->SchedulerBase#startScheduling
+			-->SchedulerBase#startSchedulingInternal
+				-->DefaultScheduler#startScheduling
+					-->PipelinedRegionSchedulingStrategy#startScheduling 默认调度策略
+						-->PipelinedRegionSchedulingStrategy#maybeScheduleRegions
+							-->DefaultScheduler#allocateSlotsAndDeploy
+								-->Execution#deploy
+```
+
+### Task执行
+
+```
+-->TaskManangerGateway#submitTask
+	-->RpcTaskManangerGateway#submitTask
+		-->TaskExecutor#submitTask
+			-->Task#startTaskThread
+				-->StreamTask#invoke
+					-->MailboxProcessor#runMailboxLoop
+```
+
+## 调度
+
+### 调度器
+
+* SchedulerNG及其子类、实现类
+
+#### 作用
+
+* 作业的生命周期管理，
+
+### 调度行为
+
+### 调度模式
+
+### 调度策略
+
+
+
