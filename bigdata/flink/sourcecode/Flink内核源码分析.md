@@ -222,13 +222,34 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 
 #### 作用
 
-* 作业的生命周期管理，
+* 作业的生命周期管理，如作业的发布、挂起、取消。
+* 作业执行资源的申请、分配、释放。
+* 作业的状态管理，作业发布过程中的状态变化和作业异常时的FailOver等。
+* 作业的信息提供，对外提供作业的详细信息。
 
-### 调度行为
+#### 实现类
+
+* SchedulerBase、DefaultScheduler
 
 ### 调度模式
 
+* 主要分为流和批次
+
+#### Eager调度
+
+* 适用于流计算，一次性申请需要的所有资源，如资源不足，则作业启动失败。
+
+#### 分阶段调度
+
+* LAZY_FROM_SOURCES适用于批处理，聪SourceTask开始分阶段调度，申请资源的时候，一次性申请本阶段所需要的所有资源。上游Task执行完毕后开始调度执行下游的Task，读取上游的数据，执行本阶段的计算任务，执行完毕之后，调度后一个阶段的Task，依次进行调度，直到作业完成。
+
+#### 分阶段Slot重用调度
+
+* LAZY_FROM_SOURCES_WITH_BATCH_SLOT_REQUEST适用于批处理。与分阶段调度基本一样，区别在于该模式下适用批处理资源申请模式，可以在资源不足的情况下执行作业，但是需要确保在本阶段的作业执行中没有Shuffle行为。
+
 ### 调度策略
 
-
-
+* SchedulingStrategy
+  * EagerSchedulingStrategy:适用于流计算，同时调度所有的task
+  * LazyFromSourcesSchedulingStrategy:适用于批计算，当输入数据准备好时(上游处理完)进行vertices调度。
+  * PipelinedRegionSchedulingStrategy:以流水线的局部为粒度进行调度。从1.11加入，1.12开始作为任务的默认调度策略。
