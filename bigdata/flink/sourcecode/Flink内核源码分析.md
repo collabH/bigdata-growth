@@ -137,6 +137,10 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
   * InputGate:代表Task的输入封装，和JobGraph中JobEdge一一对应。每个InputGate消费一个或多个ResultPArtition。
   * InputChannel:每个InputGate会包含一个以上的InputChannel，和ExecutionGraph的ExecutionEdge一一对应，也和ResultSubPartition一对一地相连，即一个InputChannel接收一个ResultSubPartition的输出。
 
+## Task任务调度
+
+![](../img/Task任务调度.jpg)
+
 ## StreamGraph在Client生成
 
 * StreamExecutionEnvironment.execute()
@@ -253,3 +257,6 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
   * EagerSchedulingStrategy:适用于流计算，同时调度所有的task
   * LazyFromSourcesSchedulingStrategy:适用于批计算，当输入数据准备好时(上游处理完)进行vertices调度。
   * PipelinedRegionSchedulingStrategy:以流水线的局部为粒度进行调度。从1.11加入，1.12开始作为任务的默认调度策略。
+
+# 内存管理
+
