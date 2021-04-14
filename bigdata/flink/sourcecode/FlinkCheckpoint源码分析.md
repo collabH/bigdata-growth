@@ -23,11 +23,11 @@
 	-->ExecutionGraph#enableCheckpointing
 ```
 
-# Checkpoint恢复机制
-
-* 生成`ExecutionGraph`时会尝试恢复历史状态
+# Checkpoint机制
 
 ## 恢复状态流程
+
+* 生成`ExecutionGraph`时会尝试恢复历史状态
 
 ```java
 private ExecutionGraph createAndRestoreExecutionGraph(
@@ -200,4 +200,6 @@ private boolean restoreLatestCheckpointedStateInternal(
 		}
 	}
 ```
+
+## Checkpoint机制
 
