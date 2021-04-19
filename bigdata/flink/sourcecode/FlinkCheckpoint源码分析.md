@@ -1,3 +1,605 @@
+# Checkpoint模块分配
+
+* checkpoint
+  * channel:数据管道，包含checkpoint的读写
+  * hooks:钩子函数
+  * metadata:元数据
+
+## Channel模块
+
+### 核心对象
+
+#### inputChannelInfo
+
+```java
+/**
+ * 最终的物理执行层inputchannel信息，包含一个inputgate index和inputchannel index，gate和channel 1对多
+ * 标识inputChannel给定的一个子任务
+ * Identifies {@link org.apache.flink.runtime.io.network.partition.consumer.InputChannel} in a given subtask.
+ * Note that {@link org.apache.flink.runtime.io.network.partition.consumer.InputChannelID InputChannelID}
+ * can not be used because it is generated randomly.
+ */
+@Internal
+public class InputChannelInfo implements Serializable {
+	private static final long serialVersionUID = 1L;
+
+	// inputgate index
+	private final int gateIdx;
+	// inputChannel index
+	private final int inputChannelIdx;
+
+	public InputChannelInfo(int gateIdx, int inputChannelIdx) {
+		this.gateIdx = gateIdx;
+		this.inputChannelIdx = inputChannelIdx;
+	}
+
+	public int getGateIdx() {
+		return gateIdx;
+	}
+
+	public int getInputChannelIdx() {
+		return inputChannelIdx;
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (o == null || getClass() != o.getClass()) {
+			return false;
+		}
+		final InputChannelInfo that = (InputChannelInfo) o;
+		return gateIdx == that.gateIdx && inputChannelIdx == that.inputChannelIdx;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(gateIdx, inputChannelIdx);
+	}
+
+	@Override
+	public String toString() {
+		return "InputChannelInfo{" + "gateIdx=" + gateIdx + ", inputChannelIdx=" + inputChannelIdx + '}';
+	}
+}
+```
+
+#### ResultSubpartitionInfo
+
+```java
+@Internal
+public class ResultSubpartitionInfo implements Serializable {
+	private static final long serialVersionUID = 1L;
+
+	// partition index 一般一个并行度一个
+	private final int partitionIdx;
+	// sub partition index 一般为上游和下游并行度的乘积
+	private final int subPartitionIdx;
+
+	public ResultSubpartitionInfo(int partitionIdx, int subPartitionIdx) {
+		this.partitionIdx = partitionIdx;
+		this.subPartitionIdx = subPartitionIdx;
+	}
+
+	public int getPartitionIdx() {
+		return partitionIdx;
+	}
+
+	public int getSubPartitionIdx() {
+		return subPartitionIdx;
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (o == null || getClass() != o.getClass()) {
+			return false;
+		}
+		final ResultSubpartitionInfo that = (ResultSubpartitionInfo) o;
+		return partitionIdx == that.partitionIdx && subPartitionIdx == that.subPartitionIdx;
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(partitionIdx, subPartitionIdx);
+	}
+
+	@Override
+	public String toString() {
+		return "ResultSubpartitionInfo{" + "partitionIdx=" + partitionIdx + ", subPartitionIdx=" + subPartitionIdx + '}';
+	}
+}
+```
+
+
+
+### state reader
+
+* 读取状态的数据管道，用于判断管道内是否还有状态，读取输入/输出数据。
+
+```java
+@Internal
+public interface ChannelStateReader extends AutoCloseable {
+
+	/**
+	 * Status of reading result.
+	 * 读取状态的结果
+	 */
+	enum ReadResult { HAS_MORE_DATA, NO_MORE_DATA }
+
+	/**
+	 * Return whether there are any channel states to be read.
+	 */
+	boolean hasChannelStates();
+
+	/**
+	 * Put data into the supplied buffer to be injected into
+	 * {@link org.apache.flink.runtime.io.network.partition.consumer.InputChannel InputChannel}.
+	 */
+	ReadResult readInputData(InputChannelInfo info, Buffer buffer) throws IOException;
+
+	/**
+	 * Put data into the supplied buffer to be injected into
+	 * {@link org.apache.flink.runtime.io.network.partition.ResultSubpartition ResultSubpartition}.
+	 */
+	ReadResult readOutputData(ResultSubpartitionInfo info, BufferBuilder bufferBuilder) throws IOException;
+
+	@Override
+	void close() throws Exception;
+
+	/**
+	 * 不进行操作
+	 */
+	ChannelStateReader NO_OP = new ChannelStateReader() {
+
+		@Override
+		public boolean hasChannelStates() {
+			return false;
+		}
+
+		@Override
+		public ReadResult readInputData(InputChannelInfo info, Buffer buffer) {
+			return ReadResult.NO_MORE_DATA;
+		}
+
+		@Override
+		public ReadResult readOutputData(ResultSubpartitionInfo info, BufferBuilder bufferBuilder) {
+			return ReadResult.NO_MORE_DATA;
+		}
+
+		@Override
+		public void close() {
+		}
+	};
+}
+
+public class ChannelStateReaderImpl implements ChannelStateReader {
+	private static final Logger log = LoggerFactory.getLogger(ChannelStateReaderImpl.class);
+
+
+	/**
+	 * 俩个结果集更执行图有关，最终执行图从task-》inputchannel-》ResultSubpartition
+	 */
+	// 输出管道处理器
+	private final Map<InputChannelInfo, ChannelStateStreamReader> inputChannelHandleReaders;
+	// 结果子分区处理器
+	private final Map<ResultSubpartitionInfo, ChannelStateStreamReader> resultSubpartitionHandleReaders;
+	// 是否关闭
+	private boolean isClosed = false;
+
+	public ChannelStateReaderImpl(TaskStateSnapshot snapshot) {
+		this(snapshot, new ChannelStateSerializerImpl());
+	}
+
+	ChannelStateReaderImpl(TaskStateSnapshot snapshot, ChannelStateSerializer serializer) {
+		RefCountingFSDataInputStreamFactory streamFactory = new RefCountingFSDataInputStreamFactory(serializer);
+		final HashMap<InputChannelInfo, ChannelStateStreamReader> inputChannelHandleReadersTmp = new HashMap<>();
+		final HashMap<ResultSubpartitionInfo, ChannelStateStreamReader> resultSubpartitionHandleReadersTmp = new HashMap<>();
+		for (Map.Entry<OperatorID, OperatorSubtaskState> e : snapshot.getSubtaskStateMappings()) {
+			addReaders(inputChannelHandleReadersTmp, e.getValue().getInputChannelState(), streamFactory);
+			addReaders(resultSubpartitionHandleReadersTmp, e.getValue().getResultSubpartitionState(), streamFactory);
+		}
+		inputChannelHandleReaders = inputChannelHandleReadersTmp; // memory barrier to allow another thread call clear()
+		resultSubpartitionHandleReaders = resultSubpartitionHandleReadersTmp; // memory barrier to allow another thread call clear()
+	}
+
+	private <T> void addReaders(
+			Map<T, ChannelStateStreamReader> readerMap,
+			Collection<? extends AbstractChannelStateHandle<T>> handles,
+			RefCountingFSDataInputStreamFactory streamFactory) {
+		for (AbstractChannelStateHandle<T> handle : handles) {
+			checkState(!readerMap.containsKey(handle.getInfo()), "multiple states exist for channel: " + handle.getInfo());
+			readerMap.put(handle.getInfo(), new ChannelStateStreamReader(handle, streamFactory));
+		}
+	}
+
+	@Override
+	public boolean hasChannelStates() {
+		return !(inputChannelHandleReaders.isEmpty() && resultSubpartitionHandleReaders.isEmpty());
+	}
+
+	@Override
+	public ReadResult readInputData(InputChannelInfo info, Buffer buffer) throws IOException {
+		Preconditions.checkState(!isClosed, "reader is closed");
+		log.debug("readInputData, resultSubpartitionInfo: {} , buffer {}", info, buffer);
+		ChannelStateStreamReader reader = inputChannelHandleReaders.get(info);
+		// 数据放入Buffer
+		return reader == null ? ReadResult.NO_MORE_DATA : reader.readInto(buffer);
+	}
+
+	@Override
+	public ReadResult readOutputData(ResultSubpartitionInfo info, BufferBuilder bufferBuilder) throws IOException {
+		Preconditions.checkState(!isClosed, "reader is closed");
+		log.debug("readOutputData, resultSubpartitionInfo: {} , bufferBuilder {}", info, bufferBuilder);
+		ChannelStateStreamReader reader = resultSubpartitionHandleReaders.get(info);
+		return reader == null ? ReadResult.NO_MORE_DATA : reader.readInto(bufferBuilder);
+	}
+
+	@Override
+	public void close() throws Exception {
+		isClosed = true;
+		try (Closer closer = Closer.create()) {
+			for (Map<?, ChannelStateStreamReader> map : asList(inputChannelHandleReaders, resultSubpartitionHandleReaders)) {
+				for (ChannelStateStreamReader reader : map.values()) {
+					closer.register(reader);
+				}
+				map.clear();
+			}
+		}
+	}
+
+}
+```
+
+### state writer
+
+* checkpoint/savepoint写入器
+
+```java
+public interface ChannelStateWriter extends Closeable {
+
+	/**
+	 * Channel state write result.
+	 */
+	class ChannelStateWriteResult {
+		final CompletableFuture<Collection<InputChannelStateHandle>> inputChannelStateHandles;
+		final CompletableFuture<Collection<ResultSubpartitionStateHandle>> resultSubpartitionStateHandles;
+
+		ChannelStateWriteResult() {
+			this(new CompletableFuture<>(), new CompletableFuture<>());
+		}
+
+		ChannelStateWriteResult(
+				CompletableFuture<Collection<InputChannelStateHandle>> inputChannelStateHandles,
+				CompletableFuture<Collection<ResultSubpartitionStateHandle>> resultSubpartitionStateHandles) {
+			this.inputChannelStateHandles = inputChannelStateHandles;
+			this.resultSubpartitionStateHandles = resultSubpartitionStateHandles;
+		}
+
+		public CompletableFuture<Collection<InputChannelStateHandle>> getInputChannelStateHandles() {
+			return inputChannelStateHandles;
+		}
+
+		public CompletableFuture<Collection<ResultSubpartitionStateHandle>> getResultSubpartitionStateHandles() {
+			return resultSubpartitionStateHandles;
+		}
+
+		public static final ChannelStateWriteResult EMPTY = new ChannelStateWriteResult(
+			CompletableFuture.completedFuture(Collections.emptyList()),
+			CompletableFuture.completedFuture(Collections.emptyList())
+		);
+
+		public void fail(Throwable e) {
+			inputChannelStateHandles.completeExceptionally(e);
+			resultSubpartitionStateHandles.completeExceptionally(e);
+		}
+
+		boolean isDone() {
+			return inputChannelStateHandles.isDone() && resultSubpartitionStateHandles.isDone();
+		}
+	}
+
+	/**
+	 * Sequence number for the buffers that were saved during the previous execution attempt; then restored; and now are
+	 * to be saved again (as opposed to the buffers received from the upstream or from the operator).
+	 */
+	int SEQUENCE_NUMBER_RESTORED = -1;
+
+	/**
+	 * Signifies that buffer sequence number is unknown (e.g. if passing sequence numbers is not implemented).
+	 */
+	int SEQUENCE_NUMBER_UNKNOWN = -2;
+
+	/**
+	 * Initiate write of channel state for the given checkpoint id.
+	 */
+	void start(long checkpointId, CheckpointOptions checkpointOptions);
+
+	/**
+	 * Add in-flight buffers from the {@link org.apache.flink.runtime.io.network.partition.consumer.InputChannel InputChannel}.
+	 * Must be called after {@link #start} (long)} and before {@link #finishInput(long)}.
+	 * Buffers are recycled after they are written or exception occurs.
+	 * @param startSeqNum sequence number of the 1st passed buffer.
+	 *                    It is intended to use for incremental snapshots.
+	 *                    If no data is passed it is ignored.
+	 * @param data zero or more <b>data</b> buffers ordered by their sequence numbers
+	 * @see org.apache.flink.runtime.checkpoint.channel.ChannelStateWriter#SEQUENCE_NUMBER_RESTORED
+	 * @see org.apache.flink.runtime.checkpoint.channel.ChannelStateWriter#SEQUENCE_NUMBER_UNKNOWN
+	 */
+	void addInputData(long checkpointId, InputChannelInfo info, int startSeqNum, CloseableIterator<Buffer> data);
+
+	/**
+	 * Add in-flight buffers from the {@link org.apache.flink.runtime.io.network.partition.ResultSubpartition ResultSubpartition}.
+	 * Must be called after {@link #start} and before {@link #finishOutput(long)}.
+	 * Buffers are recycled after they are written or exception occurs.
+	 * @param startSeqNum sequence number of the 1st passed buffer.
+	 *                    It is intended to use for incremental snapshots.
+	 *                    If no data is passed it is ignored.
+	 * @param data zero or more <b>data</b> buffers ordered by their sequence numbers
+	 * @throws IllegalArgumentException if one or more passed buffers {@link Buffer#isBuffer()  isn't a buffer}
+	 * @see org.apache.flink.runtime.checkpoint.channel.ChannelStateWriter#SEQUENCE_NUMBER_RESTORED
+	 * @see org.apache.flink.runtime.checkpoint.channel.ChannelStateWriter#SEQUENCE_NUMBER_UNKNOWN
+	 */
+	void addOutputData(long checkpointId, ResultSubpartitionInfo info, int startSeqNum, Buffer... data) throws IllegalArgumentException;
+
+	/**
+	 * Finalize write of channel state data for the given checkpoint id.
+	 * Must be called after {@link #start(long, CheckpointOptions)} and all of the input data of the given checkpoint added.
+	 * When both {@link #finishInput} and {@link #finishOutput} were called the results can be (eventually) obtained
+	 * using {@link #getAndRemoveWriteResult}
+	 */
+	void finishInput(long checkpointId);
+
+	/**
+	 * Finalize write of channel state data for the given checkpoint id.
+	 * Must be called after {@link #start(long, CheckpointOptions)} and all of the output data of the given checkpoint added.
+	 * When both {@link #finishInput} and {@link #finishOutput} were called the results can be (eventually) obtained
+	 * using {@link #getAndRemoveWriteResult}
+	 */
+	void finishOutput(long checkpointId);
+
+	/**
+	 * Aborts the checkpoint and fails pending result for this checkpoint.
+	 * @param cleanup true if {@link #getAndRemoveWriteResult(long)} is not supposed to be called afterwards.
+	 */
+	void abort(long checkpointId, Throwable cause, boolean cleanup);
+
+	/**
+	 * Must be called after {@link #start(long, CheckpointOptions)} once.
+	 * @throws IllegalArgumentException if the passed checkpointId is not known.
+	 */
+	ChannelStateWriteResult getAndRemoveWriteResult(long checkpointId) throws IllegalArgumentException;
+
+	ChannelStateWriter NO_OP = new NoOpChannelStateWriter();
+
+	/**
+	 * No-op implementation of {@link ChannelStateWriter}.
+	 */
+	class NoOpChannelStateWriter implements ChannelStateWriter {
+		@Override
+		public void start(long checkpointId, CheckpointOptions checkpointOptions) {
+		}
+
+		@Override
+		public void addInputData(long checkpointId, InputChannelInfo info, int startSeqNum, CloseableIterator<Buffer> data) {
+		}
+
+		@Override
+		public void addOutputData(long checkpointId, ResultSubpartitionInfo info, int startSeqNum, Buffer... data) {
+		}
+
+		@Override
+		public void finishInput(long checkpointId) {
+		}
+
+		@Override
+		public void finishOutput(long checkpointId) {
+		}
+
+		@Override
+		public void abort(long checkpointId, Throwable cause, boolean cleanup) {
+		}
+
+		@Override
+		public ChannelStateWriteResult getAndRemoveWriteResult(long checkpointId) {
+			return new ChannelStateWriteResult(
+				CompletableFuture.completedFuture(Collections.emptyList()),
+				CompletableFuture.completedFuture(Collections.emptyList()));
+		}
+
+		@Override
+		public void close() {
+		}
+	}
+}
+
+// 实现类
+public class ChannelStateWriterImpl implements ChannelStateWriter {
+
+	private static final Logger LOG = LoggerFactory.getLogger(ChannelStateWriterImpl.class);
+	private static final int DEFAULT_MAX_CHECKPOINTS = 1000; // includes max-concurrent-checkpoints + checkpoints to be aborted (scheduled via mailbox)
+
+	private final String taskName;
+	private final ChannelStateWriteRequestExecutor executor;
+	private final ConcurrentMap<Long, ChannelStateWriteResult> results;
+	private final int maxCheckpoints;
+
+	/**
+	 * Creates a {@link ChannelStateWriterImpl} with {@link #DEFAULT_MAX_CHECKPOINTS} as {@link #maxCheckpoints}.
+	 */
+	public ChannelStateWriterImpl(String taskName, CheckpointStorageWorkerView streamFactoryResolver) {
+		this(taskName, streamFactoryResolver, DEFAULT_MAX_CHECKPOINTS);
+	}
+
+	/**
+	 * Creates a {@link ChannelStateWriterImpl} with {@link ChannelStateSerializerImpl default} {@link ChannelStateSerializer},
+	 * and a {@link ChannelStateWriteRequestExecutorImpl}.
+	 *  @param taskName
+	 * @param streamFactoryResolver a factory to obtain output stream factory for a given checkpoint
+	 * @param maxCheckpoints        maximum number of checkpoints to be written currently or finished but not taken yet.
+	 */
+	ChannelStateWriterImpl(String taskName, CheckpointStorageWorkerView streamFactoryResolver, int maxCheckpoints) {
+		this(
+			taskName,
+			new ConcurrentHashMap<>(maxCheckpoints),
+			new ChannelStateWriteRequestExecutorImpl(taskName, new ChannelStateWriteRequestDispatcherImpl(streamFactoryResolver, new ChannelStateSerializerImpl())),
+			maxCheckpoints);
+	}
+
+	ChannelStateWriterImpl(
+			String taskName,
+			ConcurrentMap<Long, ChannelStateWriteResult> results,
+			ChannelStateWriteRequestExecutor executor,
+			int maxCheckpoints) {
+		this.taskName = taskName;
+		this.results = results;
+		this.maxCheckpoints = maxCheckpoints;
+		this.executor = executor;
+	}
+
+	@Override
+	public void start(long checkpointId, CheckpointOptions checkpointOptions) {
+		LOG.debug("{} starting checkpoint {} ({})", taskName, checkpointId, checkpointOptions);
+		ChannelStateWriteResult result = new ChannelStateWriteResult();
+		// 发送checkpoint开启请求
+		ChannelStateWriteResult put = results.computeIfAbsent(checkpointId, id -> {
+			Preconditions.checkState(results.size() < maxCheckpoints, String.format("%s can't start %d, results.size() > maxCheckpoints: %d > %d", taskName, checkpointId, results.size(), maxCheckpoints));
+			// 发送请求
+			enqueue(new CheckpointStartRequest(checkpointId, result, checkpointOptions.getTargetLocation()), false);
+			return result;
+		});
+		Preconditions.checkArgument(put == result, taskName + " result future already present for checkpoint " + checkpointId);
+	}
+
+	@Override
+	public void addInputData(long checkpointId, InputChannelInfo info, int startSeqNum, CloseableIterator<Buffer> iterator) {
+		LOG.debug(
+			"{} adding input data, checkpoint {}, channel: {}, startSeqNum: {}",
+			taskName,
+			checkpointId,
+			info,
+			startSeqNum);
+		// 将inputChannel信息写入buffer迭代器
+		enqueue(write(checkpointId, info, iterator), false);
+	}
+
+	@Override
+	public void addOutputData(long checkpointId, ResultSubpartitionInfo info, int startSeqNum, Buffer... data) {
+		LOG.debug(
+			"{} adding output data, checkpoint {}, channel: {}, startSeqNum: {}, num buffers: {}",
+			taskName,
+			checkpointId,
+			info,
+			startSeqNum,
+			data == null ? 0 : data.length);
+		// 发送写请求
+		enqueue(write(checkpointId, info, data), false);
+	}
+
+	@Override
+	public void finishInput(long checkpointId) {
+		LOG.debug("{} finishing input data, checkpoint {}", taskName, checkpointId);
+		// 发送完成请求input
+		enqueue(completeInput(checkpointId), false);
+	}
+
+	@Override
+	public void finishOutput(long checkpointId) {
+		LOG.debug("{} finishing output data, checkpoint {}", taskName, checkpointId);
+		enqueue(completeOutput(checkpointId), false);
+	}
+
+	@Override
+	public void abort(long checkpointId, Throwable cause, boolean cleanup) {
+		LOG.debug("{} aborting, checkpoint {}", taskName, checkpointId);
+		// 中断开始的checkpoint和未开始的
+		enqueue(ChannelStateWriteRequest.abort(checkpointId, cause), true); // abort already started
+		enqueue(ChannelStateWriteRequest.abort(checkpointId, cause), false); // abort enqueued but not started
+		if (cleanup) {
+			results.remove(checkpointId);
+		}
+	}
+
+	@Override
+	public ChannelStateWriteResult getAndRemoveWriteResult(long checkpointId) {
+		LOG.debug("{} requested write result, checkpoint {}", taskName, checkpointId);
+		ChannelStateWriteResult result = results.remove(checkpointId);
+		Preconditions.checkArgument(result != null, taskName + " channel state write result not found for checkpoint " + checkpointId);
+		return result;
+	}
+
+	public void open() {
+		executor.start();
+	}
+
+	@Override
+	public void close() throws IOException {
+		LOG.debug("close, dropping checkpoints {}", results.keySet());
+		results.clear();
+		executor.close();
+	}
+
+	private void enqueue(ChannelStateWriteRequest request, boolean atTheFront) {
+		// state check and previous errors check are performed inside the worker
+		try {
+			if (atTheFront) {
+				executor.submitPriority(request);
+			} else {
+				// 提交checkpount请求
+				executor.submit(request);
+			}
+		} catch (Exception e) {
+			RuntimeException wrapped = new RuntimeException("unable to send request to worker", e);
+			try {
+				request.cancel(e);
+			} catch (Exception cancelException) {
+				wrapped.addSuppressed(cancelException);
+			}
+			throw wrapped;
+		}
+	}
+
+	private static String buildBufferTypeErrorMessage(Buffer buffer) {
+		try {
+			AbstractEvent event = EventSerializer.fromBuffer(buffer, ChannelStateWriterImpl.class.getClassLoader());
+			return String.format("Should be buffer but [%s] found", event);
+		}
+		catch (Exception ex) {
+			return "Should be buffer";
+		}
+	}
+}
+```
+
+### writer requset dispatcher
+
+```java
+/**
+ * 状态写请求分发器
+ */
+interface ChannelStateWriteRequestDispatcher {
+
+	// 分发请求
+	void dispatch(ChannelStateWriteRequest request) throws Exception;
+
+	// 错误
+	void fail(Throwable cause);
+
+	ChannelStateWriteRequestDispatcher NO_OP = new ChannelStateWriteRequestDispatcher() {
+		@Override
+		public void dispatch(ChannelStateWriteRequest request) {
+		}
+
+		@Override
+		public void fail(Throwable cause) {
+		}
+	};
+}
+```
+
 # checkpoint配置转换
 
 ## StreamExecutionEnvironment配置
