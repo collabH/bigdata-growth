@@ -600,6 +600,22 @@ interface ChannelStateWriteRequestDispatcher {
 }
 ```
 
+## Hooks模块
+
+* 核心执行checkpoint模块，包含出发ck，恢复ck等等
+
+### triggerHook
+
+* 触发checkpoint
+
+### restoreMasterHooks
+
+* 恢复checkpoint状态
+
+## Metadata模块
+
+
+
 # checkpoint配置转换
 
 ## StreamExecutionEnvironment配置
