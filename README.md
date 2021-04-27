@@ -209,6 +209,11 @@
 * [StreamSource源解析](bigdata/flink/sourcecode/StreamSource源解析.md)
 * [Flink状态管理与检查点机制](bigdata/flink/sourcecode/Flink状态管理与检查点机制.xmind)
 
+#### Book
+##### Flink内核原理与实现
+
+* [1-3章读书笔记](bigdata/flink/books/Flink内核原理与实现/1-3章读书笔记.xmind)
+
 #### Feature
 
 * [Flink1.12新特性](bigdata/flink/feature/Flink1.12新特性.md)
