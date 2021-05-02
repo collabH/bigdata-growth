@@ -44,6 +44,10 @@
 
 ## BigData
 
+### zeppelin
+
+* [zeppelin](bigdata/zeppelin/Zeppelin.xmind)
+
 ### datalake
 
 #### iceberg
