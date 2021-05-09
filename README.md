@@ -217,6 +217,8 @@
 ##### Flink内核原理与实现
 
 * [1-3章读书笔记](bigdata/flink/books/Flink内核原理与实现/1-3章读书笔记.xmind)
+* [第4章时间与窗口](bigdata/flink/books/Flink内核原理与实现/第4章时间与窗口.xmind)
+* [5-6章读书笔记](bigdata/flink/books/Flink内核原理与实现/5-6章读书笔记.xmind)
 
 #### Feature
 
