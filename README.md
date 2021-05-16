@@ -221,7 +221,8 @@
 * [5-6章读书笔记](bigdata/flink/books/Flink内核原理与实现/5-6章类型序列化和内存管理读书笔记.xmind)
 * [第7章状态原理](bigdata/flink/books/Flink内核原理与实现/第7章状态原理.xmind)
 * [第8章作业提交](bigdata/flink/books/Flink内核原理与实现/第8章作业提交.xmind)
-* [第9章作业提交](bigdata/flink/books/Flink内核原理与实现/第9章资源管理.xmind)
+* [第9章资源管理](bigdata/flink/books/Flink内核原理与实现/第9章资源管理.xmind)
+* [第10章作业调度](bigdata/flink/books/Flink内核原理与实现/第10章作业调度.xmind)
   
 
 #### Feature
