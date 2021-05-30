@@ -232,6 +232,7 @@
 * [第8章作业提交](bigdata/flink/books/Flink内核原理与实现/第8章作业提交.xmind)
 * [第9章资源管理](bigdata/flink/books/Flink内核原理与实现/第9章资源管理.xmind)
 * [第10章作业调度](bigdata/flink/books/Flink内核原理与实现/第10章作业调度.xmind)
+* [第11-13章Task执行数据交换等](bigdata/flink/books/Flink内核原理与实现/第11-13章Task执行数据交换等.md)
   
 
 #### Feature
