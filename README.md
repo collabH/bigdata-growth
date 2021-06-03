@@ -94,9 +94,10 @@
 
 * [Yarn快速入门](bigdata/hadoop/Yarn/YARN快速入门.md)
 
-#### 高可用配置
+#### 生产配置
 
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
+* [Hadoop生产相关配置](bigdata/hadoop/Hadoop相关组件生产级别配置.md)
 
 ### Canal
 
