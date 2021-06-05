@@ -292,6 +292,9 @@
 #### Impala
 
 * [ImpalaOverView](bigdata/olap/impala/ImpalaOverView.md)
+* [ImpalaSQL](bigdata/olap/impala/Impala%20SQL.xmind)
+* [Impala操作KUDU](bigdata/olap/impala/使用Impala查询Kudu表.md)
+* [Impala生产实践](bigdata/olap/impala/Impala生产实践.md)
 
 ## 数据仓库
 
