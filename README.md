@@ -187,6 +187,10 @@
 * [SqoopOverview](bigdata/sqoop/SqoopOverview.md)
 * [Sqoop实战操作](bigdata/sqoop/Sqoop实战操作.md)
 
+### Azkaban
+
+* [Azkaban生产实践](bigdata/scheduler/Azkaban生产实践.md)
+
 ### DolphinScheduler
 
 * [DolphinScheduler快速开始](bigdata/scheduler/DolphinScheduler快速开始.md)
@@ -284,6 +288,7 @@
 * [Kudu原理分析](bigdata/olap/kudu/Kudu原理分析.md)
 * [Kudu踩坑](bigdata/olap/kudu/Kudu踩坑.xmind)
 * [Kudu存储结构架构图](bigdata/olap/kudu/Kudu存储结构)
+* [Kudu生产实践](bigdata/olap/kudu/Kudu生产实践.md)
 
 ##### paper
 
