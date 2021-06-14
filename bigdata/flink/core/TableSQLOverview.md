@@ -550,3 +550,6 @@ env.setRestartStrategy(RestartStrategies.failureRateRestart(
 ));
 ```
 
+# Apache Calcite
+
+* Flink SQL基于Calcite实现，Calcite将SQL转换成关系代数或则通过Calcite提供的API直接创建它。
