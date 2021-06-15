@@ -2,6 +2,8 @@
 
 ## 基本程序结构
 
+![](../img/blinkcalctie.jpg)
+
 * Flink SQL基于Calcite实现，Calcite将SQL转换成关系代数或则通过Calcite提供的API直接创建它。
 * Table API和SQL的程序结构，与流式处理的程序结构十分类似
 
