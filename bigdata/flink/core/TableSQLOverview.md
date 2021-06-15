@@ -2,6 +2,7 @@
 
 ## 基本程序结构
 
+* Flink SQL基于Calcite实现，Calcite将SQL转换成关系代数或则通过Calcite提供的API直接创建它。
 * Table API和SQL的程序结构，与流式处理的程序结构十分类似
 
 ```java
@@ -194,6 +195,27 @@ WHERE rowNum <= 3
 
 * 在生成 Plan 方面，ROW_NUMBER 语义对应 OverAggregate 窗口节点和一个过滤行数的 Calc 节点，而这个窗口节点在实现层面需要为每一个到达的数据重新将 State 中的历史数据拿出来排序，这显然不是最优解。
 * 我们知道流式场景求解极大 / 小值的最优操作是通过维护一个 size 为 N 的 minHeap / maxHeap。由实现反推出我们需要在优化器上新增一条规则，在遇到 ROW_NUMBER 生成的逻辑节点后，将其优化为一个特殊的 Rank 节点，对应上述的最优实现方式（当然这只是特殊 Rank 对应的其中一种实现）。这便是 Top-N Rewrite 的核心思想。
+
+# Table&SQL API
+
+## Table API类型转换
+
+* WindowTable在1.13后发生改变，对window语法也进行了修改。
+
+![](../img/TableAPi.png)
+
+* Table:Table APIDE核心接口
+* GroupedTable:在Table上使用列、表达式(不包含时间窗口)、两者组合进行分组之后的Table，可以理解为对Table进行GroupBy运算。
+* GroupWindowedTable:使用格式件窗口分组后的Table，按照时间对数据进行切分，时间窗口必须是GroupBy中的第一项，且每个GroupBy只支持一个窗口。
+* WindowedGroupTable:GroupWindowdTable和WindowedGroupTable一般组合使用，在GroupWindowedTable上再按照字段进行GroupBy运算后的Table
+* AggregatedTable:对分组之后的Table（如GroupedTable和WindowedGroupTable）执行AggregationFunction聚合函数的结果
+* FlatAggregateTable:对分组之后的Table（如GroupedTable和WindowedGroupTable）执行TableAggregationFunction（表聚合函数）的结果
+
+## Flink SQL
+
+* DQL：查询语句
+* DML：INSERT语句，不包含UPDATE、DELETE语句，后面这两类语句的运算实际上在Flink SQL中也有体现，通过Retract召回实现了流上的UPDATE和DELETE。
+* DDL：Create、Drop、Alter语句
 
 # Catalogs
 
@@ -550,6 +572,3 @@ env.setRestartStrategy(RestartStrategies.failureRateRestart(
 ));
 ```
 
-# Apache Calcite
-
-* Flink SQL基于Calcite实现，Calcite将SQL转换成关系代数或则通过Calcite提供的API直接创建它。
