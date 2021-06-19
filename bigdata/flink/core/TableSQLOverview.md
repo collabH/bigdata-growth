@@ -103,8 +103,18 @@ table.executeInsert()
 ## Blink Planner架构
 
 * Blink Planner将批 SQL 处理作为流 SQL 处理的特例，尽量对通用的处理和优化逻辑进行抽象和复用，通过 Flink 内部的 Stream Transformation API 实现流 & 批的统一处理，替代原 Flink Planner 将流 & 批区分处理的方式。
+* 从SQL语句到Operation，再转换为Transformation，最后转换为Execution执行。
 
 ![](../img/BlinkPlanner架构.jpg)
+
+### 从SQL到Operation
+
+* Blink ParserImpl#parse将SQL语句生成为Operation树，生成新的Table对象。
+  * 1） 解析SQL字符串转换为QueryOperation。2） SQL字符串解析为SqlNode。3）校验SqlNode。4）调用Calcite SQLToRelConverter将SqlNode转换为RelNode逻辑树。5）RelNode转换为Operation。
+
+### Operation到Transformation
+
+
 
 ## Flink SQL工作流
 
