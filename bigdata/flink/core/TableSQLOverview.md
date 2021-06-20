@@ -114,7 +114,7 @@ table.executeInsert()
 
 ### Operation到Transformation
 
-
+* DQL、DML转换，ModifyOperation→RelNode→FlinkPhysicalRel→ExecNode→Transformation。
 
 ## Flink SQL工作流
 
