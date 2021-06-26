@@ -116,6 +116,16 @@ table.executeInsert()
 
 * DQL、DML转换，ModifyOperation→RelNode→FlinkPhysicalRel→ExecNode→Transformation。
 
+### Blink优化
+
+#### 优化器
+
+* Blink没有使用Calcite的优化器，而是通过规则组合和Calcite优化器的组合，分为为流和批实现了自定义的优化器。
+
+![](../books/Flink内核原理与实现/img/Blink优化器.jpg)
+
+
+
 ## Flink SQL工作流
 
 ![](../img/FlinkSQL工作流.jpeg)
@@ -172,6 +182,19 @@ table.executeInsert()
    * 在1 中优化器自底向上推导出了每个节点对应的 Changelog 变更操作，这一步里会先自顶向下推断当前节点需要父节点提供的消息类型，直到遇到第一个不需要父节点提供任何消息类型的节点，再往上回推每个节点最终的实现方式和需要的消息类型。
 
 ## Flink SQL内部优化
+
+### 查询优化器
+
+* 查询优化器分为两类：基于规则的优化器(Rule-Base Optimizer,RBO)和基于代价的优化器(Cost-Based Optimizer,CBO);
+
+#### RBO
+
+* RBO根据事先设定好的优化规则对SQL计划树进行转换，降低计算成本。只要SQL语句相同，应用完规则就会得到相同的SQL物理执行计划，也就是说RBO并不考虑数据的规模、数据倾斜等问题，对数据不敏感，导致优化后的执行计划往往并不是最优的。这就要求SQL的使用者了解更多的RBO的规则，使用门槛更高。
+
+#### CBO
+
+* CBO优化器根据事先设定好的优化规则对SQL计划树反复应用规则，SQL语句生成一组可能被使用的执行计划，然后CBO会根据统计信息和代价模型（Cost Model）计算每个执行计划的代价，从中挑选代价最小的执行计划。由上可知，CBO中有两个依赖：统计信息和代价模型。统计信息的准确与否、代价模型的合理与否都会影响CBO选择最优计划。
+* 一般情况下，CBO是优于RBO的，原因是RBO是一种只认规则，只针对数据不敏感的过时的优化器。在实际场景中，数据往往是有变化的，通过RBO生成的执行计划很有可能不是最优的。
 
 ### BinaryRow
 
