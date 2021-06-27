@@ -124,7 +124,9 @@ table.executeInsert()
 
 ![](../books/Flink内核原理与实现/img/Blink优化器.jpg)
 
+#### 代价计算
 
+* 代价计算通过数据量、CPU资源使用、内存资源使用、IO资源使用和网络资源使用来进行计算。
 
 ## Flink SQL工作流
 
