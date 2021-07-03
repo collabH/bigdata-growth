@@ -20,4 +20,23 @@
 
 # 指标组
 
-* Flink指标体系是一个树形结构
+* Flink指标体系是一个树形结构，域是顶层分支，表示指标的大的分类。
+
+```
+<host>.taskmanger.<tm_id>.<job_name>.<operator_name>.<subtask_index>
+```
+
+![](../img/指标中心.jpg)
+
+# 监控集成
+
+## MetricReporter主动集成
+
+* 通过反射机制实例化MetricReporter，MetricReporter的实现类必须是public的访问修饰符，不能是抽象类，必须有一个无参构造函数。
+* 使用MetricReporterFactory工厂模式实例化MetricReporter
+* flink官方提供JMX、Graphite、InfluxDB、Prometheus、PrometheusPushGateway、StatsD、Datadog和Slf4j8种方式
+
+## Rest API监控接口被动集成
+
+* Flink提供Rest API监控接口，被动接收外部应用的调用，返回集群、组件、作业、Task、算子的状态。
+* 具体可以查看官方文档Monitor部分。
