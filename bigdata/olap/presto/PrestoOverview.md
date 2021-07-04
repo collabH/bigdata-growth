@@ -136,6 +136,7 @@ trino hard nofile 131072
 * jdk11之后，老版本jdk8
 * python执行环境2.6.x以上
 
-### 安装Trino
+### 安装presto
 
-* 选择Trino351版本的tra.gz包，https://repo1.maven.org/maven2/io/trino/trino-server/351/
+* https://github.com/prestodb/presto/archive/refs/tags/0.245.tar.gz
+* 
