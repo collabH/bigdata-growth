@@ -139,4 +139,25 @@ trino hard nofile 131072
 ### 安装presto
 
 * https://github.com/prestodb/presto/archive/refs/tags/0.245.tar.gz
-* 
+
+#### 编译代码
+
+* mvn -T2C install -DskipTests
+
+## 配置connector
+
+* hive.properties
+
+```
+connector.name=hive-cdh5
+hive.metastore.uri=thrift://hadoop:9083
+hive.config.resoureces=/core-site.xml,/hdfs-site.xml,mapred-site.xml
+hive.allow-drop-table=true
+hive.allow-rename-table=true
+```
+
+# Presto RestFul框架解析
+
+## Statement服务接口
+
+* StatementResource类定义了Statement全部接口
