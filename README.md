@@ -90,7 +90,7 @@
 * [MapReduce输入输出剖析](bigdata/hadoop/MapReduce/MapReduce输入输出剖析.md)
 * [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
 
-#### Yarn 
+#### Yarn
 
 * [Yarn快速入门](bigdata/hadoop/Yarn/YARN快速入门.md)
 
@@ -202,7 +202,7 @@
 #### Core
 
 * [FlinkOverView](bigdata/flink/core/FlinkOverview.md)
-* [CheckPoint机制](bigdata/flink/core/Checkpoint机制.md)  
+* [CheckPoint机制](bigdata/flink/core/Checkpoint机制.md)
 * [TableSQLOverview](bigdata/flink/core/TableSQLOverview.md)
 * [DataStream API](bigdata/flink/core/FlinkDataStream%20API.xmind)
 * [ProcessFunction API](bigdata/flink/core/ProcessFunction%20API.xmind)
@@ -218,7 +218,7 @@
 
 * [FlinkCheckpoint源码分析](bigdata/flink/sourcecode/FlinkCheckpoint源码分析.md)
 * [FlinkSQL源码解析](bigdata/flink/sourcecode/FlinkSQL源码解析.md)
-* [Flink内核源码分析](bigdata/flink/sourcecode/Flink内核源码分析.md)  
+* [Flink内核源码分析](bigdata/flink/sourcecode/Flink内核源码分析.md)
 * [Flink网络流控及反压](bigdata/flink/sourcecode/Flink网络流控及反压.md)
 * [TaskExecutor内存模型原理深入](bigdata/flink/sourcecode/TaskExecutor内存模型原理深入.md)
 * [Flink窗口实现应用](bigdata/flink/sourcecode/Flink窗口实现应用原理.md)
@@ -228,6 +228,7 @@
 * [Flink状态管理与检查点机制](bigdata/flink/sourcecode/Flink状态管理与检查点机制.xmind)
 
 #### Book
+
 ##### Flink内核原理与实现
 
 * [1-3章读书笔记](bigdata/flink/books/Flink内核原理与实现/1-3章读书笔记.xmind)
@@ -238,7 +239,6 @@
 * [第9章资源管理](bigdata/flink/books/Flink内核原理与实现/第9章资源管理.xmind)
 * [第10章作业调度](bigdata/flink/books/Flink内核原理与实现/第10章作业调度.xmind)
 * [第11-13章Task执行数据交换等](bigdata/flink/books/Flink内核原理与实现/第11-13章Task执行数据交换等.md)
-  
 
 #### Feature
 
@@ -248,7 +248,7 @@
 #### Practice
 
 * [Flink踩坑指南](bigdata/flink/practice/Flink踩坑.xmind)
-* [记录一次Flink反压问题](bigdata/flink/practice/记录一次Flink反压问题.md)  
+* [记录一次Flink反压问题](bigdata/flink/practice/记录一次Flink反压问题.md)
 * [Flink SQL实践调优](bigdata/flink/practice/Flink%20SQL调优.xmind)
 
 #### Connector
@@ -300,6 +300,12 @@
 * [ImpalaSQL](bigdata/olap/impala/Impala%20SQL.xmind)
 * [Impala操作KUDU](bigdata/olap/impala/使用Impala查询Kudu表.md)
 * [Impala生产实践](bigdata/olap/impala/Impala生产实践.md)
+
+### SQL语法树
+
+#### calcite
+
+* [ApacheCalciteOverView](bigdata/sqltree/calcite/CalciteOverView.md)
 
 ## 数据仓库
 
