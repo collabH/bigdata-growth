@@ -1,7 +1,6 @@
 # Hive架构图 
 
-<div align="center"> <img  src="./img/hive体系结构.jpg"/> </div>
-
+![](./img/hive体系结构.jpg)
 ## Client 
 
 
