@@ -93,3 +93,172 @@
 * iceberg.hive.lock-timeout-ms：默认18000，获取锁定的最长时间（以毫秒为单位）
 * iceberg.hive.lock-check-min-wait-ms:50,最小时间（以毫秒为单位），以检查锁获取状态
 * iceberg.hive.lock-check-max-wait-ms:5000,最长时间（以毫秒为单位），以检查锁获取状态
+
+## 支持的Schemas
+
+| Type               | Description                                                  | Notes                                  |
+| :----------------- | :----------------------------------------------------------- | :------------------------------------- |
+| **`boolean`**      | True or false                                                |                                        |
+| **`int`**          | 32-bit signed integers                                       | 可以存long                             |
+| **`long`**         | 64-bit signed integers                                       |                                        |
+| **`float`**        | [32-bit IEEE 754](https://en.wikipedia.org/wiki/IEEE_754) floating point | 可以存double                           |
+| **`double`**       | [64-bit IEEE 754](https://en.wikipedia.org/wiki/IEEE_754) floating point |                                        |
+| **`decimal(P,S)`** | Fixed-point decimal; precision P, scale S                    | precision必须小于等于38，scale是固定的 |
+| **`date`**         | Calendar date without timezone or time                       |                                        |
+| **`time`**         | Time of day without date, timezone                           | 存储微秒                               |
+| **`timestamp`**    | Timestamp without timezone                                   | 存储微秒                               |
+| **`timestamptz`**  | Timestamp with timezone                                      | 存储微秒                               |
+| **`string`**       | Arbitrary-length character sequences                         | Encoded with UTF-8                     |
+| **`fixed(L)`**     | Fixed-length byte array of length L                          |                                        |
+| **`binary`**       | Arbitrary-length byte array                                  |                                        |
+| **`struct<...>`**  | A record with named fields of any data type                  |                                        |
+| **`list<E>`**      | A list with elements of any data type                        |                                        |
+| **`map<K, V>`**    | A map with keys and values of any data type                  |                                        |
+
+## Partition
+
+### Iceberg分区的区别
+
+* 其他表格式像hive支持的分区，但是iceberg支持隐藏分区
+  * iceberg处理在表中为行产生分区值的繁琐且易于出错的任务
+  * Iceberg避免自动读取不必要的分区。消费者不需要知道表是如何分区的，也不需要在查询中添加额外的过滤器
+  * iceberg分区布局可以根据需要演变。
+
+#### 在Hive中的分区
+
+* 在Hive中，分区是显式的，并以列的形式出现，因此日志表将有一个名为事件日期的列。在写入时，插入需要为事件日期列提供数据
+
+```sql
+INSERT INTO logs PARTITION (event_date)
+  SELECT level, message, event_time, format_time(event_time, 'YYYY-MM-dd')
+  FROM unstructured_log_source
+```
+
+* 相似的，查询的时候如果需要分区过滤也必须带上分区
+
+```sql
+SELECT level, count(1) as count FROM logs
+WHERE event_time BETWEEN '2018-12-01 10:00:00' AND '2018-12-01 12:00:00'
+  AND event_date = '2018-12-01'
+```
+
+#### Hive分区存在的问题
+
+* hive必须给定分区值，这存在如下问题
+  * hive不能校验分区值，这取决于写入器产生的正确的值
+    * 使用错误的格式，2018-12-01而不是20181201，生成默默地不正确的结果，而不是查询故障
+    * 使用错误的源列，如processing_time或时区也会导致结果不正确，而不是故障
+  * 用户可以正确地编写查询
+    * 使用错误的格式也会导致默默错误的结果
+    * 不理解表物理布局的用户得到不必要的缓慢查询Hive不能自动翻译过滤器
+  * 工作查询与表的分区方案相关联，因此在不破坏查询的情况下无法更改分区配置
+
+#### iceberg的隐藏分区
+
+* iceberg通过采用列值和可选地转换它来产生分区值。 iceberg负责将Event_time转换为Event_date，并跟踪关系。
+* 表分区被配置使用这些关系，如logs表讲按照date(event_time)和level来分区
+* 因为Iceberg不需要用户维护的分区列，所以它可以隐藏分区。分区值每次都正确生成，并且在可能的情况下总是用于加快查询速度。生产者和消费者甚至看不到event_date。
+* 最重要的是，查询不再依赖于表的物理布局。通过物理和逻辑的分离，Iceberg表可以随着数据量的变化而演变分区方案。不需要进行昂贵的迁移就可以修复配置错误的表。
+
+## Table后期演变
+
+* Iceberg支持就地表演化。您可以像SQL一样演变表模式——甚至是嵌套结构——或者在数据量变化时更改分区布局。Iceberg不需要代价高昂的干扰，比如重写表数据或迁移到一个新表。
+* 例如，Hive表分区不能更改，所以从每日分区布局移动到每小时分区布局需要一个新的表。因为查询依赖于分区，所以必须为新表重写查询。在某些情况下，即使是像重命名列这样简单的更改也不受支持，或者会导致数据正确性问题。
+
+### Schema的演变
+
+* iceberg支持一下schema的变化
+  * ADD：添加一个新列到表里或者一个嵌套结构
+  * Drop：从表或嵌套结构中删除一个存在的列
+  * Rename：修改一个存在的列或嵌套结构的属性名
+  * Update：扩大列的类型，struct字段，地图键，映射值或列表元素
+  * reorder：更改嵌套结构中列或字段的顺序
+* iceberg架构更新是元数据更改，因此不需要重写数据文件以执行更新。请注意，map键不支持添加或删除会改变平等的结构字段。
+
+### 分区的演变
+
+* iceberg表分区可以在现有表中更新，因为查询不直接引用分区值。
+* 当您发展分区规范时，用早期规范写入的旧数据保持不变。 使用新布局使用新规格编写新数据。 每个分区版本的元数据单独保留。 因此，当您开始编写查询时，您会得到分割计划。 这是每个分区布局使用它所派生的筛选器分别计划文件的位置，其中它导出了该特定分区布局。 这是一个创新示例的视觉表示：
+
+![Partition evolution diagram](https://iceberg.apache.org/img/partition-spec-evolution.png)
+
+### Sort Order演变
+
+* 类似于分区规范，iceberg排序顺序也可以在现有表中更新。 当您发展排序顺序时，用早期订单写入的旧数据保持不变。 引擎总是可以选择以最新的排序顺序写入数据或在排序时不排序时未进行昂贵。
+
+```java
+Table sampleTable = ...;
+sampleTable.replaceSortOrder()
+   .asc("id", NullOrder.NULLS_LAST)
+   .dec("category", NullOrder.NULL_FIRST)
+   .commit();
+```
+
+## 表的维护
+
+### 推荐的维护方式
+
+#### 过期快照
+
+* 每个写入iceBerg表创建表的新快照或版本。 快照可以用于时间旅行查询，或者可以将表卷回任何有效快照。
+* 快照累积直到它们以expiresNapshots操作到期。 建议定期到期的快照删除不再需要的数据文件，并保持表元数据的大小。
+* 如下过期1天前的快照：
+
+```java
+Table table = ...
+long tsToExpire = System.currentTimeMillis() - (1000 * 60 * 60 * 24); // 1 day
+table.expireSnapshots()
+     .expireOlderThan(tsToExpire)
+     .commit();
+```
+
+#### 移除老的元数据文件
+
+* Iceberg使用JSON文件跟踪表元数据。对表的每个更改都会生成一个新的元数据文件，以提供原子性
+* 默认情况下，旧的元数据文件作为历史记录保存。频繁提交的表，比如那些由流作业编写的表，可能需要定期清理元数据文件。
+* 要自动清除元数据文件，请在表属性中设置`write.metadata.delete-after-commit.enabled = true`。 这将保留一些元数据文件（最多为`write.metadata.previous-versions-max`），并且在创建每个新建之后将删除最旧的元数据文件。
+
+#### 移除Remove文件
+
+* 在Spark等分布式处理引擎中，任务或作业失败可能会留下表元数据没有引用的文件，在某些情况下，正常的快照过期可能无法确定某个文件不再需要并删除它。
+* 如下方式清理没有引用的元数据文件:
+
+```java
+Table table = ...
+Actions.forTable(table)
+    .removeOrphanFiles()
+    .execute();
+```
+
+* 删除孤立文件的保留间隔小于完成任何写入的预期时间是危险的，因为如果将正在处理的文件视为孤立文件并删除，可能会破坏表。默认为3天。
+
+### 可选的维护方式
+
+#### 合并数据文件
+
+* Iceberg跟踪表中的每个数据文件。更多的数据文件会导致更多的元数据存储在清单文件中，而较小的数据文件会导致不必要的元数据数量和文件打开成本的低效率查询。
+* iceberg能够使用spark并行的合并数据文件通过`rewriteDataFiles`action，这将把小文件合并成更大的文件，以减少元数据开销和运行时文件打开成本。
+
+```java
+Table table = ...
+  // 合并8月18号的数据为500MB大小的文件
+Actions.forTable(table).rewriteDataFiles()
+    .filter(Expressions.equal("date", "2020-08-18"))
+    .targetSizeInBytes(500 * 1024 * 1024) // 500 MB
+    .execute();
+```
+
+#### 重写manifests
+
+* Iceberg在其清单列表和清单文件中使用元数据，加快了查询规划，并删除了不必要的数据文件。元数据树的作用是作为表数据的索引。
+* 元数据树中的清单按照添加的顺序自动压缩，这使得当写模式与读过滤器对齐时查询速度更快。例如，写入每小时分区的数据时，会与时间范围查询过滤器对齐。
+* 当表的写模式与查询模式不一致时，使用rewriteManifests或rewriteManifests动作(用于使用Spark的并行重写)重写元数据并将其重新分组为清单。
+
+```java
+Table table = ...
+table.rewriteManifests()
+    .rewriteIf(file -> file.length() < 10 * 1024 * 1024) // 10 MB
+    .clusterBy(file -> file.partition().get(0, Integer.class))
+    .commit();
+```
+
