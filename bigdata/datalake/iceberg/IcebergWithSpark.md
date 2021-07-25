@@ -150,3 +150,282 @@ CREATE TABLE prod.db.sample (
     data string)
 USING iceberg
 ```
+* PARTITION BY(partition-expressions):配置分区
+* LOCATION '(全路径存储地址)':配置表存储路径
+* COMMENT '表描述'
+* TBLPROPERTIES ('key'='value', ...):表配置[表配置](https://iceberg.apache.org/configuration/)
+
+### PARTITIONED BY
+* 使用category分区
+```sql
+CREATE TABLE prod.db.sample (
+    id bigint,
+    data string,
+    category string)
+USING iceberg
+PARTITIONED BY (category)
+```
+
+* 使用隐藏分区
+```sql
+CREATE TABLE prod.db.sample (
+    id bigint,
+    data string,
+    category string,
+    ts timestamp)
+USING iceberg
+PARTITIONED BY (bucket(16, id), days(ts), category)
+```
+* 支持的转换函数有:
+  * years(ts)
+  * months(ts)
+  * days(ts)/date(ts): 相当于yyyyMMdd
+  * hours(ts)/date_hour(ts):相当于yyyyMMdd HH分区
+  * bucket(N,col):根据col的hash值分成n个bucket
+  * truncate(L,col): 用L截断的值划分
+    * String会按照给定长度截断
+    * int和long类型类似与truncate(10,i)会分为0，10，20，30，...分区
+## CREATE TABLE ... AS SELECT
+
+* iceberg支持CTAS，SparkCatalog支持，SparkSessionCatalog不支持
+```sql
+CREATE TABLE prod.db.sample
+USING iceberg
+AS SELECT ...
+```
+
+## REPLACE TABLE ... AS SELECT
+* iceberg支持RTAS，SparkCatalog支持，SparkSessionCatalog不支持
+```sql
+REPLACE TABLE prod.db.sample
+USING iceberg
+AS SELECT ...
+```
+```sql
+CREATE OR REPLACE TABLE prod.db.sample
+USING iceberg
+AS SELECT ...
+```
+
+## ALTER TABLE
+* ALTER TABLE支持在spark 3，包含
+  * 重命名表
+  * 设置或移除表属性
+  * 添加、删除和改名列
+  * 添加删除和改名嵌套字段
+  * 重新排序顶级列和嵌套的结构字段
+  * 扩大int、float和decimal字段的类型
+  * 标记必须列为非必须
+### ALTER TABLE ... RENAME TO
+```sql
+ALTER TABLE prod.db.sample RENAME TO prod.db.new_name
+```
+
+### ALTER TABLE ... SET TBLPROPERTIES
+* 添加配置
+```sql
+ALTER TABLE prod.db.sample SET TBLPROPERTIES (
+    'read.split.target-size'='268435456'
+)
+```
+* 移除配置
+```sql
+ALTER TABLE prod.db.sample UNSET TBLPROPERTIES ('read.split.target-size')
+```
+
+### ALTER TABLE ... ADD COLUMN
+* 添加列
+```sql
+ALTER TABLE prod.db.sample
+ADD COLUMNS (
+    new_column string comment 'new_column docs'
+  )
+```
+
+* 添加嵌套结构
+```sql
+-- create a struct column
+ALTER TABLE prod.db.sample
+ADD COLUMN point struct<x: double, y: double>;
+
+-- add a field to the struct
+ALTER TABLE prod.db.sample
+ADD COLUMN point.z double
+```
+
+* Spark2.4之后可以使用FIRST和AFTER
+```sql
+ALTER TABLE prod.db.sample
+ADD COLUMN new_column bigint AFTER other_column
+
+ALTER TABLE prod.db.sample
+  ADD COLUMN nested.new_column bigint FIRST
+```
+
+### ALTER TABLE ... RENAME COLUMN
+```sql
+ALTER TABLE prod.db.sample RENAME COLUMN data TO payload
+ALTER TABLE prod.db.sample RENAME COLUMN location.lat TO latitude
+```
+
+### ALTER TABLE ... ALTER COLUMN
+* 修改列的类型
+```sql
+ALTER TABLE prod.db.sample ALTER COLUMN measurement TYPE double
+```
+* 修改列的类型和描述
+```sql
+ALTER TABLE prod.db.sample ALTER COLUMN measurement TYPE double COMMENT 'unit is bytes per second'
+ALTER TABLE prod.db.sample ALTER COLUMN measurement COMMENT 'unit is kilobytes per second'
+```
+
+* 使用First和After
+```sql
+ALTER TABLE prod.db.sample ALTER COLUMN col FIRST
+ALTER TABLE prod.db.sample ALTER COLUMN nested.col AFTER other_col
+```
+
+* 设置Not NULL和删除NOT Null
+```sql
+ALTER TABLE prod.db.sample ALTER COLUMN id DROP NOT NULL
+```
+
+### ALTER TABLE ... DROP COLUMN
+```sql
+ALTER TABLE prod.db.sample DROP COLUMN id
+ALTER TABLE prod.db.sample DROP COLUMN point.z
+```
+
+## ALTER TABLE SQL extensions
+* spark 3.x使用[sql-extensions](https://iceberg.apache.org/spark-configuration/#sql-extensions)
+
+### ALTER TABLE ... ADD PARTITION FIELD¶
+* 添加新的分区字段
+```sql
+ALTER TABLE prod.db.sample ADD PARTITION FIELD catalog -- identity transform
+```
+* 分区转换也支持
+```sql
+ALTER TABLE prod.db.sample ADD PARTITION FIELD bucket(16, id)
+ALTER TABLE prod.db.sample ADD PARTITION FIELD truncate(data, 4)
+ALTER TABLE prod.db.sample ADD PARTITION FIELD years(ts)
+-- use optional AS keyword to specify a custom name for the partition field 
+ALTER TABLE prod.db.sample ADD PARTITION FIELD bucket(16, id) AS shard
+```
+* 添加分区字段是一个元数据操作不能改变已经存在的表数据，新的数据将会被写入到新的分区但是存在的数据将会被保留在老的分区里。
+* 当标的分区发生变化时动态分区覆盖行为将会改变，因为动态分区覆盖替换了分区。
+
+### ALTER TABLE ... DROP PARTITION FIELD
+* 删除存在的分区字段
+```sql
+ALTER TABLE prod.db.sample DROP PARTITION FIELD catalog
+ALTER TABLE prod.db.sample DROP PARTITION FIELD bucket(16, id)
+ALTER TABLE prod.db.sample DROP PARTITION FIELD truncate(data, 4)
+ALTER TABLE prod.db.sample DROP PARTITION FIELD years(ts)
+ALTER TABLE prod.db.sample DROP PARTITION FIELD shard
+```
+* 删除分区是个元数据操作不会改变已经存在的数据，新插入的数据讲会写入新分区，但是存在的数据将会保留在老的分区布局里。
+
+### ALTER TABLE ... WRITE ORDERED BY
+* iceberg表能够配置排序的方式使用动态的排序数据写入到表里在一些引擎里，例如MERGE INTO在Spark里将会使用表排序
+
+```sql
+ALTER TABLE prod.db.sample WRITE ORDERED BY category, id
+-- use optional ASC/DEC keyword to specify sort order of each field (default ASC)
+ALTER TABLE prod.db.sample WRITE ORDERED BY category ASC, id DESC
+-- use optional NULLS FIRST/NULLS LAST keyword to specify null order of each field (default FIRST)
+ALTER TABLE prod.db.sample WRITE ORDERED BY category ASC NULLS LAST, id DESC NULLS FIRST
+```
+
+# Spark Queries
+
+* Iceberg使用Spark DataSourceV2 API去操作数据
+
+| Feature support                                              | Spark 3.0 | Spark 2.4 | Notes |
+| :----------------------------------------------------------- | :-------- | :-------- | :---- |
+| [`SELECT`](https://iceberg.apache.org/spark-queries/#querying-with-sql) | ✔️         |           |       |
+| [DataFrame reads](https://iceberg.apache.org/spark-queries/#querying-with-dataframes) | ✔️         | ✔️         |       |
+| [Metadata table `SELECT`](https://iceberg.apache.org/spark-queries/#inspecting-tables) | ✔️         |           |       |
+| [History metadata table](https://iceberg.apache.org/spark-queries/#history) | ✔️         | ✔️         |       |
+| [Snapshots metadata table](https://iceberg.apache.org/spark-queries/#snapshots) | ✔️         | ✔️         |       |
+| [Files metadata table](https://iceberg.apache.org/spark-queries/#files) | ✔️         | ✔️         |       |
+| [Manifests metadata table](https://iceberg.apache.org/spark-queries/#manifests) | ✔️         | ✔️         |       |
+
+## 通过SQL查询
+
+```sql
+SELECT * FROM prod.db.table -- catalog: prod, namespace: db, table: table
+```
+* 源数据表类似于`history`和`snapshots`，可以使用iceberg表作为一个namespace
+```sql
+SELECT * FROM prod.db.table.files
+```
+## Querying with DataFrames
+
+```scala
+  val frame: DataFrame = spark.table("spark_catalog.iceberg_db.test")
+    frame.show()
+```
+
+### Read Metadata Table
+```sql
+    spark.read.format("iceberg")
+      .load("iceberg_db.test.files")
+      // 不截断字符串
+      .show(truncate = false)
+
+    spark.read.format("iceberg")
+      .load("iceberg_db.test.history")
+      // 不截断字符串
+      .show(truncate = false)
+    spark.read.format("iceberg")
+      .load("iceberg_db.test.snapshots")
+      // 不截断字符串
+      .show(truncate = false)
+```
+
+### Time travel
+
+* `snapshot-id`选择指定表的快照
+* `as-of-timestamp` 选择当前快照为一个时间戳，单位毫秒
+
+```scala
+// time travel to October 26, 1986 at 01:21:00
+spark.read
+    .option("as-of-timestamp", "499162860000")
+    .format("iceberg")
+    .load("path/to/table")
+
+// time travel to snapshot with ID 10963874102873L
+spark.read
+        .option("snapshot-id",8745438249199332230L)
+        .format("iceberg")
+        .load("iceberg_db.test")
+        .show(20)
+```
+
+# Spark写Iceberg
+
+* spark使用iceberg配置spark catalogs
+
+| Feature support                                              | Spark 3.0 | Spark 2.4 | Notes                                        |
+| :----------------------------------------------------------- | :-------- | :-------- | :------------------------------------------- |
+| [SQL insert into](https://iceberg.apache.org/spark-writes/#insert-into) | ✔️         |           |                                              |
+| [SQL merge into](https://iceberg.apache.org/spark-writes/#merge-into) | ✔️         |           | ⚠ Requires Iceberg Spark extensions          |
+| [SQL insert overwrite](https://iceberg.apache.org/spark-writes/#insert-overwrite) | ✔️         |           |                                              |
+| [SQL delete from](https://iceberg.apache.org/spark-writes/#delete-from) | ✔️         |           | ⚠ Row-level delete requires Spark extensions |
+| [DataFrame append](https://iceberg.apache.org/spark-writes/#appending-data) | ✔️         | ✔️         |                                              |
+| [DataFrame overwrite](https://iceberg.apache.org/spark-writes/#overwriting-data) | ✔️         | ✔️         | ⚠ Behavior changed in Spark 3.0              |
+| [DataFrame CTAS and RTAS](https://iceberg.apache.org/spark-writes/#creating-tables) | ✔️         |           |                                              |
+
+## 通过SQL
+
+* Spark 3支持SQL INSERT INTO，MERGE INTO和INSERT OVERWRITE
+
+### `INSERT INTO`
+
+```
+INSERT INTO prod.db.table VALUES (1, 'a'), (2, 'b')
+
+```
+
