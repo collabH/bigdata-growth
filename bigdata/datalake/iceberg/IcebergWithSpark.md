@@ -424,8 +424,108 @@ spark.read
 
 ### `INSERT INTO`
 
-```
+```sql
 INSERT INTO prod.db.table VALUES (1, 'a'), (2, 'b')
+INSERT INTO prod.db.table SELECT ...
+```
 
+### `MERGE INTO`
+
+* Spark 3添加支持MERGE INTO能够支持行级别修改
+
+```sql
+MERGE INTO prod.db.target t   -- a target table
+USING (SELECT ...) s          -- the source updates
+ON t.id = s.id                -- condition to find updates for target rows
+WHEN ...                      -- updates
+
+
+
+WHEN MATCHED AND s.op = 'delete' THEN DELETE
+WHEN MATCHED AND t.count IS NULL AND s.op = 'increment' THEN UPDATE SET t.count = 0
+WHEN MATCHED AND s.op = 'increment' THEN UPDATE SET t.count = t.count + 1
+```
+
+### `INSERT OVERWRITE`
+
+* 动态分区方式overwrite
+
+```sql
+INSERT OVERWRITE prod.my_app.logs
+SELECT uuid, first(level), first(ts), first(message)
+FROM prod.my_app.logs
+WHERE cast(ts as date) = '2020-07-01'
+GROUP BY uuid
+```
+
+* 静态分区写入
+
+```sql
+INSERT OVERWRITE prod.my_app.logs
+PARTITION (level = 'INFO')
+SELECT uuid, first(level), first(ts), first(message)
+FROM prod.my_app.logs
+WHERE level = 'INFO'
+GROUP BY uuid
+```
+
+### `DELETE FROM`
+
+```sql
+DELETE FROM prod.db.table
+WHERE ts >= '2020-05-01 00:00:00' and ts < '2020-06-01 00:00:00'
+```
+
+## DataFrame
+
+### Appending data
+
+* spark 3.x
+
+```scala
+val data: DataFrame = ...
+data.writeTo("prod.db.table").append()
+```
+
+* spark 2.4
+
+```scala
+data.write
+    .format("iceberg")
+    .mode("append")
+    .save("db.table")
+```
+
+### Overwriting data
+
+* spark 3.x
+
+```scala
+val data: DataFrame = ...
+data.writeTo("prod.db.table").overwritePartitions()
+
+data.writeTo("prod.db.table").overwrite($"level" === "INFO")
+```
+
+* spark 2.4
+
+```scala
+data.write
+    .format("iceberg")
+    .mode("overwrite")
+    .save("db.table")
+```
+
+### Creating tables
+
+```scala
+val data: DataFrame = ...
+data.writeTo("prod.db.table").create()
+
+# 制定表参数
+data.writeTo("prod.db.table")
+    .tableProperty("write.format.default", "orc")
+    .partitionBy($"level", days($"ts"))
+    .createOrReplace()
 ```
 
