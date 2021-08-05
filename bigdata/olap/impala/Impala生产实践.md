@@ -45,7 +45,21 @@ impala-shell --print_header --var from_aff_id=${from_aff_id} --var to_aff_id=${t
 --var to_account_id=${to_account_id} -f merge_result.sql
 ```
 
+## 配置HDFS跨集群
 
-
-
-
+* 保证每个集群的nameservice ID唯一；并且需要在"hdfs-site.xml"的HDFS客户端中增加集群的nameserviceID到dfs.nameservices属性中
+```xml
+<propert>
+    <name>dfs.nameservices</name>
+    <value>nameservice1,nameservice2,nameservice3</value>
+</propert>
+```
+* 同时复制哪些引用nameserviceID的其他属性到hdfs-site.xml中，如:
+    * dfs.ha.namenodes.<nameserviceID>
+    * dfs.client.failover.proxy.provider.<nameserviceID>: `org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider`
+    * dfs.namenode.http-address.<nameserviceID>.<namenode1>
+    * dfs.namenode.http-address.<nameserviceID>.<namenode2>
+    * dfs.namenode.https-address.<nameserviceID>.<namenode1>
+    * dfs.namenode.https-address.<nameserviceID>.<namenode2>
+    * dfs.namenode.rpc-address..<nameserviceID>.<namenode1>
+    * dfs.namenode.rpc-address..<nameserviceID>.<namenode2>
