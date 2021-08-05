@@ -22,4 +22,25 @@ def chooseHadoopEnv(sparkBuilder: SparkSession.Builder, hiveConfDir: String, had
   }
 ```
 
+```java
+ /**
+   * 选择不同的hadoop环境
+   *
+   */
+  def chooseHive(sparkBuilder: SparkSession.Builder, hiveMetaStoreUri: String) = {
+    sparkBuilder.config("hive.metastore.uris", hiveMetaStoreUri)
+  }
+
+  def chooseHadoop(spark: SparkSession, nameSpace: String, nn1: String, nn1Addr: String, nn2: String, nn2Addr: String)
+  = {
+    val sc: SparkContext = spark.sparkContext
+    sc.hadoopConfiguration.set(s"fs.defaultFS", s"hdfs://$nameSpace")
+    sc.hadoopConfiguration.set(s"dfs.nameservices", nameSpace)
+    sc.hadoopConfiguration.set(s"dfs.ha.namenodes.$nameSpace", s"$nn1,$nn2")
+    sc.hadoopConfiguration.set(s"dfs.namenode.rpc-address.$nameSpace.$nn1", nn1Addr)
+    sc.hadoopConfiguration.set(s"dfs.namenode.rpc-address.$nameSpace.$nn2", nn2Addr)
+    sc.hadoopConfiguration.set(s"dfs.client.failover.proxy.provider.$nameSpace", "org.apache.hadoop.hdfs.server.namenode.ha.ConfiguredFailoverProxyProvider")
+  }
+```
+
 * Tez类找不到问题:移除hive-site.xml tez查询引擎配置即可
