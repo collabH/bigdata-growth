@@ -317,6 +317,7 @@
 * [数据仓库](datawarehouse/数据仓库实战.md)
 * [基于Flink的实时数仓建设](datawarehouse/基于Flink的实时数仓建设.md)
 * [自研数据中台设计](datawarehouse/数据中台设计/数据中台设计.md)
+* [Kudu数据冷备](datawarehouse/数据冷备/Kudu数据冷备方案.md)
 
 ### 读书笔记
 
