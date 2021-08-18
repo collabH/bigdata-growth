@@ -193,3 +193,19 @@ StreamTableEnvironment.toChangelogStream(Table,Schema):DataStream<Row>
 
 ![](./img/statebackend.jpg)
 
+## 状态数据结构升级
+
+### POJO类型
+
+* 可以删除字段。一旦删除，被删除字段的前值将会在将来的 checkpoints 以及 savepoints 中删除。
+* 可以添加字段。新字段会使用类型对应的默认值进行初始化
+* **不可以修改字段的声明类型。**
+* **不可以改变 POJO 类型的类名，包括类的命名空间。**
+
+### Avro
+
+* Flink 完全支持 Avro 状态类型的升级，只要数据结构的修改是被 [Avro 的数据结构解析规则](http://avro.apache.org/docs/current/spec.html#Schema+Resolution)认为兼容的即可。
+
+* 一个例外是如果新的 Avro 数据 schema 生成的类无法被重定位或者使用了不同的命名空间，在作业恢复时状态数据会被认为是不兼容的。
+
+  
