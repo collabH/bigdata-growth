@@ -55,7 +55,7 @@
 
 * 数据更新的核心是定位到待更新的位置，定位到具体位置后，然后将变更写到对应的delta store中
 
-![kudu更新过程](./img/kudu更新过程.jpg)
+![kudu更新过程](./img/Kudu更新过程.jpg)
 
 # Kudu伸扩容
 
