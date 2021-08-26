@@ -1,6 +1,6 @@
 # Kudu存储原理
 
-![kudu底层数据模型](./img/kudu底层数据模型.jpg)
+![kudu底层数据模型](./img/Kudu底层数据模型.jpg)
 
 * RowSet包含一个MemRowSet及若干个DiskRowSet，DiskRowSet中包含一个BloomFile、Ad_hoc Index、BaseData、DeltaMem及若干个RedoFile和UndoFile。
 * `MemRowSet`:用于`新数据insert及已在MemRowSet中的数据的更新`，一个MemRowSet写满后会将数据刷到磁盘形成若干个DiskRowSet。默认是1G或者120S溢写阈值。
