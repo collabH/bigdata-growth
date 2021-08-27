@@ -63,5 +63,5 @@ sudo -u kudu kudu cluster ksck master-01.example.com,master-02.example.com,maste
 ## 使用rebalancing tool
 
 ```shell
-sudo -u kudu kudu cluster rebalance master-01.example.com,master-02.example.com,master-03.example.com
+sudo -u kudu kudu cluster rebalance master_servers -fetch_info_concurrency 100 -tables ""
 ```
