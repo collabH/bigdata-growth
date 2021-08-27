@@ -16,6 +16,8 @@
 --rpc_num_service_threads=20
 # Timed out waiting for ts: L: 21692028104 to be safe (mode: NON-LEADER). Current safe time: L: 21691148967 Physical time difference: None (Logical clock)时钟问题，开启ntp后仍然存在
 --use_hybrid_clock=true
+# ntp延迟20s
+--max_clock_sync_error_usec=20000000
 ```
 
 ## tserver
@@ -35,6 +37,8 @@
 --rpc_service_queue_length=50
 # rpc服务线程数
 --rpc_num_service_threads=20
+# ntp延迟20s
+--max_clock_sync_error_usec=20000000
 ```
 
 # KuduClient实践
