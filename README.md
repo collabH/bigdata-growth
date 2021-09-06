@@ -180,6 +180,10 @@
 * [kafka权威指南读书笔记](bigdata/kafka/kafka权威指南)
 * [深入理解Kafka读书笔记](bigdata/kafka/深入理解Kafka)
 
+### Pulsar
+
+* [快速入门](bigdata/pulsar/1.快速入门.md)
+
 ### HBase
 
 * [HBase概览](bigdata/hbase/HBaseOverview.md)
