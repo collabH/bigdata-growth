@@ -183,6 +183,7 @@
 ### Pulsar
 
 * [快速入门](bigdata/pulsar/1.快速入门.md)
+* [原理与实践](bigdata/pulsar/2.原理与实践.md)
 
 ### HBase
 
