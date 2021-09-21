@@ -248,3 +248,163 @@ protected final boolean tryAcquire(int acquires) {
 }
 ```
 
+* **当读锁已经被读线程获取或者写锁已经被其他写线程获取，则写锁获取失败；否则，获取成功并支持重入，增加写状态。**
+
+### 读锁
+
+```java
+protected final int tryAcquireShared(int unused) {
+    /*
+     * Walkthrough:
+     * 1. If write lock held by another thread, fail.
+     * 2. Otherwise, this thread is eligible for
+     *    lock wrt state, so ask if it should block
+     *    because of queue policy. If not, try
+     *    to grant by CASing state and updating count.
+     *    Note that step does not check for reentrant
+     *    acquires, which is postponed to full version
+     *    to avoid having to check hold count in
+     *    the more typical non-reentrant case.
+     * 3. If step 2 fails either because thread
+     *    apparently not eligible or CAS fails or count
+     *    saturated, chain to version with full retry loop.
+     */
+    Thread current = Thread.currentThread();
+    int c = getState();
+	//1. 如果写锁已经被获取并且获取写锁的线程不是当前线程的话，当前
+	// 线程获取读锁失败返回-1
+    if (exclusiveCount(c) != 0 &&
+        getExclusiveOwnerThread() != current)
+        return -1;
+    int r = sharedCount(c);
+    if (!readerShouldBlock() &&
+        r < MAX_COUNT &&
+		//2. 当前线程获取读锁
+        compareAndSetState(c, c + SHARED_UNIT)) {
+		//3. 下面的代码主要是新增的一些功能，比如getReadHoldCount()方法
+		//返回当前获取读锁的次数
+        if (r == 0) {
+            firstReader = current;
+            firstReaderHoldCount = 1;
+        } else if (firstReader == current) {
+            firstReaderHoldCount++;
+        } else {
+            HoldCounter rh = cachedHoldCounter;
+            if (rh == null || rh.tid != getThreadId(current))
+                cachedHoldCounter = rh = readHolds.get();
+            else if (rh.count == 0)
+                readHolds.set(rh);
+            rh.count++;
+        }
+        return 1;
+    }
+	//4. 处理在第二步中CAS操作失败的自旋已经实现重入性
+    return fullTryAcquireShared(current);
+}
+```
+
+* **当写锁被其他线程获取后，读锁获取失败**，否则获取成功利用CAS更新同步状态。另外，当前同步状态需要加上SHARED_UNIT（`(1 << SHARED_SHIFT)`即0x00010000）的原因这是我们在上面所说的同步状态的高16位用来表示读锁被获取的次数。如果CAS失败或者已经获取读锁的线程再次获取读锁时，是靠fullTryAcquireShared方法实现的
+
+### 锁降级
+
+* 读写锁支持锁降级，**遵循按照获取写锁，获取读锁再释放写锁的次序，写锁能够降级成为读锁**，不支持锁升级
+
+```java
+void processCachedData() {
+        rwl.readLock().lock();
+        if (!cacheValid) {
+            // Must release read lock before acquiring write lock
+            rwl.readLock().unlock();
+            rwl.writeLock().lock();
+            try {
+                // Recheck state because another thread might have
+                // acquired write lock and changed state before we did.
+                if (!cacheValid) {
+                    data = ...
+            cacheValid = true;
+          }
+          // Downgrade by acquiring read lock before releasing write lock
+          rwl.readLock().lock();
+        } finally {
+          rwl.writeLock().unlock(); // Unlock write, still hold read
+        }
+      }
+ 
+      try {
+        use(data);
+      } finally {
+        rwl.readLock().unlock();
+      }
+    }
+}
+```
+
+## Condition
+
+* 任何一个java对象都天然继承于Object类，在线程间实现通信的往往会应用到Object的几个方法，比如wait(),wait(long timeout),wait(long timeout, int nanos)与notify(),notifyAll()几个方法实现等待/通知机制，同样的， 在java Lock体系下依然会有同样的方法实现等待/通知机制。从整体上来看**Object的wait和notify/notify是与对象监视器配合完成线程间的等待/通知机制，而Condition与Lock配合完成等待通知机制，前者是java底层级别的，后者是语言级别的，具有更高的可控制性和扩展性**。两者除了在使用方式上不同外，在**功能特性**上还是有很多的不同：
+  1. Condition能够支持不响应中断，而通过使用Object方式不支持；
+  2. Condition能够支持多个等待队列（new 多个Condition对象），而Object方式只能支持一个；
+  3. Condition能够支持超时时间的设置，而Object不支持
+* **针对Object的wait方法**
+  * void await() throws InterruptedException:当前线程进入等待状态，如果其他线程调用condition的signal或者signalAll方法并且当前线程获取Lock从await方法返回，如果在等待状态中被中断会抛出被中断异常；
+  * long awaitNanos(long nanosTimeout)：当前线程进入等待状态直到被通知，中断或者**超时**；
+  * boolean await(long time, TimeUnit unit)throws InterruptedException：同第二种，支持自定义时间单位
+  * boolean awaitUntil(Date deadline) throws InterruptedException：当前线程进入等待状态直到被通知，中断或者**到了某个时间**
+* **针对Object的notify/notifyAll方法**
+  * void signal()：唤醒一个等待在condition上的线程，将该线程从**等待队列**中转移到**同步队列**中，如果在同步队列中能够竞争到Lock则可以从等待方法中返回。
+  * void signalAll()：与1的区别在于能够唤醒所有等待在condition上的线程
+
+```java
+    Condition condition = REENTRANT_LOCK.newCondition();
+        for (int i = 0; i < 10; i++) {
+            Thread thread = new Thread(() -> {
+                REENTRANT_LOCK.lock();
+                try {
+                    condition.await();
+                    System.out.println("test");
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }finally {
+                    REENTRANT_LOCK.unlock();
+                }
+            });
+```
+
+* 调用condition.await方法后线程依次尾插入到等待队列中，如图队列中的线程引用依次为Thread-0,Thread-1,Thread-2....Thread-8；2. 等待队列是一个单向队列。通过我们的猜想然后进行实验验证，我们可以得出等待队列的示意图如下图所示：
+
+![](./img/ReetranLockCondition.png)
+
+* 多次调用lock.newCondition()方法创建多个condition对象，也就是一个lock可以持有多个等待队列。而在之前利用Object的方式实际上是指在**对象Object对象监视器上只能拥有一个同步队列和一个等待队列，而并发包中的Lock拥有一个同步队列和多个等待队列**。示意图如下：
+
+![](./img/多个ReetranLockCondition.png)
+
+### await实现原理
+
+* **当调用condition.await()方法后会使得当前获取lock的线程进入到等待队列，如果该线程能够从await()方法返回的话一定是该线程获取了与condition相关联的lock**
+
+```java
+public final void await() throws InterruptedException {
+    if (Thread.interrupted())
+        throw new InterruptedException();
+	// 1. 将当前线程包装成Node，尾插入到等待队列中
+    Node node = addConditionWaiter();
+	// 2. 释放当前线程所占用的lock，在释放的过程中会唤醒同步队列中的下一个节点
+    int savedState = fullyRelease(node);
+    int interruptMode = 0;
+    while (!isOnSyncQueue(node)) {
+		// 3. 当前线程进入到等待状态
+        LockSupport.park(this);
+        if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)
+            break;
+    }
+	// 4. 自旋等待获取到同步状态（即获取到lock）
+    if (acquireQueued(node, savedState) && interruptMode != THROW_IE)
+        interruptMode = REINTERRUPT;
+    if (node.nextWaiter != null) // clean up if cancelled
+        unlinkCancelledWaiters();
+	// 5. 处理被中断的情况
+    if (interruptMode != 0)
+        reportInterruptAfterWait(interruptMode);
+}
+```
+
