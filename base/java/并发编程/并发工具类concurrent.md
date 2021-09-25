@@ -408,3 +408,231 @@ public final void await() throws InterruptedException {
 }
 ```
 
+### 使用方式
+
+```java
+public class AwaitSignal {
+    private static ReentrantLock lock = new ReentrantLock();
+    private static Condition condition = lock.newCondition();
+    private static volatile boolean flag = false;
+
+    public static void main(String[] args) {
+        Thread waiter = new Thread(new waiter());
+        waiter.start();
+        Thread signaler = new Thread(new signaler());
+        signaler.start();
+    }
+
+    static class waiter implements Runnable {
+
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                while (!flag) {
+                    System.out.println(Thread.currentThread().getName() + "当前条件不满足等待");
+                    try {
+                        condition.await();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+                System.out.println(Thread.currentThread().getName() + "接收到通知条件满足");
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+
+    static class signaler implements Runnable {
+
+        @Override
+        public void run() {
+            lock.lock();
+            try {
+                flag = true;
+                condition.signalAll();
+            } finally {
+                lock.unlock();
+            }
+        }
+    }
+}
+```
+
+* 开启了两个线程waiter和signaler，waiter线程开始执行的时候由于条件不满足，执行condition.await方法使该线程进入等待状态同时释放锁，signaler线程获取到锁之后更改条件，并通知所有的等待线程后释放锁。这时，waiter线程获取到锁，并由于signaler线程更改了条件此时相对于waiter来说条件满足，继续执行。
+
+## LockSupport
+
+* 每个使用LockSupport的线程都会与一个许可关联，如果该许可可用，并且可在线程中使用，则调用park()将会立即返回，否则可能阻塞。如果许可尚不可用，则可以调用 unpark 使其可用。但是注意许可**不可重入**，也就是说只能调用一次park()方法，否则会一直阻塞。
+
+### 方法介绍
+
+> **阻塞线程**
+
+1. void park()：阻塞当前线程，如果调用unpark方法或者当前线程被中断，从能从park()方法中返回
+2. void park(Object blocker)：功能同方法1，入参增加一个Object对象，用来记录导致线程阻塞的阻塞对象，方便进行问题排查；
+3. void parkNanos(long nanos)：阻塞当前线程，最长不超过nanos纳秒，增加了超时返回的特性；
+4. void parkNanos(Object blocker, long nanos)：功能同方法3，入参增加一个Object对象，用来记录导致线程阻塞的阻塞对象，方便进行问题排查；
+5. void parkUntil(long deadline)：阻塞当前线程，知道deadline；
+6. void parkUntil(Object blocker, long deadline)：功能同方法5，入参增加一个Object对象，用来记录导致线程阻塞的阻塞对象，方便进行问题排查；
+
+> **唤醒线程**
+
+1. void unpark(Thread thread):唤醒处于阻塞状态的指定线程
+
+# 并发容器
+
+## ConcurrentHashMap
+
+* jdk1.8之前利用锁分段的方式来提升并行度，segment继承了ReentrantLock充当锁的角色，为每一个segment提供了线程安全的保障；segment维护了哈希散列表的若干个桶，每个桶由HashEntry构成的链表。
+* jdk1.8使用了synchronized，以及CAS无锁操作以保证ConcurrentHashMap操作的线程安全性，底层数据结构改变为采用数组+链表+红黑树的数据形式。
+
+### 关键属性
+
+1. **table** volatile Node<K,V>[] table://装载Node的数组，作为ConcurrentHashMap的数据容器，采用懒加载的方式，直到第一次插入数据的时候才会进行初始化操作，数组的大小总是为2的幂次方。
+2. **nextTable** volatile Node<K,V>[] nextTable; //扩容时使用，平时为null，只有在扩容的时候才为非null
+3. **sizeCtl** volatile int sizeCtl; 该属性用来控制table数组的大小，根据是否初始化和是否正在扩容有几种情况： **当值为负数时：**如果为-1表示正在初始化，如果为-N则表示当前正有N-1个线程进行扩容操作； **当值为正数时：**如果当前数组为null的话表示table在初始化过程中，sizeCtl表示为需要新建数组的长度； 若已经初始化了，表示当前数据容器（table数组）可用容量也可以理解成临界值（插入节点数超过了该临界值就需要扩容），具体指为数组的长度n 乘以 加载因子loadFactor； 当值为0时，即数组长度为默认初始值。
+4. **sun.misc.Unsafe U** 在ConcurrentHashMapde的实现中可以看到大量的U.compareAndSwapXXXX的方法去修改ConcurrentHashMap的一些属性。这些方法实际上是利用了CAS算法保证了线程安全性，这是一种乐观策略，假设每一次操作都不会产生冲突，当且仅当冲突发生的时候再去尝试。而CAS操作依赖于现代处理器指令集，通过底层**CMPXCHG**指令实现。CAS(V,O,N)核心思想为：**若当前变量实际值V与期望的旧值O相同，则表明该变量没被其他线程进行修改，因此可以安全的将新值N赋值给变量；若当前变量实际值V与期望的旧值O不相同，则表明该变量已经被其他线程做了处理，此时将新值N赋给变量操作就是不安全的，在进行重试**。而在大量的同步组件和并发容器的实现中使用CAS是通过`sun.misc.Unsafe`类实现的，该类提供了一些可以直接操控内存和线程的底层操作，可以理解为java中的“指针”。该成员变量的获取是在静态代码块中：
+
+```java
+ static {
+     try {
+         U = sun.misc.Unsafe.getUnsafe();
+ 		.......
+     } catch (Exception e) {
+         throw new Error(e);
+     }
+ }
+```
+
+### 关键内部类
+
+* Node实现Map.Entry接口，主要存放key-value
+
+```java
+ static class Node<K,V> implements Map.Entry<K,V> {
+         final int hash;
+         final K key;
+         volatile V val;
+         volatile Node<K,V> next;
+ 		......
+ }
+```
+
+* **TreeNode** 树节点，继承于承载数据的Node类。而红黑树的操作是针对TreeBin类的
+
+```java
+ **
+  * Nodes for use in TreeBins
+  */
+ static final class TreeNode<K,V> extends Node<K,V> {
+         TreeNode<K,V> parent;  // red-black tree links
+         TreeNode<K,V> left;
+         TreeNode<K,V> right;
+         TreeNode<K,V> prev;    // needed to unlink next upon deletion
+         boolean red;
+ 		......
+ }
+```
+
+* **TreeBin** 这个类并不负责包装用户的key、value信息，而是包装的很多TreeNode节点。
+
+```java
+ static final class TreeBin<K,V> extends Node<K,V> {
+         TreeNode<K,V> root;
+         volatile TreeNode<K,V> first;
+         volatile Thread waiter;
+         volatile int lockState;
+         // values for lockState
+         static final int WRITER = 1; // set while holding write lock
+         static final int WAITER = 2; // set when waiting for write lock
+         static final int READER = 4; // increment value for setting read lock
+ 		......
+ }
+```
+
+* **ForwardingNode** 在扩容时才会出现的特殊节点，其key,value,hash全部为null。并拥有nextTable指针引用新的table数组。
+
+```java
+ static final class ForwardingNode<K,V> extends Node<K,V> {
+     final Node<K,V>[] nextTable;
+     ForwardingNode(Node<K,V>[] tab) {
+         super(MOVED, null, null, null);
+         this.nextTable = tab;
+     }
+    .....
+ }
+```
+
+![](./img/CHM结构.png)
+
+### put流程
+
+1. 首先对于每一个放入的值，首先利用spread方法对key的hashcode进行一次hash计算，由此来确定这个值在 table中的位置；
+2. 如果当前table数组还未初始化，先将table数组进行初始化操作；
+3. 如果这个位置是null的，那么使用CAS操作直接放入；
+4. 如果这个位置存在结点，说明发生了hash碰撞，首先判断这个节点的类型。如果该节点fh==MOVED(代表forwardingNode,数组正在进行扩容)的话，说明正在进行扩容；
+5. 如果是链表节点（fh>0）,则得到的结点就是hash值相同的节点组成的链表的头节点。需要依次向后遍历确定这个新加入的值所在位置。如果遇到key相同的节点，则只需要覆盖该结点的value值即可。否则依次向后遍历，直到链表尾插入这个结点；
+6. 如果这个节点的类型是TreeBin的话，直接调用红黑树的插入方法进行插入新的节点；
+7. 插入完节点之后再次检查链表长度，如果长度大于8，就把这个链表转换成红黑树；
+8. 对当前容量大小进行检查，如果超过了临界值（实际大小*加载因子）就需要扩容。
+
+### get流程
+
+```java
+public V get(Object key) {
+    Node<K,V>[] tab; Node<K,V> e, p; int n, eh; K ek;
+	// 1. 重hash
+    int h = spread(key.hashCode());
+    if ((tab = table) != null && (n = tab.length) > 0 &&
+        (e = tabAt(tab, (n - 1) & h)) != null) {
+        // 2. table[i]桶节点的key与查找的key相同，则直接返回
+		if ((eh = e.hash) == h) {
+            if ((ek = e.key) == key || (ek != null && key.equals(ek)))
+                return e.val;
+        }
+		// 3. 当前节点hash小于0说明为树节点，在红黑树中查找即可
+        else if (eh < 0)
+            return (p = e.find(h, key)) != null ? p.val : null;
+        while ((e = e.next) != null) {
+		//4. 从链表中查找，查找到则返回该节点的value，否则就返回null即可
+            if (e.hash == h &&
+                ((ek = e.key) == key || (ek != null && key.equals(ek))))
+                return e.val;
+        }
+    }
+    return null;
+}
+```
+
+* 首先先看当前的hash桶数组节点即table[i]是否为查找的节点，若是则直接返回；若不是，则继续再看当前是不是树节点？通过看节点的hash值是否为小于0，如果小于0则为树节点。如果是树节点在红黑树中查找节点；如果不是树节点，那就只剩下为链表的形式的一种可能性了，就向后遍历查找节点，若查找到则返回节点的value即可，若没有找到就返回null。
+
+### transfer方法
+
+* 当ConcurrentHashMap容量不足的时候，需要对table进行扩容。这个方法的基本思想跟HashMap是很像的，但是由于它是支持并发扩容的，所以要复杂的多。原因是它支持多线程进行扩容操作，而并没有加锁。我想这样做的目的不仅仅是为了满足concurrent的要求，而是希望利用并发处理去减少扩容带来的时间影响。
+
+**第一部分**是构建一个nextTable,它的容量是原来的两倍，这个操作是单线程完成的。新建table数组的代码为:`Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1]`,在原容量大小的基础上右移一位。
+
+**第二个部分**就是将原来table中的元素复制到nextTable中，主要是遍历复制的过程。 根据运算得到当前遍历的数组的位置i，然后利用tabAt方法获得i位置的元素再进行判断：
+
+1. 如果这个位置为空，就在原table中的i位置放入forwardNode节点，这个也是触发并发扩容的关键点；
+2. 如果这个位置是Node节点（fh>=0），如果它是一个链表的头节点，就构造一个反序链表，把他们分别放在nextTable的i和i+n的位置上
+3. 如果这个位置是TreeBin节点（fh<0），也做一个反序处理，并且判断是否需要untreefi，把处理的结果分别放在nextTable的i和i+n的位置上
+4. 遍历过所有的节点以后就完成了复制工作，这时让nextTable作为新的table，并且更新sizeCtl为新容量的0.75倍 ，完成扩容。设置为新容量的0.75倍代码为 `sizeCtl = (n << 1) - (n >>> 1)`，仔细体会下是不是很巧妙，n<<1相当于n右移一位表示n的两倍即2n,n>>>1左右一位相当于n除以2即0.5n,然后两者相减为2n-0.5n=1.5n,是不是刚好等于新容量的0.75倍即2n*0.75=1.5n。最后用一个示意图来进行总结（图片摘自网络）：
+
+![](./img/CHM扩容.png)
+
+### 总结
+
+JDK6,7中的ConcurrentHashmap主要使用Segment来实现减小锁粒度，分割成若干个Segment，在put的时候需要锁住Segment，get时候不加锁，使用volatile来保证可见性，当要统计全局时（比如size），首先会尝试多次计算modcount来确定，这几次尝试中，是否有其他线程进行了修改操作，如果没有，则直接返回size。如果有，则需要依次锁住所有的Segment来计算。
+
+1.8之前put定位节点时要先定位到具体的segment，然后再在segment中定位到具体的桶。而在1.8的时候摒弃了segment臃肿的设计，直接针对的是Node[] tale数组中的每一个桶，进一步减小了锁粒度。并且防止拉链过长导致性能下降，当链表长度大于8的时候采用红黑树的设计。
+
+主要设计上的变化有以下几点:
+
+1. 不采用segment而采用node，锁住node来实现减小锁粒度。
+2. 设计了MOVED状态 当resize的中过程中 线程2还在put数据，线程2会帮助resize。
+3. 使用3个CAS操作来确保node的一些操作的原子性，这种方式代替了锁。
+4. sizeCtl的不同值来代表不同含义，起到了控制的作用。
+5. 采用synchronized而不是ReentrantLock
