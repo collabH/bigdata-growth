@@ -39,3 +39,9 @@
 
 * 为了提升性能，前缀iterator运行用户使用bloom filter或者hash索引在这个iterator中。参数`total_order_seek`和`prefix_same_as_start`适用于前缀iterator。
 
+### 预读取
+
+* RocksDB 会自动预读并在迭代期间注意到同一表文件的 2 个以上 IO 时预取数据。 这仅适用于基于块的表格格式。 预读大小从 8KB 开始，并在每个额外的顺序 IO 上呈指数增加，最大为 BlockBasedTableOptions.max_auto_readahead_size（默认 256 KB）。 这有助于减少完成范围扫描所需的 IO 数量。 此自动预读仅在 ReadOptions.readahead_size = 0（默认值）时启用。 在 Linux 上，在 Buffered IO 模式下使用 readahead syscall，在 Direct IO 模式下使用 AlignedBuffer 来存储预取数据。 （自动迭代器预读从 5.12 开始可用于缓冲 IO，从 5.15 开始可用于直接 IO）。
+* 如果您的整个用例以迭代为主，并且您依赖于操作系统页面缓存（即使用缓冲 IO），您可以通过设置 DBOptions.advise_random_on_open = false 来选择手动开启预读。 如果您在硬盘驱动器或远程存储上运行，这会更有帮助，但对直接连接的 SSD 设备可能没有太大的实际影响。
+* ReadOptions.readahead_size 在 RocksDB 中为非常有限的用例提供预读支持。 此功能的局限性在于，如果打开，迭代器的恒定成本会高得多。 因此，您应该只在迭代非常大范围的数据时使用它，而不能使用其他方法来解决它。 一个典型的用例是存储是具有很长延迟的远程存储，操作系统页面缓存不可用并且将扫描大量数据。 通过启用此功能，每次读取 SST 文件都会根据此设置预读数据。 请注意，一个迭代器可以打开每个级别的每个文件，以及同时打开所有 L0 文件。 您需要为它们预算预读内存。 并且无法自动跟踪预读缓冲区使用的内存。
+
