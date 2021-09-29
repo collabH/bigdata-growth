@@ -183,3 +183,215 @@ d. db→Merge(WriteOptions(), 'Some-Key', '1,6,8,9');
 
 1. 合并操作数的格式与Put值和相同
 2. 可以将多个操作数合二为一（只要顺序相同即可）
+
+## Column Families
+
+* 在RocksDb3.0之后支持了列族，RocksDB 中的每个键值对都与一个列族相关联。 如果没有指定列族，键值对与列族“default”相关联。列族提供了一种对数据库进行逻辑分区的方法。 
+  * 支持跨列族原子写，这个意思是可以原子写入`({cf1, key1, value1}, {cf2, key2, value2}).`
+  * 跨列族的数据库一致视图。
+  * 能够独立配置不同的列族。
+  * 即时添加新的列族并删除它们。 这两种操作都相当快。
+
+### 列族操作
+
+* 读取Rocksdb时open db时需要指定全部列族
+
+```java
+public void openDataBaseWithColumnFamilies() {
+        RocksDB.loadLibrary();
+        try (final ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions().optimizeUniversalStyleCompaction()) {
+            final List<ColumnFamilyDescriptor> cfDes = Arrays.asList(new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions),
+                    new ColumnFamilyDescriptor("my-first-columnfamily".getBytes(), columnFamilyOptions));
+            final List<ColumnFamilyHandle> columnFamilyHandleList =
+                    new ArrayList<>();
+            try (final DBOptions options = new DBOptions()
+                    .setCreateIfMissing(true)
+                    .setCreateMissingColumnFamilies(true);
+                 final RocksDB db = RocksDB.open(options,
+                         DB_PATH, cfDes,
+                         columnFamilyHandleList)) {
+                try {
+
+                    // do something
+
+                } finally {
+
+                    // NOTE frees the column family handles before freeing the db
+                    for (final ColumnFamilyHandle columnFamilyHandle :
+                            columnFamilyHandleList) {
+                        columnFamilyHandle.close();
+                    }
+                } // frees the db and the db options
+            } catch (RocksDBException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+```
+
+* 只读Db不需要指定列族`DB::ListColumnFamilies(const DBOptions& db_options, const std::string& name, std::vector<std::string>* column_families)`
+
+### 实现原理
+
+* 列族主要的思想是它们共享wal日志而不共享memtables和表文件。通过共享wal日志可以获的原子写的最大好处，通过分离memtables和表文件，我们可以独立配置列族并快速删除它们。
+* 每次刷新单个Column Family时，都会创建一个新的WAL (write-ahead log)。所有对所有列族的新写入都转到新的 WAL。但是，我们仍然无法删除旧的 WAL，因为它包含来自其他列族的实时数据。只有当全部的列族已经被刷新和这个WAL包含的全部数据已经持久化到表文件的时候才可以删除旧的WAL文件。确保对RocksDB进行调优，以便定期刷新所有列族。另外，查看`Options::max_total_wal_size`，可以配置为自动刷新过时的列族。
+
+## SST File
+
+* Rocksdb提供创建SST文件的API，并且也提供了获取SST文件的API，如果你需要快速的加载数据，可以通过离线的方式创建SST文件存入RocksDB。
+
+### 创建SST文件
+
+* `rocksdb::SstFileWriter`可以被用于创建SST文件，创建`SstFileWriter`对象后可以打开一个文件，然后插入记录直到完毕。
+
+```javascript
+public class SstWriterFeature {
+    private static final String path = "/Users/huangshimin/Documents/study/rocksdb/sst/test.sst";
+
+    public static void main(String[] args) {
+        EnvOptions envOptions = new EnvOptions();
+        envOptions.allowFallocate();
+        // 配置ratelimiter
+//        envOptions.setRateLimiter();
+        Options options = new Options();
+        options.allow2pc();
+        options.allowConcurrentMemtableWrite();
+        try (SstFileWriter sstFileWriter = new SstFileWriter(envOptions, options)) {
+            sstFileWriter.open(path);
+            sstFileWriter.put(new Slice("test"), new Slice("zhangsan"));
+            sstFileWriter.finish();
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+### 读取Sst文件
+
+* 通过`db.ingestExternalFile)()`读取sst file
+
+```java
+ public static void main(String[] args) {
+        RocksDB.loadLibrary();
+        IngestExternalFileOptions ingestExternalFileOptions = new IngestExternalFileOptions();
+        try (RocksDB db = RocksDB.open(dbPath)){
+            db.ingestExternalFile(Lists.newArrayList(path),ingestExternalFileOptions);
+            System.out.println(new String(db.get("test".getBytes()), Charset.defaultCharset()));
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+    }
+```
+
+* 调用ingest的会发生如下事情：
+
+  * 将文件复制或链接到DB目录中
+  * 块(而不是跳过)写入数据库，因为我们必须保持一致的数据库状态，因此我们必须确保我们可以安全地为我们将要摄入的文件中的所有键分配正确的序列号
+  * 如果文件键范围与memtable键范围重叠，则刷新memtable
+  * 将文件分配到lsm树中可能的最level层
+  * 分配文件一个全局序列号
+  * 重写到DB
+
+* `ingest_behind==true`跳过重复key
+
+  ```java
+   // 跳过重复key覆盖
+          ingestExternalFileOptions.setIngestBehind(true);
+  ```
+
+* 回填数据库中的一些历史数据，而不覆盖现有的较新版本的数据。 只有当数据库从一开始就以 `allow_ingest_behind=true` 运行时，才能使用此选项。 所有文件都将在 `seqno=0` 的最底层摄取。
+
+## Single Delete
+
+* 它会删除键的最新版本，而旧版本的键是否会恢复则是未定义的。
+
+```java
+ private static void singleDelete(String key) {
+        try {
+            WriteOptions writeOptions = new WriteOptions();
+            writeOptions.disableWAL();
+            writeOptions.ignoreMissingColumnFamilies();
+            db.singleDelete(key.getBytes());
+            // batch中删除
+            WriteBatch writeBatch = new WriteBatch();
+            writeBatch.singleDelete(key.getBytes());
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+    }
+```
+
+### note
+
+1. 调用者必须确保SingleDelete只应用于未使用Delete()删除或未使用Merge()写入的键。将SingleDelete()操作与Delete()和Merge()混合会导致未定义的行为(其他键不受此影响)
+2. `SingleDelete`和cuckoo hash tables不兼容，这意味着如果您使用`NewHashCuckooRepFactory` 设置 options.memtable_factory，则不应调用 SingleDelete
+3. 目前不允许连续`SingleDelete`
+4. 考虑设置`write_options.sync=true`
+
+## Low Priority Write
+
+* 如果他们尽可能快地发出后台写操作，就会触发DB的节流机制(参见Write stall)，这不仅会减慢后台写操作，还会减慢用户在线查询的速度。
+* 低优先级写能够帮助用户管理写入的优先级，5.6版本之后，用户可以通过`writeOptions.setLowPri(true);`设置后台写入，RocksDB将对低优先级写入进行更积极的节流，以确保高优先级写入不会陷入停滞。
+* 当DB运行时，RocksDB将通过查看未完成的L0文件和未完成的压缩字节来评估我们是否有压缩压力。如果RocksDB认为存在压缩压力，它会将人工睡眠引入到低优先级写，从而使低优先级写的总速率很小。通过这样做，总的写速率将比总的写节流条件下降得更早，因此高优先级写的服务资格更有可能得到保证。
+* 在二阶段提交的时候低优先级写是在准备阶段完成的而不是提交阶段。
+
+## Time to Live
+
+* 设置ttl时间后这个db插入的key-value会在ttl时候后过期。
+
+```java
+Options options = new Options();
+options.setTtl(1001);
+db = RocksDB.open(options,dbPath);
+```
+
+### 配置概念
+
+1. TTL是秒级别
+2. put的值后缀会携带创建的时间戳Timestamp
+3. 过期的TTL值只会在compaction的时候删除:(Timestamp+ttl<time_now)
+4. GET/Iterator可能返回过期的条目，因为compaction还没有运行
+5. 不同的TTL可以在不同的open使用
+   1. 例如：Open1 at t=0 with ttl=4 and insert k1,k2, close at t=2. Open2 at t=3 with ttl=5. Now k1,k2 should be deleted at t>=5
+6. 只读库compaction不被触发，因此不会删除过期的条目。
+7. 不要指定ttl为负值
+
+### 注意点
+
+1. 直接调用DB::Open来重新打开由这个API创建的DB将得到损坏的值(带有时间戳后缀)，并且在第二次Open期间没有ttl效应，所以使用这个TTL API来打开DB
+2. 传递ttl时要小心，因为整个数据库可能会在很短的时间内被删除
+
+## 事务
+
+* RocksDB支持事务，使用`TransactionDb`或`OptimisticTransactionDB`可以开启事务，事务支持简单的`BEGIN/COMMIT/ROLLBACK`API并且允许应用程序同时修改它们的数据，同时让RocksDB处理冲突检查。RocksDB支持悲观并发控制和乐观并发控制。
+* 当通过`WriteBatch`写入多个key的时候默认是原子性的，事务提供了一种方法来保证只在没有冲突的情况下才写入一批写入。与WriteBatch类似，在事务被写入(提交)之前，其他线程无法看到事务中的变化。
+
+### TransactionDB
+
+* 使用`TransactionDB`的时候所有写入的键都被RocksDB在内部锁定，以执行冲突检测。如果一个key不能被locked，这个操作将会返回错误。当事务被提交，只要能够写入数据库，就可以保证成功。
+* 与OptimisticTransactionDB相比，TransactionDB更适合并发性强的工作负载。但是，在使用 TransactionDB 时会有少量的锁开销。 TransactionDB 将对所有写操作（Put、Delete 和 Merge）进行冲突检查，包括在事务之外执行的写操作。
+
+```java
+public static void main(String[] args) throws RocksDBException {
+        Options options = new Options();
+        options.setCreateIfMissing(true);
+        TransactionDBOptions transactionOptions = new TransactionDBOptions();
+        TransactionDB.loadLibrary();
+        TransactionDB transactionDB = TransactionDB.open(options, transactionOptions, dbPath);
+        WriteOptions writeOptions = new WriteOptions();
+        writeOptions.ignoreMissingColumnFamilies();
+        ReadOptions readOptions = new ReadOptions();
+        // 开启事务
+        Transaction transaction = transactionDB.beginTransaction(writeOptions);
+        transaction.put("name".getBytes(), "hsm".getBytes());
+        System.out.println(new String(transaction.get(readOptions, "name".getBytes()), Charset.defaultCharset()));
+//        transaction.merge("name".getBytes(),"wy".getBytes());
+//        transaction.delete("name".getBytes());
+        System.out.println(new String(transaction.get(readOptions, "name".getBytes()), Charset.defaultCharset()));
+        transaction.commit();
+        transaction.close();
+        transactionDB.close();
+    }
+```
+
