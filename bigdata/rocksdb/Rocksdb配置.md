@@ -1,4 +1,4 @@
-# 调优配置
+调优配置
 
 ## 如何保证数据快速写入RocksDb
 
@@ -395,3 +395,134 @@ public static void main(String[] args) throws RocksDBException {
     }
 ```
 
+### OptimisticTransactionDB
+
+* 乐观事务为不期望多个事务之间存在高度争用/干扰的工作负载提供轻量级的乐观并发控制。
+* 当准备阶段写入的时候乐观事务DB不携带任何锁，它们依赖于在提交时进行冲突检测，以验证其他写入器没有修改当前事务所写入的键。如果其他写入存在冲突则提交事务将会返回错误并且没有键被写入。
+* 乐观并发控制对于许多需要防止偶然写冲突的工作负载非常有用。然而，对于由于许多事务不断尝试更新相同的键而经常发生写冲突的工作负载，这可能不是一个好的解决方案。并发冲突高的场景适合使用悲观并发控制方案`TransactionDB`
+
+```java
+public static void main(String[] args) {
+        Options options = new Options();
+        options.createIfMissing();
+        options.allow2pc();
+        options.allowIngestBehind();
+        options.allowMmapReads();
+        WriteOptions writeOptions = new WriteOptions();
+        writeOptions.ignoreMissingColumnFamilies();
+        OptimisticTransactionDB.loadLibrary();
+        try (OptimisticTransactionDB db = OptimisticTransactionDB.open(options, dbPath)) {
+            OptimisticTransactionOptions optimisticTransactionOptions = new OptimisticTransactionOptions();
+            Transaction transaction = db.beginTransaction(writeOptions, optimisticTransactionOptions);
+            transaction.put("name".getBytes(), "hsm".getBytes());
+            System.out.println(new String(transaction.get(new ReadOptions(), "name".getBytes()),
+                    Charset.defaultCharset()));
+            transaction.commit();
+            transaction.close();
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+```
+
+### 从事务读取
+
+```java
+    TransactionDB transactionDB = TransactionDB.open(options, transactionOptions, dbPath);
+        WriteOptions writeOptions = new WriteOptions();
+        writeOptions.ignoreMissingColumnFamilies();
+        ReadOptions readOptions = new ReadOptions();
+        transactionDB.put("name".getBytes(), "wy".getBytes());
+        // 开启事务
+        Transaction transaction = transactionDB.beginTransaction(writeOptions);
+        transaction.put("name".getBytes(), "hsm".getBytes());
+        System.out.println(new String(transaction.get(readOptions, "name".getBytes()), Charset.defaultCharset())); //读取的事务中的put "hsm"
+        transaction.commit();
+```
+
+### 设置Snapshot
+
+* 默认情况下，事务冲突检查验证在该事务中首次写入密钥之后没有其他人写入密钥。这种隔离保证对于许多用例来说已经足够了。 但是，您可能希望保证自事务开始以来没有其他人写入密钥。 这可以通过在创建事务后调用 `SetSnapshot()` 来完成。
+
+```c++
+txn = txn_db->BeginTransaction(write_options);
+txn->SetSnapshot();
+
+//事务外写入key1
+db->Put(write_options, “key1”, “value0”);
+
+// Write to key1 IN transaction
+s = txn->Put(“key1”, “value1”);
+s = txn->Commit();
+//直到这个key1在事务外被写入事务才会提交
+// after SetSnapshot() was called (even though this write
+// occurred before this key was written in this transaction).
+```
+
+* SetSnapshot后如果是`TransactionDB`，`PUT`将会失败，如果是`OptimisticTransactionDB`，`Commit`将会失败。
+
+```java
+ private static void repeatableRead(TransactionDB db) throws RocksDBException {
+        ReadOptions readOptions = new ReadOptions();
+        readOptions.setSnapshot(db.getSnapshot());
+        WriteOptions writeOptions = new WriteOptions();
+        Transaction transaction = db.beginTransaction(writeOptions);
+//        transaction.put("name".getBytes(),"hsm".getBytes());
+        System.out.println(new String(transaction.getForUpdate(readOptions, "name".getBytes(), true),
+                Charset.defaultCharset()));
+        System.out.println(new String(transaction.getForUpdate(readOptions, "name".getBytes(), true),
+                Charset.defaultCharset()));
+        db.releaseSnapshot(readOptions.snapshot());
+    }
+```
+
+### 调整内存使用
+
+* 在内部，事务需要跟踪最近写入了哪些键。 为此，将重新使用现有的内存中写入缓冲区。 在决定要在内存中保留多少写入缓冲区时，事务仍将遵循现有的 max_write_buffer_number 选项。 此外，使用事务不会影响刷新或压缩。
+* 切换到使用 [Optimistic]TransactionDB 可能会比以前使用更多的内存。 如果你为 max_write_buffer_number 设置了一个非常大的值，一个典型的 RocksDB 实例将永远不会接近这个最大内存限制。 但是，[Optimistic]TransactionDB 将尝试使用尽可能多的写入缓冲区。 但是，这可以通过减少 max_write_buffer_number 或设置 max_write_buffer_size_to_maintain 来调整。
+* `OptimisticTransactionDBs`:在提交的时候，乐观锁事务将会使用内存写入缓冲区去进行冲突检测。要使此操作成功，缓冲的数据必须比事务中的更改更早。如果存在冲突提交事务将会失败。要降低由于缓冲区历史记录不足而导致提交失败的可能性，请增加 `max_write_buffer_size_to_maintain`。
+* `TransactionDBs`:如果使用`setSnapshot()`，`Put/Delete/Merge/GetForUpdate`操作将会首先检查内存缓冲中是否存在冲突，如果内存没有足够的历史数据，SST文件将会被检查。增大`max_write_buffer_size_to_maintain`将减少在冲突检测期间必须读取SST文件的机会。
+
+### 保存点
+
+```java
+ private static void savePoint(TransactionDB db) throws RocksDBException {
+        Transaction txn = db.beginTransaction(new WriteOptions());
+        // 设置保存的ian
+        txn.setSavePoint();
+        txn.put("B".getBytes(), "b".getBytes());
+        txn.rollbackToSavePoint();
+        // NPE
+        System.out.println(new String(txn.get(new ReadOptions(), "B".getBytes()), Charset.defaultCharset()));
+        txn.commit();
+    }
+```
+
+### 底层原理
+
+#### Read Snapshot
+
+* RocksDB 中的每次更新都是通过插入一个标记有单调递增序列号的条目来完成的。 将 seq 分配给 read_options.snapshot 将由（事务性或非事务性）DB 用于读取 seq 小于该值的值，即读取快照 → DBImpl::GetImpl
+* 调用`TransactionBaseImpl::SetSnapshot`将注入`DBImpl::GetSnapshot`，他做到了俩点：
+  * 返回当前的seq：事务将会使用seq(而不是写入值的seq)去校验`写-写冲突-->TransactionImpl::TryLock` → `TransactionImpl::ValidateSnapshot` → `TransactionUtil::CheckKeyForConflicts`
+  * 确保具有较小 seq 的值不会被压缩作业等删除（snapshots_.GetAll）。 这种标记的快照必须由被调用者释放（DBImpl::ReleaseSnapshot）
+
+#### 读-写冲突检测
+
+* 读写冲突可以通过升级为写-写冲突来防止:通过GetForUpdate(而不是Get)进行读取，如果存在put操作则会阻塞读取。
+
+#### 写-写冲突检测：悲观锁
+
+* 在写时使用锁表检测写-写冲突。
+* 没有事务的修改(Put,Merge和Delete)在事务下内部运行，所以每个修改都会经过事务->`TransactionDBImpl::Put`
+* 每个修改之前会申请一个锁-> `TransactionImpl::TryLock` `PointLockManager::TryLock`每个列族有16个锁通过`size_tnum_stripes=`6`设置
+* Commit 通过调用 DBImpl::Write → TransactionImpl::Commit 简单地将写入批处理写入 WAL 和 Memtable
+* 为了支持分布式事务，客户端可以在执行写操作后调用Prepare。它将值写入 WAL 但不写入 MemTable，这允许在机器崩溃的情况下恢复 → TransactionImpl::Prepare 如果调用 Prepare，则 Commit 将提交标记写入 WAL 并将值写入 MemTable。 这是通过在向写入批处理添加值之前调用 MarkWalTerminationPoint() 来完成的。
+
+#### 写-写冲突检测：乐观锁
+
+* 在提交时使用最新值的seq检测写-写冲突。
+* 每个修改会添加key到内存的vector中。
+* 通过`TransactionUtil::CheckKeysForConflicts`实现冲突检测
+  * 只检查内存中存在的键冲突，否则将失败。
+  * 冲突检测是通过检查每个键(DBImpl::GetLatestSequenceForKey)的最新seq来完成的。
