@@ -526,3 +526,54 @@ s = txn->Commit();
 * 通过`TransactionUtil::CheckKeysForConflicts`实现冲突检测
   * 只检查内存中存在的键冲突，否则将失败。
   * 冲突检测是通过检查每个键(DBImpl::GetLatestSequenceForKey)的最新seq来完成的。
+
+## Snapshot
+
+* 快照在创建时捕获数据库的时间点视图。 快照不会在数据库重新启动后持续存在。
+
+### API
+
+* `db.getSnapshot()`
+* 通过`ReadOptions.setSnapshot`设置快照
+* 通过`db.releaseSnapshot`释放快照
+
+### 实现原理
+
+#### Flush/compaction
+
+##### 实现
+
+* 快照由`SnapshotImpl`类的一个小对象表示。它只保存几个基本字段，比如快照所在的seqnum。
+* 快照被存储在DBImpl的一个链表里。一个好处是我们可以在获取 DB 互斥锁之前分配列表节点。 然后在持有互斥锁的同时，我们只需要更新列表指针。 此外，可以按任意顺序对快照调用 ReleaseSnapshot()。 使用链表，我们可以在不移动的情况下从中间删除一个节点。
+
+##### 可扩展性
+
+* 链表的主要缺点是它不能被二分搜索，尽管它是有序的。 在刷新/压缩期间，当我们需要找出某个键可见的最早快照时，我们必须扫描快照列表。 当有很多快照时，此扫描会显着降低刷新/压缩速度，从而导致写入停顿。 当快照数量达到数十万时会存在一些问题。
+
+## DeleteRange
+
+* 通过Iterator删除范围数据方式
+
+```c++
+Slice start, end;
+// set start and end
+auto it = db->NewIterator(ReadOptions());
+
+for (it->Seek(start); cmp->Compare(it->key(), end) < 0; it->Next()) {
+  db->Delete(WriteOptions(), it->key());
+}
+...
+```
+
+* 直接调用`DeleteRange`API
+
+```java
+   private static void deleteRange(String startKey,String endKey){
+        try {
+            db.deleteRange(startKey.getBytes(),endKey.getBytes());
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+    }
+```
+
