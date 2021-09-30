@@ -577,3 +577,20 @@ for (it->Seek(start); cmp->Compare(it->key(), end) < 0; it->Next()) {
     }
 ```
 
+## 原子flush
+
+* 如果DB的option`atomic_flush`开启则RocksDB支持原子性刷新多个列族。刷新多个列族的执行结果将会写入到`MANIFEST`，保证'all-or-nothing'（逻辑上）。由于原子刷新也是经过`write_thread`的，所以保证写batch中间不会出现flush。
+
+```java
+// 多个列族原子性flush
+options.setAtomicFlush(true);
+```
+
+### 手动flush
+
+```java
+RocksDB db = RocksDB.open("test");
+FlushOptions flushOptions = new FlushOptions();
+db.flush(flushOptions);
+```
+
