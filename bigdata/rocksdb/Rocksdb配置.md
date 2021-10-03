@@ -594,3 +594,29 @@ FlushOptions flushOptions = new FlushOptions();
 db.flush(flushOptions);
 ```
 
+## Secondary instance
+
+* Rocksdb支持共享访问一个数据库目录通过`primary-secondary`模式.主实例实一个常规的RocksDB提供读、写、flush和compaction的能力。secondary实例类似于只读实例，他提供读的能力但是不支持写或flush能力。secondary实例可以对主实例的SST文件进行compaction，而不需要在主实例的MANIFEST中安装压缩结果。
+* secondary实例能够动态跟踪主实例的MANIFEST和提前写日志(wall)，并应用相关更改(如果适用的话)。用户必须在选择的时间显式调用DB::TryCatchUpWithPrimary()。
+
+```java
+public static void main(String[] args) {
+        Options options = new Options();
+        options.setMaxOpenFiles(-1);
+        String secondaryPath = "/Users/xiamuguizhi/Documents/reserch/middleware/rocksdb/secondary/";
+        String path = "/Users/xiamuguizhi/Documents/reserch/middleware/rocksdb/";
+        try {
+            RocksDB rocksDB = RocksDB.openAsSecondary(options, path, secondaryPath);
+            rocksDB.tryCatchUpWithPrimary();
+            rocksDB.put("name".getBytes(), "hsm".getBytes());
+            System.out.println(new String(rocksDB.get("name".getBytes()), Charset.defaultCharset()));
+        } catch (RocksDBException e) {
+            e.printStackTrace();
+        }
+}
+```
+
+### 限制和问题
+
+1. 辅助实例必须使用 max_open_files = -1 打开，这表示辅助实例必须保持所有文件描述符打开，以防止它们在主实例取消链接后变得不可访问，这在某些非 POSIX 文件系统上不起作用。
+2. RocksDB在很大程度上依赖压缩来提高读性能。如果辅助实例在压缩之前跟踪并应用主实例的日志文件，那么在辅助实例再次跟踪日志并进入压缩后的状态之前，可能会观察到辅助实例上的读性能比主实例上的读性能差。
