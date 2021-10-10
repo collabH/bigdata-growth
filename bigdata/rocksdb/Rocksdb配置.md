@@ -620,3 +620,21 @@ public static void main(String[] args) {
 
 1. 辅助实例必须使用 max_open_files = -1 打开，这表示辅助实例必须保持所有文件描述符打开，以防止它们在主实例取消链接后变得不可访问，这在某些非 POSIX 文件系统上不起作用。
 2. RocksDB在很大程度上依赖压缩来提高读性能。如果辅助实例在压缩之前跟踪并应用主实例的日志文件，那么在辅助实例再次跟踪日志并进入压缩后的状态之前，可能会观察到辅助实例上的读性能比主实例上的读性能差。
+
+## Approximate Size
+
+* 近似大小api允许用户合理准确地猜测一个键范围的磁盘空间和内存利用率。
+
+```java
+            RocksDB rocksDB = RocksDB.open(path);
+//            RocksDB rocksDB = RocksDB.openAsSecondary(options, path, secondaryPath);
+//            rocksDB.tryCatchUpWithPrimary();
+            rocksDB.put("name".getBytes(), "hsm".getBytes());
+            System.out.println(new String(rocksDB.get("name".getBytes()), Charset.defaultCharset()));
+            Range range = new Range(new Slice("name"), new Slice("name"));
+            long[] approximateSizes = rocksDB.getApproximateSizes(Lists.newArrayList(range));
+            Arrays.stream(approximateSizes).iterator().forEachRemaining((Consumer<Long>) System.out::println);
+            RocksDB.CountAndSize approximateMemTableStats = rocksDB.getApproximateMemTableStats(range);
+            System.out.println(approximateMemTableStats.size + ":" + approximateMemTableStats.count);
+```
+
