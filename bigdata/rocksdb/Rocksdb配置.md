@@ -638,3 +638,40 @@ public static void main(String[] args) {
             System.out.println(approximateMemTableStats.size + ":" + approximateMemTableStats.count);
 ```
 
+## User Timestamp
+
+* 实现性功能允许用户通过timestamp去访问和写入数据，主要支持`get`、`newIterator`、`put`、`delete`、`SingleDelete`、`Write`
+* rocksdb底层数据存储格式：
+
+```
+|user key|timestamp|seqno|type|
+|<-------internal key-------->|
+```
+
+### 使用API
+
+#### Open DB
+
+```java
+public static void main(String[] args) throws RocksDBException {
+        Options options = new Options();
+        // 设置比较器
+        options.setComparator(BuiltinComparator.BYTEWISE_COMPARATOR);
+        RocksDB db = RocksDB.open("test");
+    }
+```
+
+* 通过writerOptions、readOptions设置timestamp读取小于等于该时间的数据。
+
+## BlobDb
+
+* 本质上是rocksdb只不过底层存储巨大的value值，通过将大值存储在专用的blob文件中，并在LSM树中只存储指向它们的小指针，我们避免了在压缩过程中反复复制这些值，从而减少了写的放大。
+
+### 历史实现方式
+
+* 以前通过实现`StackableDB`接口实现BlobDb，它是面向(主要是FIFO/TTL)能够容忍一些数据丢失的用例的，因为没有针对blob的恢复机制，而且blob文件不会被跟踪。通过这个实现，BlobDB层在应用程序线程中提取blob并立即写入blob文件。在性能方面，这有几个缺点:它需要同步，需要在每个blob之后刷新blob文件，还意味着在前台线程中执行昂贵的操作，如压缩。除此之外，这种实现与许多广泛使用的RocksDB特性不兼容，例如合并、列族、检查点、备份/恢复、事务等。
+
+### 新版本实现
+
+* 新的实现也将RocksDB的一致性保证和各种写选项(如使用WAL或同步写)扩展到blob，并在MANIFEST中跟踪blob文件。Blob文件构建被卸载到RocksDB的后台任务，即刷新和压缩。这意味着与sst类似，任何给定的blob文件都是由单个后台线程编写的，无需在应用程序线程中锁定、刷新或执行压缩。
+
