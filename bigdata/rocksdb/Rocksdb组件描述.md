@@ -158,3 +158,9 @@
 | Insert with Hint            | Supported (in case there are no concurrent insert) | Not supported                                                | Not supported                                | Not supported                                  |
 
 * 总的来说查询多、随机读取使用SkipList，写负载大使用Vector。
+
+# Write Ahead Log
+
+## 概述
+
+* RocksDB 的每次更新都会写入两个位置：1) 一个名为 memtable 的内存数据结构（稍后刷新到 SST 文件）和 2) 在磁盘上提前写入日志 (WAL)。 如果发生故障，可以使用预写日志完全恢复memtable中的数据，这是将数据库恢复到原始状态所必需的。 在默认配置中，RocksDB 通过在每次用户写入后刷新 WAL 来保证进程崩溃一致性。
