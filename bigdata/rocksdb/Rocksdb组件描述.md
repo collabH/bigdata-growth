@@ -302,3 +302,57 @@ records written by the most recent log writer vs a previous one.
 
 # MANIFEST
 
+* RocksDB是文件系统和存储介质无关的。文件系统操作不是原子操作，在系统故障时很容易出现不一致。即使打开了日志记录，文件系统也不能保证不干净重启时的一致性。POSIX文件系统也不支持原子批处理操作。因此，不可能依靠嵌入在RocksDB数据存储文件中的元数据来重新启动时重建RocksDB的最后一致状态。
+* RocksDB有一个内置的机制来克服POSIX文件系统的这些限制，通过使用Manifest日志文件中的`Version Edit Records保存RocksDB状态更改的事务日志`。MANIFEST用于在重启时将RocksDB恢复到最新的已知一致状态。
+
+## 术语
+
+* ***MANIFEST***是指在事务日志中跟踪RocksDB状态变化的系统
+* ***Manifest log*** 是指包含 RocksDB 状态快照/编辑的单个日志文件
+* ***CURRENT*** 是指当前最新的mainfest log
+
+## 工作原理
+
+* MANIFEST是RocksDB状态变化的事务日志。MANIFEST由- MANIFEST日志文件和指向最新MANIFEST文件(CURRENT)的指针组成。Manifest日志是正在滚动名为Manifest -(seq号)的日志文件。序列号总是在增加。CURRENT是一个特殊的文件，它指向最新的清单日志文件。
+* 在系统(重新)启动时，最新的manifest日志包含RocksDB的一致状态。RocksDB状态的任何后续更改都记录到manifest日志文件中。当manifest日志文件超过一定大小时，将使用RocksDB状态的快照创建一个新的manifest日志文件。更新最新的清单文件指针并同步文件系统。成功更新CURRENT文件后，将清除冗余清单日志。
+
+```
+MANIFEST = { CURRENT, MANIFEST-<seq-no>* } 
+CURRENT = File pointer to the latest manifest log
+MANIFEST-<seq no> = Contains snapshot of RocksDB state and subsequent modifications
+```
+
+## Version Edit
+
+* RocksDB在任何给定时间的某个状态被称为版本(又名快照)。对版本的任何修改都被认为是版本编辑。Version(或RocksDB状态快照)是通过连接一系列版本编辑来构造的。本质上，清单日志文件是一系列版本编辑。
+
+```
+version-edit      = Any RocksDB state change
+version           = { version-edit* }
+manifest-log-file = { version, version-edit* }
+                  = { version-edit* }
+```
+
+## Version Edit Layout
+
+* Manifest log是一个Version Edit记录的序列。这个Version Edit记录由编辑标识号标识。
+
+### 数据类型
+
+* 简单数据类型
+
+```
+VarX   - Variable character encoding of intX
+FixedX - Fixed character encoding of intX
+```
+
+* 复杂数据类型
+
+```
+String - Length prefixed string data
++-----------+--------------------+
+| size (n)  | content of string  |
++-----------+--------------------+
+|<- Var32 ->|<-- n            -->|
+```
+
