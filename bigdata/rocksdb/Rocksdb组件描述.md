@@ -164,3 +164,141 @@
 ## 概述
 
 * RocksDB 的每次更新都会写入两个位置：1) 一个名为 memtable 的内存数据结构（稍后刷新到 SST 文件）和 2) 在磁盘上提前写入日志 (WAL)。 如果发生故障，可以使用预写日志完全恢复memtable中的数据，这是将数据库恢复到原始状态所必需的。 在默认配置中，RocksDB 通过在每次用户写入后刷新 WAL 来保证进程崩溃一致性。
+* 预写日志(Write ahead log, WAL)将memtable操作序列化到日志文件中。在发生故障时，可以使用WAL文件将数据库恢复到一致状态，通过从日志中重建memtable。当memtable被安全刷新到persistent medium时，相应的WAL日志就会被废弃并被归档。最终，归档的日志在一段时间后从磁盘清除。
+
+## Wal生命周期
+
+* 一旦db被打开，一个新的WAL将被创建在磁盘上，以持久化所有的写操作(WAL是在所有列族之间共享的)。
+* 当进行db#put操作后，WAL应该已经记录了所有写操作。WAL将保持打开状态，并继续记录未来的写操作，直到它的大小达到`DBOptions::max_total_wal_size`。
+* 如果用户决定刷新一个列族的数据，1）这个列族的数据（key1 和 key3）被刷新到一个新的 SST 文件 2）一个新的 WAL 被创建，所有未来对所有列族的写入现在都转到新的 WAL 3) 旧的 WAL 不会接受新的写入，但删除可能会延迟。
+* 此时会有两个 WAL，`旧的 WAL 包含 key1 到 key4，新的 WAL 包含 key5 和 key6`。 因为旧的 WAL 仍然包含`至少一个列族（“默认”）的实时数据`，所以还不能删除它。 只有当用户`最终决定刷新“默认”列族时，旧的 WAL 才能自动从磁盘归档和清除`。
+* 当 1) 打开一个新数据库，2) 刷新一个列族时，就会创建一个 WAL。 当所有列族刷新超过 WAL 中包含的最大序列号时，WAL 将被删除（或归档，如果启用了归档），或者换句话说，WAL 中的所有数据都已持久化到 SST 文件。 存档的 WAL 将被移动到一个单独的位置，并在稍后从磁盘中清除。 由于复制目的，实际删除可能会延迟
+
+## WAL配置
+
+* `DBOptions.wal_dir`:设置RocksDB存放预写日志文件的目录，允许wal与实际数据分开存放。
+* `DBOptions::WAL_ttl_seconds, DBOptions::WAL_size_limit_MB`:这两个字段会影响归档wal被删除的速度。非零值表示触发归档WAL删除的时间和磁盘空间阈值
+* `DBOptions::max_total_wal_size`:为了限制wal的大小，RocksDB使用`DBOptions::max_total_wal_size`作为列族刷新的触发器。一旦wal超过这个大小，RocksDB将开始强制刷新列族，以允许删除一些最古老的wal。当以非均匀频率更新列族时，这个配置可能很有用。如果没有大小限制，当不经常更新的列族有一段时间没有刷新时，用户可能需要保留非常旧的wall。
+* `DBOptions::avoid_flush_during_recovery`
+* `DBOptions::manual_wal_flush`:确定 WAL 刷新是在每次写入后自动还是纯手动（用户必须调用 FlushWAL 来触发 WAL 刷新）。
+* `DBOptions::wal_filter`:通过DBOptions::wal_filter，用户可以提供一个过滤器对象，以便在恢复过程中处理wal时调用。注:ROCKSDB_LITE模式不支持
+* `WriteOptions::disableWAL`:不关心数据丢失可以关闭WAL
+
+## WAL filter
+
+### 事务日志迭代器
+
+* 事务日志迭代器提供了在RocksDB实例之间复制数据的方法。一旦一个WAL由于列族刷新而被归档，WAL将被归档而不是立即删除。目标是允许事务日志迭代器继续读取WAL，并将其发送给关注者进行重放。
+
+## WAL File Format
+
+### WAL管理器
+
+* 在WAL目录下生成的文件序号越高越好。为了重建数据库的状态，这些文件是按照序列号顺序读取的。WAL管理器提供了将WAL文件作为单个单元读取的抽象。在内部，它使用Reader或Writer抽象来打开和读取文件。
+
+### Reader/Writer
+
+* Writer提供了将日志记录追加到日志文件的抽象。媒体特定的内部细节由WriteableFile接口处理。类似地，Reader提供了从日志文件中顺序读取日志记录的抽象。SequentialFile接口处理内部媒体特定的细节。
+
+### Log File Format
+
+* 日志文件由一系列长度可变的记录组成，记录由`kBlockSize`(32k)组成。如果某条记录不能填入剩余空间，则用空数据填充剩余空间。写入器以kBlockSize的块为单位写入，读取器以kBlockSize的块为单位读取。
+
+```
+       +-----+-------------+--+----+----------+------+-- ... ----+
+ File  | r0  |        r1   |P | r2 |    r3    |  r4  |           |
+       +-----+-------------+--+----+----------+------+-- ... ----+
+       <--- kBlockSize ------>|<-- kBlockSize ------>|
+
+  rn = variable size records
+  P = Padding
+```
+
+### Records Format
+
+#### Legacy Record Format
+
+```
++---------+-----------+-----------+--- ... ---+
+|CRC (4B) | Size (2B) | Type (1B) | Payload   |
++---------+-----------+-----------+--- ... ---+
+
+CRC = 32bit hash computed over the payload using CRC
+Size = Length of the payload data
+Type = Type of record
+       (kZeroType, kFullType, kFirstType, kLastType, kMiddleType )
+       The type is used to group a bunch of records together to represent
+       blocks that are larger than kBlockSize
+Payload = Byte stream as long as specified by the payload size
+```
+
+* 日志文件的内容是一个32KB的块序列。唯一的例外是文件的尾部可能包含部分块。每块由一下结构组成：
+
+```c++
+block := record* trailer?
+record :=
+  checksum: uint32	// crc32c of type and data[]
+  length: uint16
+  type: uint8		// One of FULL, FIRST, MIDDLE, LAST 
+  data: uint8[length]
+```
+
+* FIRST、MIDDLE、LAST是用于被分割成多个片段的用户记录的类型(通常是因为块边界)。FIRST是用户记录的第一个片段的类型，LAST是用户记录的最后一个片段的类型，MID是用户记录所有内部片段的类型。FULL记录包含整个用户记录的内容。
+
+#### Recyclabe Record Format
+
+```
++---------+-----------+-----------+----------------+--- ... ---+
+|CRC (4B) | Size (2B) | Type (1B) | Log number (4B)| Payload   |
++---------+-----------+-----------+----------------+--- ... ---+
+Same as above, with the addition of
+Log number = 32bit log file number, so that we can distinguish between
+records written by the most recent log writer vs a previous one.
+日志文件号，以便我们区分由最近的日志记录器所写的记录与以前的记录。
+```
+
+## Wal恢复模式
+
+* 每个应用程序都是独一无二的，RocksDB需要一定的一致性保证。RocksDB中的每一条提交的记录都会被持久化。未提交的记录记录在write-ahead-log (write-ahead-log)中。当RocksDB干净地关闭时，所有未提交的数据都会在关闭前提交，因此一致性总是得到保证。当RocksDB被杀死或机器重新启动时，RocksDB需要将自己恢复到一致的状态。其中一个重要的恢复操作是在WAL中重放未提交的记录。不同的WAL恢复模式定义了WAL重放的行为。
+
+### kTolerateCorruptedTailRecords
+
+* 允许数据丢失，WAL重放会忽略在日志末尾发现的任何错误。其理由是，在不完全关闭时，日志的尾部可能会有不完整的写操作。这是一种启发式模式，系统无法区分日志尾部的损坏和未完成的写入。任何其他的IO错误，将被认为是数据损坏。
+
+### kAbsoluteConsistency
+
+* WAL重放过程中出现的任何IO错误都被认为是数据损坏。对于那些连一条记录都不能丢失的应用程序和/或有其他方法恢复未提交的数据的应用程序，这种模式是理想的。
+
+### kSkipAnyCorruptedRecords
+
+* 在这种模式下，读取日志时的任何IO错误都被忽略。系统试图恢复尽可能多的数据。这对于灾难恢复是理想的。
+
+## WAL性能
+
+### Non-Sync模式
+
+* 当`WriteOptions.sync = false`(默认)，WAL写不同步到磁盘。除非操作系统认为它必须刷新数据(例如，太多脏页)，否则用户不需要等待任何I/O写入。
+* 用户如果想减少写操作系统页面缓存所带来的CPU延迟，可以选择`Options.manual_wal_flush = true`。使用这个选项，WAL写操作甚至`不会刷新`到文件系统页面缓存，而是保留在RocksDB中。用户需要调用`DB::FlushWAL()`使缓冲条目进入文件系统。
+* 用户可以通过调用`DB::SyncWAL()`强制WAL文件fsync。该函数不会阻塞正在其他线程中执行的写操作。
+* 在这种模式下，WAL写不是崩溃安全的。
+
+### Sync Mode
+
+* `WriteOptions.sync = true`(默认)
+
+### Group Commit
+
+* 和其他大多数依赖日志的系统一样，RocksDB支持团队承诺提高WAL的写吞吐量，以及写放大。RocksDB的组提交以一种自然的方式实现:当不同线程同时写入同一个DB时，所有符合合并条件的未完成的写入将被合并到一起，并写入WAL一次，使用一个fsync。通过这种方式，相同数量的I/ o可以完成更多的写操作。
+* 具有不同写选项的写操作可能不符合组合的要求。最大组大小为1MB。RocksDB不会试图通过主动延迟写入来增加批处理大小。
+
+### Number of I/Os per write
+
+* 如果`Options.recycle_log_file_num=false(默认)`，RocksDB总是为新的WAL段创建新文件。每次WAL写都会改变数据和文件大小，所以每次fsync至少会产生两个I/ o，一个用于数据，一个用于元数据。注意，RocksDB调用fallocate()来为文件预留足够的空间，但它并不会阻止fsync中的元数据I/O。
+* `Options.recycle_log_file_num = true`将保留一个WAL文件池并尝试重用它们。当写入现有日志文件时，从大小为0开始使用随机写入。在写入到达文件末尾之前，文件大小不会改变，因此可以避免元数据的I/O(也取决于文件系统挂载选项)。假设大多数WAL文件都有类似的大小，元数据所需的I/O将是最小的。
+
+### 写放大
+
+* 注意，对于某些用例，同步WAL可能会引入一些重要的写扩展。当写操作很小的时候，因为整个块/页可能需要更新，所以即使写操作很小，我们也可能需要两次4KB的写操作(一次用于数据，一次用于元数据)。如果写仅为40字节，则更新8KB，则写放大为8KB /40字节~= 200。它甚至很容易比lsm树的写放大值还要大。
+
+# MANIFEST
+
