@@ -102,3 +102,178 @@
     private long writeBatchSize;
 ```
 
+#### 核心构造方法
+
+```java
+  private EmbeddedRocksDBStateBackend(
+            EmbeddedRocksDBStateBackend original, ReadableConfig config, ClassLoader classLoader) {
+        // configure incremental checkpoints
+        this.enableIncrementalCheckpointing =
+                original.enableIncrementalCheckpointing.resolveUndefined(
+                        config.get(CheckpointingOptions.INCREMENTAL_CHECKPOINTS));
+
+        if (original.numberOfTransferThreads == UNDEFINED_NUMBER_OF_TRANSFER_THREADS) {
+            this.numberOfTransferThreads = config.get(CHECKPOINT_TRANSFER_THREAD_NUM);
+        } else {
+            this.numberOfTransferThreads = original.numberOfTransferThreads;
+        }
+
+        if (original.writeBatchSize == UNDEFINED_WRITE_BATCH_SIZE) {
+            this.writeBatchSize = config.get(WRITE_BATCH_SIZE).getBytes();
+        } else {
+            this.writeBatchSize = original.writeBatchSize;
+        }
+
+        this.memoryConfiguration =
+                RocksDBMemoryConfiguration.fromOtherAndConfiguration(
+                        original.memoryConfiguration, config);
+        this.memoryConfiguration.validate();
+
+        if (null == original.priorityQueueStateType) {
+            this.priorityQueueStateType = config.get(TIMER_SERVICE_FACTORY);
+        } else {
+            this.priorityQueueStateType = original.priorityQueueStateType;
+        }
+
+        // configure local directories
+        if (original.localRocksDbDirectories != null) {
+            this.localRocksDbDirectories = original.localRocksDbDirectories;
+        } else {
+            final String rocksdbLocalPaths = config.get(RocksDBOptions.LOCAL_DIRECTORIES);
+            if (rocksdbLocalPaths != null) {
+                String[] directories = rocksdbLocalPaths.split(",|" + File.pathSeparator);
+
+                try {
+                    setDbStoragePaths(directories);
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalConfigurationException(
+                            "Invalid configuration for RocksDB state "
+                                    + "backend's local storage directories: "
+                                    + e.getMessage(),
+                            e);
+                }
+            }
+        }
+
+        // configure metric options
+        this.defaultMetricOptions = RocksDBNativeMetricOptions.fromConfig(config);
+
+        // configure RocksDB predefined options
+        this.predefinedOptions =
+                original.predefinedOptions == null
+                        ? PredefinedOptions.valueOf(config.get(RocksDBOptions.PREDEFINED_OPTIONS))
+                        : original.predefinedOptions;
+        LOG.info("Using predefined options: {}.", predefinedOptions.name());
+
+        // configure RocksDB options factory
+        try {
+            // 加载Rocksdb配置，可以通过自定义实现Factory然后配置自定义的Rocksdb
+            rocksDbOptionsFactory =
+                    configureOptionsFactory(
+                            original.rocksDbOptionsFactory,
+                            config.get(RocksDBOptions.OPTIONS_FACTORY),
+                            config,
+                            classLoader);
+        } catch (DynamicCodeLoadingException e) {
+            throw new FlinkRuntimeException(e);
+        }
+
+        // configure latency tracking
+        latencyTrackingConfigBuilder = original.latencyTrackingConfigBuilder.configure(config);
+    }
+```
+
+#### createKeyedStateBackend
+
+* 创建Keyed状态后端
+
+```java
+public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
+            Environment env,
+            JobID jobID,
+            String operatorIdentifier,
+            TypeSerializer<K> keySerializer,
+            int numberOfKeyGroups,
+            KeyGroupRange keyGroupRange,
+            TaskKvStateRegistry kvStateRegistry,
+            TtlTimeProvider ttlTimeProvider,
+            MetricGroup metricGroup,
+            @Nonnull Collection<KeyedStateHandle> stateHandles,
+            CloseableRegistry cancelStreamRegistry,
+            double managedMemoryFraction)
+            throws IOException {
+
+        // first, make sure that the RocksDB JNI library is loaded
+        // we do this explicitly here to have better error handling
+        // 获取临时目录
+        String tempDir = env.getTaskManagerInfo().getTmpDirectories()[0];
+        // 初始化Rocksdb，加载lib、外部lib等
+        ensureRocksDBIsLoaded(tempDir);
+
+        // replace all characters that are not legal for filenames with underscore
+        //解析算子名
+        String fileCompatibleIdentifier = operatorIdentifier.replaceAll("[^a-zA-Z0-9\\-]", "_");
+
+        // 初始化rocksdb local dir
+        lazyInitializeForJob(env, fileCompatibleIdentifier);
+
+        File instanceBasePath =
+                new File(
+                        getNextStoragePath(),
+                        "job_"
+                                + jobId
+                                + "_op_"
+                                + fileCompatibleIdentifier
+                                + "_uuid_"
+                                + UUID.randomUUID());
+
+        LocalRecoveryConfig localRecoveryConfig =
+                env.getTaskStateManager().createLocalRecoveryConfig();
+
+        final OpaqueMemoryResource<RocksDBSharedResources> sharedResources =
+                RocksDBOperationUtils.allocateSharedCachesIfConfigured(
+                        memoryConfiguration, env.getMemoryManager(), managedMemoryFraction, LOG);
+        if (sharedResources != null) {
+            LOG.info("Obtained shared RocksDB cache of size {} bytes", sharedResources.getSize());
+        }
+        final RocksDBResourceContainer resourceContainer =
+                createOptionsAndResourceContainer(sharedResources);
+
+        ExecutionConfig executionConfig = env.getExecutionConfig();
+        StreamCompressionDecorator keyGroupCompressionDecorator =
+                getCompressionDecorator(executionConfig);
+
+        LatencyTrackingStateConfig latencyTrackingStateConfig =
+                latencyTrackingConfigBuilder.setMetricGroup(metricGroup).build();
+        // 创建keyed状态后端
+        RocksDBKeyedStateBackendBuilder<K> builder =
+                new RocksDBKeyedStateBackendBuilder<>(
+                                operatorIdentifier,
+                                env.getUserCodeClassLoader().asClassLoader(),
+                                instanceBasePath,
+                                resourceContainer,
+                                stateName -> resourceContainer.getColumnOptions(),
+                                kvStateRegistry,
+                                keySerializer,
+                                numberOfKeyGroups,
+                                keyGroupRange,
+                                executionConfig,
+                                localRecoveryConfig,
+                                getPriorityQueueStateType(),
+                                ttlTimeProvider,
+                                latencyTrackingStateConfig,
+                                metricGroup,
+                                stateHandles,
+                                keyGroupCompressionDecorator,
+                                cancelStreamRegistry)
+                        .setEnableIncrementalCheckpointing(isIncrementalCheckpointsEnabled())
+                        .setNumberOfTransferingThreads(getNumberOfTransferThreads())
+                        .setNativeMetricOptions(
+                                resourceContainer.getMemoryWatcherOptions(defaultMetricOptions))
+                        .setWriteBatchSize(getWriteBatchSize());
+        return builder.build();
+    }
+
+
+```
+
