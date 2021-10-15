@@ -373,3 +373,84 @@ String - Length prefixed string data
 * 在5.6或更高版本中，您插入的DB的一个列族会触发flush，
   * 如果可变memtable大小超过了限制的90%
   * 如果总内存超过限制，只有当可变memtable大小也超过了限制的50%时，才会触发更激进的刷新。
+
+# Compaction
+
+## 压缩算法概览
+
+* Rocksdb提供以下压缩算法：Classic Leveled, Tiered, Tiered+Leveled(Level Compaction), Leveled-N, FIFO
+
+### Classic Leveled
+
+```
+什么是扇入和扇出？ 
+
+在软件设计中，扇入和扇出的概念是指应用程序模块之间的层次调用情况。
+
+按照结构化设计方法，一个应用程序是由多个功能相对独立的模块所组成。
+
+扇入：是指直接调用该模块的上级模块的个数。扇入大表示模块的复用程序高。
+
+扇出：是指该模块直接调用的下级模块的个数。扇出大表示模块的复杂度高，需要控制和协调过多的下级模块；但扇出过小（例如总是1）也不好。扇出过大一般是因为缺乏中间层次，应该适当增加中间层次的模块。扇出太小时可以把下级模块进一步分解成若干个子功能模块，或者合并到它的上级模块中去。
+```
+
+* 以读写放大为代价最小化空间放大，LSM树是一系列的层级，每个level都是将多个文件排序后运行。每一level都比前一level大很多，相邻能级的尺寸比有时被称为扇出，当所有能级之间使用同一个扇出时，写放大就会最小化。压缩到N级(Ln)将Ln-1中的数据合并到Ln中。压缩到Ln会重写之前合并到Ln的数据。在最坏的情况下，每个级别的写放大等于扇出，但在实践中往往比扇出少，这在Hyeontaek Lim等人的论文中解释。在最初的LSM论文中，压缩是全对全的——所有来自Ln-1的数据都与来自Ln的所有数据合并。对于LevelDB和RocksDB是一些对一些的——Ln-1中的一些数据与Ln中的一些(重叠的)数据合并。
+
+### Leveled-N
+
+* Leveled-N 压缩类似于leveled压缩，但写入更少，读取放大更多。 它允许每个级别有多个排序运行。 压缩将所有从 Ln-1 排序的运行合并到一个来自 Ln 的排序运行中，这是一个级别。 然后在名称中添加“-N”以表示每个级别可以有 n 次排序运行。 Dostoevsky 论文定义了一种名为 Fluid LSM 的压缩算法，其中最大级别有 1 次排序运行，但非最大级别可以有超过 1 次排序运行。 水平压缩完成到最大级别。
+
+### Tiered
+
+* Tiered Compaction以读和空间放大为代价最小化写放大。每个级别有 N 个排序运行。 Ln 中的每个排序运行比 Ln-1 中的排序运行大 ~N 倍。 压缩合并一个级别中的所有排序运行，以在下一个级别创建一个新的排序运行。 在这种情况下，N 类似于用于水平压缩的扇出。 合并到 Ln 时，压缩不会读取/重写 Ln 中的排序运行。 每级写入放大为 1，这远低于扇出的水平。
+
+### Tiered+Leveled
+
+* Tiered+Leveled 的写入放大比 leveled 小，空间放大比 tiered 小。它对较小的级别使用 tiered，对较大的级别使用 leveled。 LSM 树从分层切换到分层的级别是灵活的，Leveled compaction在Rocksdb中就是Tiered+Leveled。
+
+### FIFO
+
+* FIFOStyle压缩删除过时的文件，并可用于类似缓存的数据。
+
+## Leveled Compaction
+
+### 存储文件的结构
+
+![](./img/level_structure.png)
+
+* 在每个级别(除了级别0)内，数据范围被划分为多个SST文件
+
+![](./img/level_files.png)
+
+* level是有序的的运行因为每个keys在SST都是有序的。为了确定一个键的位置，我们首先对所有文件的开始/结束键进行二分搜索以确定哪个文件可能包含该键，然后在文件内部进行二分搜索以定位确切位置。 总之，这是对level中所有键的完整二分搜索。
+* 所有非 0 级别都有目标大小。 Compaction 的目标是将这些级别的数据大小限制在目标以下。 规模目标通常呈指数增长：
+
+![](./img/level_targets.png)
+
+### Compactions
+
+* 当 L0 文件数量达到 `level0_file_num_compaction_trigger` 时触发 Compaction，L0 的文件将合并到 L1。后续L1超过在压缩到L2依次进行压缩
+
+![](./img/pre_l0_compaction.png) 
+
+* 除了L0到L1，后续level压缩可以并行执行压缩。
+
+![](./img/pre_l1_compaction.png)
+
+![](./img/pre_l2_compaction.png)
+
+* 允许的最大压缩数由 `max_background_compactions` 控制。但是，默认情况下，L0 到 L1 的压缩不是并行化的。 在某些情况下，它可能成为限制总压缩速度的瓶颈。 RocksDB 仅支持 L0 到 L1 的基于子压缩的并行化。 要启用它，用户可以将 `max_subcompactions` 设置为大于 1。 然后，我们将尝试对范围进行分区并使用多个线程来执行它：
+
+![](./img/subcompaction.png)
+
+### Compaction Picking
+
+* 当多个level触发了compaction条件，RocksDB需要选择一个level首先去压缩，为每个level生成一个分数：
+  * 对于非0的level，这个分数是level的总大小除以目标大小。 如果已经选择了要压缩到下一级的文件，则这些文件的大小不包括在总大小中，因为它们很快就会消失。
+  * 对于 0 级，分数是文件总数除以` level0_file_num_compaction_trigger` 或超过 `max_bytes_for_level_base` 的总大小，以较大者为准。 （如果文件大小小于` level0_file_num_compaction_trigger`，无论分数有多大，都不会从 level 0 触发压缩。）
+* 分数越高的level最先压缩。
+
+### 周期压缩
+
+* 如果存在压缩过滤器，RocksDB 会确保数据在一定时间后通过压缩过滤器。 这是通过 `options.periodic_compaction_seconds` 实现的。 将其设置为 0 将禁用此功能。 保留默认值，即 UINT64_MAX - 1，表示 RocksDB 控制该功能。 目前，RocksDB 会将值更改为 30 天。 每当 RocksDB 尝试选择压缩时，超过 30 天的文件将有资格进行压缩并被压缩到相同的级别。
+
