@@ -636,3 +636,28 @@ JDK6,7中的ConcurrentHashmap主要使用Segment来实现减小锁粒度，分�
 3. 使用3个CAS操作来确保node的一些操作的原子性，这种方式代替了锁。
 4. sizeCtl的不同值来代表不同含义，起到了控制的作用。
 5. 采用synchronized而不是ReentrantLock
+
+## ConcurrentLinkedQueue
+
+* `ConcurrentLinkedQueue`是线程安全的队列
+
+### Node
+
+```java
+private static class Node<E> {
+        volatile E item;
+        volatile Node<E> next;
+		.......
+}
+```
+
+### 队列链表节点
+
+```java
+private transient volatile Node<E> head;
+private transient volatile Node<E> tail;
+public ConcurrentLinkedQueue() {
+    head = tail = new Node<E>(null);
+}
+```
+

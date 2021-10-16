@@ -273,7 +273,5 @@ public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
                         .setWriteBatchSize(getWriteBatchSize());
         return builder.build();
     }
-
-
 ```
 
