@@ -274,6 +274,259 @@ public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
         return builder.build();
     }
 
+// build方法
+ public RocksDBKeyedStateBackend<K> build() throws BackendBuildingException {
+        // 构造Rocksdb基础组件
+        RocksDBWriteBatchWrapper writeBatchWrapper = null;
+        ColumnFamilyHandle defaultColumnFamilyHandle = null;
+        RocksDBNativeMetricMonitor nativeMetricMonitor = null;
+        CloseableRegistry cancelStreamRegistryForBackend = new CloseableRegistry();
+        LinkedHashMap<String, RocksDBKeyedStateBackend.RocksDbKvStateInfo> kvStateInformation =
+                new LinkedHashMap<>();
+        LinkedHashMap<String, HeapPriorityQueueSnapshotRestoreWrapper<?>> registeredPQStates =
+                new LinkedHashMap<>();
+        RocksDB db = null;
+        // 状态恢复Opeartion
+        RocksDBRestoreOperation restoreOperation = null;
+        RocksDbTtlCompactFiltersManager ttlCompactFiltersManager =
+                new RocksDbTtlCompactFiltersManager(ttlTimeProvider);
 
+        ResourceGuard rocksDBResourceGuard = new ResourceGuard();
+        RocksDBSnapshotStrategyBase<K, ?> checkpointStrategy;
+        PriorityQueueSetFactory priorityQueueFactory;
+        SerializedCompositeKeyBuilder<K> sharedRocksKeyBuilder;
+        // Number of bytes required to prefix the key groups.
+        int keyGroupPrefixBytes =
+                CompositeKeySerializationUtils.computeRequiredBytesInKeyGroupPrefix(
+                        numberOfKeyGroups);
+
+        try {
+            // Variables for snapshot strategy when incremental checkpoint is enabled
+            UUID backendUID = UUID.randomUUID();
+            SortedMap<Long, Set<StateHandleID>> materializedSstFiles = new TreeMap<>();
+            long lastCompletedCheckpointId = -1L;
+            if (injectedTestDB != null) {
+                db = injectedTestDB;
+                defaultColumnFamilyHandle = injectedDefaultColumnFamilyHandle;
+                nativeMetricMonitor =
+                        nativeMetricOptions.isEnabled()
+                                ? new RocksDBNativeMetricMonitor(
+                                        nativeMetricOptions, metricGroup, db)
+                                : null;
+            } else {
+                // 初始化前置实例目录
+                prepareDirectories();
+                // 获取状态恢复操作类
+                restoreOperation =
+                        getRocksDBRestoreOperation(
+                                keyGroupPrefixBytes,
+                                cancelStreamRegistry,
+                                kvStateInformation,
+                                registeredPQStates,
+                                ttlCompactFiltersManager);
+                // 恢复状态，获取RocksDBRestoreResult，其中包含rocksdb实例、最后一次ck等
+                RocksDBRestoreResult restoreResult = restoreOperation.restore();
+                // 获取rocksdb实例
+                db = restoreResult.getDb();
+                defaultColumnFamilyHandle = restoreResult.getDefaultColumnFamilyHandle();
+                nativeMetricMonitor = restoreResult.getNativeMetricMonitor();
+                // 如果是增量ck获取backendUID和最后一次ck以及需要恢复的sst文件用于增量恢复
+                if (restoreOperation instanceof RocksDBIncrementalRestoreOperation) {
+                    backendUID = restoreResult.getBackendUID();
+                    materializedSstFiles = restoreResult.getRestoredSstFiles();
+                    lastCompletedCheckpointId = restoreResult.getLastCompletedCheckpointId();
+                }
+            }
+
+            writeBatchWrapper =
+                    new RocksDBWriteBatchWrapper(
+                            db, optionsContainer.getWriteOptions(), writeBatchSize);
+
+            // it is important that we only create the key builder after the restore, and not
+            // before;
+            // restore operations may reconfigure the key serializer, so accessing the key
+            // serializer
+            // only now we can be certain that the key serializer used in the builder is final.
+            sharedRocksKeyBuilder =
+                    new SerializedCompositeKeyBuilder<>(
+                            keySerializerProvider.currentSchemaSerializer(),
+                            keyGroupPrefixBytes,
+                            32);
+            // init snapshot strategy after db is assured to be initialized
+            checkpointStrategy =
+                    // 初始化sp和ck
+                    initializeSavepointAndCheckpointStrategies(
+                            cancelStreamRegistryForBackend,
+                            rocksDBResourceGuard,
+                            kvStateInformation,
+                            registeredPQStates,
+                            keyGroupPrefixBytes,
+                            db,
+                            backendUID,
+                            materializedSstFiles,
+                            lastCompletedCheckpointId);
+            // init priority queue factory
+            priorityQueueFactory =
+                    initPriorityQueueFactory(
+                            keyGroupPrefixBytes,
+                            kvStateInformation,
+                            db,
+                            writeBatchWrapper,
+                            nativeMetricMonitor);
+        } catch (Throwable e) {
+            // Do clean up
+            List<ColumnFamilyOptions> columnFamilyOptions =
+                    new ArrayList<>(kvStateInformation.values().size());
+            IOUtils.closeQuietly(cancelStreamRegistryForBackend);
+            IOUtils.closeQuietly(writeBatchWrapper);
+            RocksDBOperationUtils.addColumnFamilyOptionsToCloseLater(
+                    columnFamilyOptions, defaultColumnFamilyHandle);
+            IOUtils.closeQuietly(defaultColumnFamilyHandle);
+            IOUtils.closeQuietly(nativeMetricMonitor);
+            for (RocksDBKeyedStateBackend.RocksDbKvStateInfo kvStateInfo :
+                    kvStateInformation.values()) {
+                RocksDBOperationUtils.addColumnFamilyOptionsToCloseLater(
+                        columnFamilyOptions, kvStateInfo.columnFamilyHandle);
+                IOUtils.closeQuietly(kvStateInfo.columnFamilyHandle);
+            }
+            IOUtils.closeQuietly(db);
+            // it's possible that db has been initialized but later restore steps failed
+            IOUtils.closeQuietly(restoreOperation);
+            IOUtils.closeAllQuietly(columnFamilyOptions);
+            IOUtils.closeQuietly(optionsContainer);
+            ttlCompactFiltersManager.disposeAndClearRegisteredCompactionFactories();
+            kvStateInformation.clear();
+            try {
+                FileUtils.deleteDirectory(instanceBasePath);
+            } catch (Exception ex) {
+                logger.warn("Failed to delete base path for RocksDB: " + instanceBasePath, ex);
+            }
+            // Log and rethrow
+            if (e instanceof BackendBuildingException) {
+                throw (BackendBuildingException) e;
+            } else {
+                String errMsg = "Caught unexpected exception.";
+                logger.error(errMsg, e);
+                throw new BackendBuildingException(errMsg, e);
+            }
+        }
+        InternalKeyContext<K> keyContext =
+                new InternalKeyContextImpl<>(keyGroupRange, numberOfKeyGroups);
+        logger.info("Finished building RocksDB keyed state-backend at {}.", instanceBasePath);
+        return new RocksDBKeyedStateBackend<>(
+                this.userCodeClassLoader,
+                this.instanceBasePath,
+                this.optionsContainer,
+                columnFamilyOptionsFactory,
+                this.kvStateRegistry,
+                this.keySerializerProvider.currentSchemaSerializer(),
+                this.executionConfig,
+                this.ttlTimeProvider,
+                latencyTrackingStateConfig,
+                db,
+                kvStateInformation,
+                registeredPQStates,
+                keyGroupPrefixBytes,
+                cancelStreamRegistryForBackend,
+                this.keyGroupCompressionDecorator,
+                rocksDBResourceGuard,
+                checkpointStrategy,
+                writeBatchWrapper,
+                defaultColumnFamilyHandle,
+                nativeMetricMonitor,
+                sharedRocksKeyBuilder,
+                priorityQueueFactory,
+                ttlCompactFiltersManager,
+                keyContext,
+                writeBatchSize);
+    }
+```
+
+### 默认Flink RocksDB配置工厂
+
+* `DefaultConfigurableOptionsFactory`类包含dbOptions、ColumnFamilyOptions、WriteOptions的默认配置等。
+
+```java
+ @Override
+    public DBOptions createDBOptions(
+            DBOptions currentOptions, Collection<AutoCloseable> handlesToClose) {
+        if (isOptionConfigured(MAX_BACKGROUND_THREADS)) {
+            // flush&compact thread
+            currentOptions.setIncreaseParallelism(getMaxBackgroundThreads());
+        }
+
+        // 读取最大的文件数
+        if (isOptionConfigured(MAX_OPEN_FILES)) {
+            currentOptions.setMaxOpenFiles(getMaxOpenFiles());
+        }
+        
+        if (isOptionConfigured(LOG_LEVEL)) {
+            currentOptions.setInfoLogLevel(getLogLevel());
+        }
+
+        return currentOptions;
+    }
+
+    @Override
+    public ColumnFamilyOptions createColumnOptions(
+            ColumnFamilyOptions currentOptions, Collection<AutoCloseable> handlesToClose) {
+        // compaction算法
+        if (isOptionConfigured(COMPACTION_STYLE)) {
+            currentOptions.setCompactionStyle(getCompactionStyle());
+        }
+        // 是否使用动态level size
+        if (isOptionConfigured(USE_DYNAMIC_LEVEL_SIZE)) {
+            currentOptions.setLevelCompactionDynamicLevelBytes(getUseDynamicLevelSize());
+        }
+        // target file基础大小
+        if (isOptionConfigured(TARGET_FILE_SIZE_BASE)) {
+            currentOptions.setTargetFileSizeBase(getTargetFileSizeBase());
+        }
+        
+        if (isOptionConfigured(MAX_SIZE_LEVEL_BASE)) {
+            currentOptions.setMaxBytesForLevelBase(getMaxSizeLevelBase());
+        }
+        // 每个列族的writer buffer大小
+        if (isOptionConfigured(WRITE_BUFFER_SIZE)) {
+            currentOptions.setWriteBufferSize(getWriteBufferSize());
+        }
+
+        if (isOptionConfigured(MAX_WRITE_BUFFER_NUMBER)) {
+            currentOptions.setMaxWriteBufferNumber(getMaxWriteBufferNumber());
+        }
+
+        if (isOptionConfigured(MIN_WRITE_BUFFER_NUMBER_TO_MERGE)) {
+            currentOptions.setMinWriteBufferNumberToMerge(getMinWriteBufferNumberToMerge());
+        }
+
+        TableFormatConfig tableFormatConfig = currentOptions.tableFormatConfig();
+        // 表配置
+        BlockBasedTableConfig blockBasedTableConfig;
+        if (tableFormatConfig == null) {
+            blockBasedTableConfig = new BlockBasedTableConfig();
+        } else {
+            if (tableFormatConfig instanceof PlainTableConfig) {
+                // if the table format config is PlainTableConfig, we just return current
+                // column-family options
+                return currentOptions;
+            } else {
+                blockBasedTableConfig = (BlockBasedTableConfig) tableFormatConfig;
+            }
+        }
+
+        if (isOptionConfigured(BLOCK_SIZE)) {
+            blockBasedTableConfig.setBlockSize(getBlockSize());
+        }
+
+        if (isOptionConfigured(METADATA_BLOCK_SIZE)) {
+            blockBasedTableConfig.setMetadataBlockSize(getMetadataBlockSize());
+        }
+
+        if (isOptionConfigured(BLOCK_CACHE_SIZE)) {
+            blockBasedTableConfig.setBlockCacheSize(getBlockCacheSize());
+        }
+
+        return currentOptions.setTableFormatConfig(blockBasedTableConfig);
+    }
 ```
 
