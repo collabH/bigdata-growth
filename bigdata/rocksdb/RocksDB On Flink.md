@@ -185,7 +185,7 @@
 
 #### createKeyedStateBackend
 
-* 创建Keyed状态后端
+* 创建Keyed状态后端，内部包含构建RocksDB实例以及一些状态后端组件
 
 ```java
 public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
@@ -527,6 +527,64 @@ public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
         }
 
         return currentOptions.setTableFormatConfig(blockBasedTableConfig);
+    }
+```
+
+### RocksDB在StateBackend中的实践
+
+#### Iterator使用
+
+* Key iterator
+
+```java
+  public <N> Stream<K> getKeys(String state, N namespace) {
+        // 获取Rocksdb KV状态详情
+        RocksDbKvStateInfo columnInfo = kvStateInformation.get(state);
+        if (columnInfo == null
+                || !(columnInfo.metaInfo instanceof RegisteredKeyValueStateBackendMetaInfo)) {
+            return Stream.empty();
+        }
+
+        RegisteredKeyValueStateBackendMetaInfo<N, ?> registeredKeyValueStateBackendMetaInfo =
+                (RegisteredKeyValueStateBackendMetaInfo<N, ?>) columnInfo.metaInfo;
+
+        final TypeSerializer<N> namespaceSerializer =
+                registeredKeyValueStateBackendMetaInfo.getNamespaceSerializer();
+        final DataOutputSerializer namespaceOutputView = new DataOutputSerializer(8);
+        boolean ambiguousKeyPossible =
+                CompositeKeySerializationUtils.isAmbiguousKeyPossible(
+                        getKeySerializer(), namespaceSerializer);
+        final byte[] nameSpaceBytes;
+        try {
+            CompositeKeySerializationUtils.writeNameSpace(
+                    namespace, namespaceSerializer, namespaceOutputView, ambiguousKeyPossible);
+            nameSpaceBytes = namespaceOutputView.getCopyOfBuffer();
+        } catch (IOException ex) {
+            throw new FlinkRuntimeException("Failed to get keys from RocksDB state backend.", ex);
+        }
+
+        // 创建RocksDB Iterator
+        RocksIteratorWrapper iterator =
+                RocksDBOperationUtils.getRocksIterator(
+                        db, columnInfo.columnFamilyHandle, readOptions);
+        // 跳到第一个key
+        iterator.seekToFirst();
+        // 创建rocksDB key iterator，遍历获取每个rocksdb key
+        final RocksStateKeysIterator<K> iteratorWrapper =
+                new RocksStateKeysIterator<>(
+                        iterator,
+                        state,
+                        getKeySerializer(),
+                        keyGroupPrefixBytes,
+                        ambiguousKeyPossible,
+                        nameSpaceBytes);
+
+        Stream<K> targetStream =
+                StreamSupport.stream(
+                        Spliterators.spliteratorUnknownSize(iteratorWrapper, Spliterator.ORDERED),
+                        false);
+        // 返回key stream
+        return targetStream.onClose(iteratorWrapper::close);
     }
 ```
 
