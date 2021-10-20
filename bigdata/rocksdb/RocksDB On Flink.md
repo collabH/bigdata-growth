@@ -588,3 +588,474 @@ public <K> AbstractKeyedStateBackend<K> createKeyedStateBackend(
     }
 ```
 
+## State操作
+
+### RocksDBListState
+
+* 底层核心存储在RocksDB上是一个Key Value，Value的格式利用RocksDB的MergeOperator进行appended。
+
+```java
+  @Override
+    public List<V> getInternal() {
+        try {
+            byte[] key = serializeCurrentKeyWithGroupAndNamespace();
+            byte[] valueBytes = backend.db.get(columnFamily, key);
+            // 解析value为result
+            return listSerializer.deserializeList(valueBytes, elementSerializer);
+        } catch (RocksDBException e) {
+            throw new FlinkRuntimeException("Error while retrieving data from RocksDB", e);
+        }
+    }
+
+    @Override
+    public void add(V value) {
+        Preconditions.checkNotNull(value, "You cannot add null to a ListState.");
+
+        try {
+            // 底层存储一个大key value使用rocksdb merge操作配合默认的mergeOpeartor实现append
+            backend.db.merge(
+                    columnFamily,
+                    writeOptions,
+                    serializeCurrentKeyWithGroupAndNamespace(),
+                    serializeValue(value, elementSerializer));
+        } catch (Exception e) {
+            throw new FlinkRuntimeException("Error while adding data to RocksDB", e);
+        }
+    }
+
+    @Override
+    public void mergeNamespaces(N target, Collection<N> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return;
+        }
+
+        try {
+            // create the target full-binary-key
+            // 设置当前的namespace
+            setCurrentNamespace(target);
+            // 序列化nm
+            final byte[] targetKey = serializeCurrentKeyWithGroupAndNamespace();
+
+            // merge the sources to the target
+            // 将source的数据合并到target上
+            for (N source : sources) {
+                if (source != null) {
+                    setCurrentNamespace(source);
+                    final byte[] sourceKey = serializeCurrentKeyWithGroupAndNamespace();
+
+                    byte[] valueBytes = backend.db.get(columnFamily, sourceKey);
+
+                    if (valueBytes != null) {
+                        backend.db.delete(columnFamily, writeOptions, sourceKey);
+                        // 将sourceKey数据merge到targetKey上
+                        backend.db.merge(columnFamily, writeOptions, targetKey, valueBytes);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new FlinkRuntimeException("Error while merging state in RocksDB", e);
+        }
+    }
+
+    @Override
+    public void update(List<V> valueToStore) {
+        updateInternal(valueToStore);
+    }
+
+    @Override
+    public void updateInternal(List<V> values) {
+        Preconditions.checkNotNull(values, "List of values to add cannot be null.");
+
+        if (!values.isEmpty()) {
+            try {
+                // 使用put修改
+                backend.db.put(
+                        columnFamily,
+                        writeOptions,
+                        serializeCurrentKeyWithGroupAndNamespace(),
+                        listSerializer.serializeList(values, elementSerializer));
+            } catch (IOException | RocksDBException e) {
+                throw new FlinkRuntimeException("Error while updating data to RocksDB", e);
+            }
+        } else {
+            clear();
+        }
+    }
+
+    @Override
+    public void addAll(List<V> values) {
+        Preconditions.checkNotNull(values, "List of values to add cannot be null.");
+
+        if (!values.isEmpty()) {
+            try {
+                backend.db.merge(
+                        columnFamily,
+                        writeOptions,
+                        serializeCurrentKeyWithGroupAndNamespace(),
+                        listSerializer.serializeList(values, elementSerializer));
+            } catch (IOException | RocksDBException e) {
+                throw new FlinkRuntimeException("Error while updating data to RocksDB", e);
+            }
+        }
+    }
+```
+
+### RocksDBMapState
+
+* 一个key对应一个value，就是利用RocksDB底层的kv结构
+
+```java
+    @Override
+    public UV get(UK userKey) throws IOException, RocksDBException {
+        // 获取key
+        byte[] rawKeyBytes =
+                serializeCurrentKeyWithGroupAndNamespacePlusUserKey(userKey, userKeySerializer);
+        // value
+        byte[] rawValueBytes = backend.db.get(columnFamily, rawKeyBytes);
+
+        return (rawValueBytes == null
+                ? null
+                : deserializeUserValue(dataInputView, rawValueBytes, userValueSerializer));
+    }
+
+    @Override
+    public void put(UK userKey, UV userValue) throws IOException, RocksDBException {
+
+        byte[] rawKeyBytes =
+                serializeCurrentKeyWithGroupAndNamespacePlusUserKey(userKey, userKeySerializer);
+        byte[] rawValueBytes = serializeValueNullSensitive(userValue, userValueSerializer);
+
+        backend.db.put(columnFamily, writeOptions, rawKeyBytes, rawValueBytes);
+    }
+
+    @Override
+    public void putAll(Map<UK, UV> map) throws IOException, RocksDBException {
+        if (map == null) {
+            return;
+        }
+        // 使用RocksDB Batch能力,保证数据一致，原子操作
+        try (RocksDBWriteBatchWrapper writeBatchWrapper =
+                new RocksDBWriteBatchWrapper(
+                        backend.db, writeOptions, backend.getWriteBatchSize())) {
+            for (Map.Entry<UK, UV> entry : map.entrySet()) {
+                byte[] rawKeyBytes =
+                        serializeCurrentKeyWithGroupAndNamespacePlusUserKey(
+                                entry.getKey(), userKeySerializer);
+                byte[] rawValueBytes =
+                        serializeValueNullSensitive(entry.getValue(), userValueSerializer);
+                writeBatchWrapper.put(columnFamily, rawKeyBytes, rawValueBytes);
+            }
+        }
+    }
+
+    @Override
+    public void remove(UK userKey) throws IOException, RocksDBException {
+        byte[] rawKeyBytes =
+                serializeCurrentKeyWithGroupAndNamespacePlusUserKey(userKey, userKeySerializer);
+
+        backend.db.delete(columnFamily, writeOptions, rawKeyBytes);
+    }
+
+    @Override
+    public boolean contains(UK userKey) throws IOException, RocksDBException {
+        byte[] rawKeyBytes =
+                serializeCurrentKeyWithGroupAndNamespacePlusUserKey(userKey, userKeySerializer);
+        byte[] rawValueBytes = backend.db.get(columnFamily, rawKeyBytes);
+
+        return (rawValueBytes != null);
+    }
+
+    @Override
+    public Iterable<Map.Entry<UK, UV>> entries() {
+        return this::iterator;
+    }
+
+    @Override
+    public Iterable<UK> keys() {
+        final byte[] prefixBytes = serializeCurrentKeyWithGroupAndNamespace();
+
+        return () ->
+                new RocksDBMapIterator<UK>(
+                        backend.db,
+                        prefixBytes,
+                        userKeySerializer,
+                        userValueSerializer,
+                        dataInputView) {
+                    @Nullable
+                    @Override
+                    public UK next() {
+                        RocksDBMapEntry entry = nextEntry();
+                        return (entry == null ? null : entry.getKey());
+                    }
+                };
+    }
+
+    @Override
+    public Iterable<UV> values() {
+        final byte[] prefixBytes = serializeCurrentKeyWithGroupAndNamespace();
+
+        return () ->
+                new RocksDBMapIterator<UV>(
+                        backend.db,
+                        prefixBytes,
+                        userKeySerializer,
+                        userValueSerializer,
+                        dataInputView) {
+                    @Override
+                    public UV next() {
+                        RocksDBMapEntry entry = nextEntry();
+                        return (entry == null ? null : entry.getValue());
+                    }
+                };
+    }
+
+```
+
+#### RocksDBMapIterator
+
+* Rocksdb基于JDK Iterator实现的迭代器
+
+```java
+  private abstract class RocksDBMapIterator<T> implements Iterator<T> {
+
+        private static final int CACHE_SIZE_LIMIT = 128;
+
+        /** The db where data resides. */
+        private final RocksDB db;
+
+        /**
+         * The prefix bytes of the key being accessed. All entries under the same key have the same
+         * prefix, hence we can stop iterating once coming across an entry with a different prefix.
+         */
+        @Nonnull private final byte[] keyPrefixBytes;
+
+        /**
+         * True if all entries have been accessed or the iterator has come across an entry with a
+         * different prefix.
+         */
+        private boolean expired = false;
+
+        /** A in-memory cache for the entries in the rocksdb. */
+        private ArrayList<RocksDBMapEntry> cacheEntries = new ArrayList<>();
+
+        /**
+         * The entry pointing to the current position which is last returned by calling {@link
+         * #nextEntry()}.
+         */
+        private RocksDBMapEntry currentEntry;
+
+        private int cacheIndex = 0;
+
+        private final TypeSerializer<UK> keySerializer;
+        private final TypeSerializer<UV> valueSerializer;
+        private final DataInputDeserializer dataInputView;
+
+        RocksDBMapIterator(
+                final RocksDB db,
+                final byte[] keyPrefixBytes,
+                final TypeSerializer<UK> keySerializer,
+                final TypeSerializer<UV> valueSerializer,
+                DataInputDeserializer dataInputView) {
+
+            this.db = db;
+            this.keyPrefixBytes = keyPrefixBytes;
+            this.keySerializer = keySerializer;
+            this.valueSerializer = valueSerializer;
+            this.dataInputView = dataInputView;
+        }
+
+        @Override
+        public boolean hasNext() {
+            // 加载cache
+            loadCache();
+
+            return (cacheIndex < cacheEntries.size());
+        }
+
+        @Override
+        public void remove() {
+            if (currentEntry == null || currentEntry.deleted) {
+                throw new IllegalStateException(
+                        "The remove operation must be called after a valid next operation.");
+            }
+
+            currentEntry.remove();
+        }
+
+        final RocksDBMapEntry nextEntry() {
+            loadCache();
+
+            if (cacheIndex == cacheEntries.size()) {
+                if (!expired) {
+                    throw new IllegalStateException();
+                }
+
+                return null;
+            }
+            // 移动指正
+            this.currentEntry = cacheEntries.get(cacheIndex);
+            cacheIndex++;
+
+            return currentEntry;
+        }
+
+        private void loadCache() {
+            if (cacheIndex > cacheEntries.size()) {
+                throw new IllegalStateException();
+            }
+
+            // Load cache entries only when the cache is empty and there still exist unread entries
+            // 不满足条件
+            if (cacheIndex < cacheEntries.size() || expired) {
+                return;
+            }
+
+            // use try-with-resources to ensure RocksIterator can be release even some runtime
+            // exception
+            // occurred in the below code block.
+            // 创建iteator
+            try (RocksIteratorWrapper iterator =
+                    RocksDBOperationUtils.getRocksIterator(
+                            db, columnFamily, backend.getReadOptions())) {
+
+                /*
+                 * The iteration starts from the prefix bytes at the first loading. After #nextEntry() is called,
+                 * the currentEntry points to the last returned entry, and at that time, we will start
+                 * the iterating from currentEntry if reloading cache is needed.
+                 */
+                byte[] startBytes =
+                        (currentEntry == null ? keyPrefixBytes : currentEntry.rawKeyBytes);
+
+                cacheEntries.clear();
+                cacheIndex = 0;
+                // 设置迭代器起点
+                iterator.seek(startBytes);
+
+                /*
+                 * If the entry pointing to the current position is not removed, it will be the first entry in the
+                 * new iterating. Skip it to avoid redundant access in such cases.
+                 */
+                if (currentEntry != null && !currentEntry.deleted) {
+                    iterator.next();
+                }
+
+                while (true) {
+                    // 如果迭代器不可用或者key前缀字节长度校验
+                    if (!iterator.isValid()
+                            || !startWithKeyPrefix(keyPrefixBytes, iterator.key())) {
+                        expired = true;
+                        break;
+                    }
+
+                    if (cacheEntries.size() >= CACHE_SIZE_LIMIT) {
+                        break;
+                    }
+
+                    RocksDBMapEntry entry =
+                            new RocksDBMapEntry(
+                                    db,
+                                    keyPrefixBytes.length,
+                                    iterator.key(),
+                                    iterator.value(),
+                                    keySerializer,
+                                    valueSerializer,
+                                    dataInputView);
+                    // 放入cache
+                    cacheEntries.add(entry);
+
+                    iterator.next();
+                }
+            }
+        }
+    }
+```
+
+### RocksDBValueState
+
+```java
+  @Override
+    public V value() {
+        try {
+            byte[] valueBytes =
+                    backend.db.get(columnFamily, serializeCurrentKeyWithGroupAndNamespace());
+
+            if (valueBytes == null) {
+                return getDefaultValue();
+            }
+            dataInputView.setBuffer(valueBytes);
+            return valueSerializer.deserialize(dataInputView);
+        } catch (IOException | RocksDBException e) {
+            throw new FlinkRuntimeException("Error while retrieving data from RocksDB.", e);
+        }
+    }
+
+    @Override
+    public void update(V value) {
+        if (value == null) {
+            clear();
+            return;
+        }
+
+        try {
+            backend.db.put(
+                    columnFamily,
+                    writeOptions,
+                    serializeCurrentKeyWithGroupAndNamespace(),
+                    serializeValue(value));
+        } catch (Exception e) {
+            throw new FlinkRuntimeException("Error while adding data to RocksDB", e);
+        }
+    }
+```
+
+## RocksDB工具类
+
+### OpenDB
+
+```java
+ public static RocksDB openDB(
+            String path,
+            List<ColumnFamilyDescriptor> stateColumnFamilyDescriptors,
+            List<ColumnFamilyHandle> stateColumnFamilyHandles,
+            ColumnFamilyOptions columnFamilyOptions,
+            DBOptions dbOptions)
+            throws IOException {
+        List<ColumnFamilyDescriptor> columnFamilyDescriptors =
+                new ArrayList<>(1 + stateColumnFamilyDescriptors.size());
+
+        // we add the required descriptor for the default CF in FIRST position, see
+        // https://github.com/facebook/rocksdb/wiki/RocksJava-Basics#opening-a-database-with-column-families
+        // 创建默认列族
+        columnFamilyDescriptors.add(
+                new ColumnFamilyDescriptor(RocksDB.DEFAULT_COLUMN_FAMILY, columnFamilyOptions));
+        // 加入用户提供的状态列族
+        columnFamilyDescriptors.addAll(stateColumnFamilyDescriptors);
+
+        RocksDB dbRef;
+
+        try {
+            dbRef =
+                    RocksDB.open(
+                            Preconditions.checkNotNull(dbOptions),
+                            Preconditions.checkNotNull(path),
+                            columnFamilyDescriptors,
+                            stateColumnFamilyHandles);
+        } catch (RocksDBException e) {
+            IOUtils.closeQuietly(columnFamilyOptions);
+            columnFamilyDescriptors.forEach((cfd) -> IOUtils.closeQuietly(cfd.getOptions()));
+
+            // improve error reporting on Windows
+            throwExceptionIfPathLengthExceededOnWindows(path, e);
+
+            throw new IOException("Error while opening RocksDB instance.", e);
+        }
+
+        // requested + default CF
+        Preconditions.checkState(
+                1 + stateColumnFamilyDescriptors.size() == stateColumnFamilyHandles.size(),
+                "Not all requested column family handles have been created");
+        return dbRef;
+    }
+
+```
+
