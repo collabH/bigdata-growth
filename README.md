@@ -63,9 +63,16 @@
 
 ### datalake
 
+#### hudi
+
+* [Hudi概览](bigdata/datalake/hudi/hudiOverview.md)
+
 #### iceberg
 
+* [IceBerg概览](bigdata/datalake/iceberg/icebergOverview.md)
 * [IceBerg整合Flink](bigdata/datalake/iceberg/icebergWithFlink.md)
+* [IceBerg整合Hive](bigdata/datalake/iceberg/icebergWithHive.md)
+* [IceBerg整合Spark](bigdata/datalake/iceberg/IcebergWithSpark.md)
 
 ### rocksDB
 
