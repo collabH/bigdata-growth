@@ -12,7 +12,7 @@
   * `flink-conf.yaml`中添加`taskmanager.numberOfTaskSlots: 4`
 
 ```shell
-` bash start-cluster.sh`启动集群
+bash start-cluster.sh
 ```
 
 * 启动Flink SQL客户端
@@ -175,3 +175,10 @@ select * from t1;
 5. 等待index boostrap完成，用户可以退出并保存保存点(或直接使用外部化检查点)。
 6. 重启job, 设置 `index.bootstrap.enable` 为 `false`.
 
+# Changelog Mode
+
+* Hudi可以保留消息的所有中间变化(I / -U / U / D)，然后通过flink的状态计算消费，从而拥有一个接近实时的数据仓库ETL管道(增量计算)。Hudi MOR表以行的形式存储消息，支持保留所有更改日志(格式级集成)。所有的更新日志记录可以使用Flink流reader
+
+| Option Name         | Required | Default | Remarks                                                      |
+| ------------------- | -------- | ------- | ------------------------------------------------------------ |
+| `changelog.enabled` | `false`  | `false` | It is turned off by default, to have the `upsert` semantics, only the merged messages are ensured to be kept, intermediate changes may be merged. Setting to true to support consumption of all changes |
