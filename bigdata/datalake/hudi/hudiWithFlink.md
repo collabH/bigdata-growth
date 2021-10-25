@@ -105,7 +105,7 @@ select * from t1;
 
 | Option Name                  | Description                                                  | Default                                                      | Remarks                                                      |
 | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `write.tasks`                | 写入器任务的并行度，每个写任务依次向N个桶写1个桶。默认的4    | `4`                                                          | 增加并行度对小文件的数量没有影响                             |
+| `write.tasks`                | 写入器任务的并行度，每个写任务依次向1到N个桶写。默认的4      | `4`                                                          | 增加并行度对小文件的数量没有影响                             |
 | `write.bucket_assign.tasks`  | 桶分配操作符的并行性。无默认值，使用Flink parallelism.default | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 增加并行度也会增加桶的数量，从而增加小文件(小桶)的数量。     |
 | `write.index_boostrap.tasks` | index bootstrap的并行度，增加并行度可以提高bootstarp阶段的效率。因此，需要设置更多的检查点容错时间。默认使用Flink并行 | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 只有当index. bootstrap .enabled为true时才生效                |
 | `read.tasks`                 | Default `4`读操作的并行度(批和流)                            | `4`                                                          |                                                              |
@@ -125,3 +125,53 @@ select * from t1;
 | `compaction.delta_seconds`    | 触发压缩所需的最大增量秒数，默认为1小时                 | `3600`        | --                                                           |
 | `compaction.max_memory`       | `compaction`溢出映射的最大内存(以MB为单位)，默认为100MB | `100`         | 如果您有足够的资源，建议调整到1024MB                         |
 | `compaction.target_io`        | 每次压缩的目标IO(读和写)，默认为5GB                     | `5120`        | `offline compaction` 的默认值是500GB                         |
+
+# Memory Optimization
+
+## MOR
+
+* 设置Flink状态后端为`RocksDB`(默认为`in memory`状态后端)
+* 如果有足够的内存，`compaction.max_memory`可以设置大于100MB建议调整至1024MB。
+* 注意taskManager分配给每个写任务的内存，确保每个写任务都能分配到所需的内存大小`write.task.max.size`。例如，taskManager有4GB内存运行两个streamWriteFunction，所以每个写任务可以分配2GB内存。请保留一些缓冲区，因为taskManager上的网络缓冲区和其他类型的任务(如bucketAssignFunction)也会占用内存。
+* 注意compaction的内存变化，`compaction.max_memory`控制在压缩任务读取日志时可以使用每个任务的最大内存。`compaction.tasks`控制压缩任务的并行性。
+
+## COW
+
+* 设置Flink状态后端为`RocksDB`(默认为`in memory`状态后端)
+* 增大`write.task.max.size`和`write.merge.max_memory`(默认1024MB和100MB，调整为2014MB和1024MB)
+* 注意taskManager分配给每个写任务的内存，确保每个写任务都能分配到所需的内存大小`write.task.max.size`。例如，taskManager有4GB内存运行两个streamWriteFunction，所以每个写任务可以分配2GB内存。请保留一些缓冲区，因为taskManager上的网络缓冲区和其他类型的任务(如bucketAssignFunction)也会占用内存。
+
+# Bulk Insert
+
+* 用于快照数据导入。如果快照数据来自其他数据源，可以使用bulk_insert模式将快照数据快速导入到Hudi中。
+* Bulk_insert消除了序列化和数据合并。用户无需重复数据删除，因此需要保证数据的唯一性。
+* Bulk_insert在批处理执行模式下效率更高。默认情况下，批处理执行方式根据分区路径对输入记录进行排序，并将这些记录写入Hudi，避免了频繁切换文件句柄导致的写性能下降。有序写入一个分区中不会频繁写换对应的数据分区
+* bulk_insert的并行度由write.tasks指定。并行度会影响小文件的数量。从理论上讲，bulk_insert的并行性是bucket的数量(特别是，当每个bucket写到最大文件大小时，它将转到新的文件句柄。最后，文件的数量>= write.bucket_assign.tasks)。
+
+| Option Name                              | Required | Default  | Remarks                                                      |
+| ---------------------------------------- | -------- | -------- | ------------------------------------------------------------ |
+| `write.operation`                        | `true`   | `upsert` | Setting as `bulk_insert` to open this function               |
+| `write.tasks`                            | `false`  | `4`      | The parallelism of `bulk_insert`, `the number of files` >= [`write.bucket_assign.tasks`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) |
+| `write.bulk_insert.shuffle_by_partition` | `false`  | `true`   | 写入前是否根据分区字段进行shuffle。启用此选项将减少小文件的数量，但可能存在数据倾斜的风险 |
+| `write.bulk_insert.sort_by_partition`    | `false`  | `true`   | 写入前是否根据分区字段对数据进行排序。启用此选项将在写任务写多个分区时减少小文件的数量 |
+| `write.sort.memory`                      | `false`  | `128`    | Available managed memory of sort operator. default `128` MB  |
+
+# Index Bootstrap
+
+* 用于`snapshot data`+`incremental data`导入的需求。如果`snapshot data`已经通过`bulk insert`插入到Hudi中。通过`Index Bootstrap`功能，用户可以实时插入`incremental data`，保证数据不重复。
+* 如果您认为这个过程非常耗时，可以在写入快照数据的同时增加资源以流模式写入，然后减少资源以写入增量数据(或打开速率限制函数)。
+
+| Option Name               | Required | Default | Remarks                                                      |
+| ------------------------- | -------- | ------- | ------------------------------------------------------------ |
+| `index.bootstrap.enabled` | `true`   | `false` | 开启index.bootstrap.enabled时，Hudi表中的剩余记录将一次性加载到Flink状态 |
+| `index.partition.regex`   | `false`  | `*`     | 优化选择。设置正则表达式来过滤分区。默认情况下，所有分区都被加载到flink状态 |
+
+## 使用方式
+
+1. `CREATE TABLE`创建一条与Hudi表对应的语句。注意这个`table.type`必须正确。
+2. 设置`index.bootstrao.enabled`为true开启index bootstrap。
+3. 设置`execution.checkpointing.tolerable-failed-checkpoints = n`
+4. 等待第一次ck成功则index boostrap执行完毕。
+5. 等待index boostrap完成，用户可以退出并保存保存点(或直接使用外部化检查点)。
+6. 重启job, 设置 `index.bootstrap.enable` 为 `false`.
+
