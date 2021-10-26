@@ -181,4 +181,106 @@ select * from t1;
 
 | Option Name         | Required | Default | Remarks                                                      |
 | ------------------- | -------- | ------- | ------------------------------------------------------------ |
-| `changelog.enabled` | `false`  | `false` | It is turned off by default, to have the `upsert` semantics, only the merged messages are ensured to be kept, intermediate changes may be merged. Setting to true to support consumption of all changes |
+| `changelog.enabled` | `false`  | `false` | 它在默认情况下是关闭的，为了拥有upsert语义，只有合并的消息被确保保留，中间的更改可以被合并。设置为true以支持使用所有更改 |
+
+* 批处理(快照)读取仍然合并所有中间更改，不管格式是否存储了中间更改日志消息。
+* `changelog.enable`设置为true后，更改日志记录的保留只是最好的工作:异步压缩任务将更改日志记录合并到一个记录中，因此，如果流源不及时使用，则压缩后只能读取每个键的合并记录。解决方案是通过调整压缩策略，比如压缩选项:compress .delta_commits和compression .delta_seconds，为读取器保留一些缓冲时间。
+
+# Insert Mode
+
+* 默认情况下，Hudi对插入模式采用小文件策略:MOR将增量记录追加到日志文件中，COW合并 base parquet文件(增量数据集将被重复数据删除)。这种策略会导致性能下降。
+* 如果要禁止文件合并行为，可将`write.insert.deduplicate`设置为`false`，则跳过重复数据删除。每次刷新行为直接写入一个now parquet文件(MOR表也直接写入parquet文件)。
+
+| Option Name                | Required | Default | Remarks                                                      |
+| -------------------------- | -------- | ------- | ------------------------------------------------------------ |
+| `write.insert.deduplicate` | `false`  | `true`  | Insert mode 默认启用重复数据删除功能。关闭此选项后，每次刷新行为直接写入一个now parquet文件 |
+
+# Hive Query
+
+* hive1.x只能同步元数据不能进行Hive查询，需要通过Spark查询Hive
+
+## Hive环境
+
+1. 导入`hudi-hadoop-mr-bundle`到hive，在hive的根目录创建`auxlib`,将`hudi-hadoop-mr-bundle-0.x.x-SNAPSHOT.jar`放入`auxlib`
+2. 启动`hive metastore`和`hiveServer2`服务
+
+## 同步模板
+
+* Flink hive sync现在支持两种hive同步模式，hms和jdbc。HMS模式只需要配置metastore uris即可。对于jdbc模式，需要配置jdbc属性和metastore uri。选项模板如下:
+
+```sql
+-- hms mode template
+CREATE TABLE t1(
+  uuid VARCHAR(20),
+  name VARCHAR(10),
+  age INT,
+  ts TIMESTAMP(3),
+  `partition` VARCHAR(20)
+)
+PARTITIONED BY (`partition`)
+WITH (
+  'connector' = 'hudi',
+  'path' = 'oss://vvr-daily/hudi/t1',
+  'table.type' = 'COPY_ON_WRITE',  --If MERGE_ON_READ, hive query will not have output until the parquet file is generated
+  'hive_sync.enable' = 'true',     -- Required. To enable hive synchronization
+  'hive_sync.mode' = 'hms'         -- Required. Setting hive sync mode to hms, default jdbc
+  'hive_sync.metastore.uris' = 'thrift://ip:9083' -- Required. The port need set on hive-site.xml
+);
+
+
+-- jdbc mode template
+CREATE TABLE t1(
+  uuid VARCHAR(20),
+  name VARCHAR(10),
+  age INT,
+  ts TIMESTAMP(3),
+  `partition` VARCHAR(20)
+)
+PARTITIONED BY (`partition`)
+WITH (
+  'connector' = 'hudi',
+  'path' = 'oss://vvr-daily/hudi/t1',
+  'table.type' = 'COPY_ON_WRITE',  --If MERGE_ON_READ, hive query will not have output until the parquet file is generated
+  'hive_sync.enable' = 'true',     -- Required. To enable hive synchronization
+  'hive_sync.mode' = 'hms'         -- Required. Setting hive sync mode to hms, default jdbc
+  'hive_sync.metastore.uris' = 'thrift://ip:9083'  -- Required. The port need set on hive-site.xml
+  'hive_sync.jdbc_url'='jdbc:hive2://ip:10000',    -- required, hiveServer port
+  'hive_sync.table'='t1',                          -- required, hive table name
+  'hive_sync.db'='testDB',                         -- required, hive database name
+  'hive_sync.username'='root',                     -- required, HMS username
+  'hive_sync.password'='your password'             -- required, HMS password
+);
+```
+
+## 查询
+
+* 使用hive beeline查询需要设置以下参数：
+
+```sql
+set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat;
+```
+
+# Offline Compaction
+
+* 默认情况下，MERGE_ON_READ表的压缩是启用的。触发器策略是在完成五次提交后执行压缩。因为压缩会消耗大量内存，并且与写操作处于相同的管道中，所以当数据量很大(> 100000 /秒)时，很容易干扰写操作。此时，使用离线压缩更稳定地执行压缩任务。
+* 压缩任务的执行包含俩个部分：调度压缩计划和执行压缩计划。建议调度压缩计划的进程由写任务周期性触发，默认情况下写参数`compact.schedule.enable`为启用状态。
+* offline compaction需要提交一个flink任务后台运行
+
+```shell
+./bin/flink run -c org.apache.hudi.sink.compact.HoodieFlinkCompactor lib/hudi-flink-bundle_2.11-0.9.0.jar --path hdfs://xxx:9000/table
+```
+
+| Option Name               | Required | Default | Remarks                                                      |
+| ------------------------- | -------- | ------- | ------------------------------------------------------------ |
+| `--path`                  | `frue`   | `--`    | 目标表存储在Hudi上的路径                                     |
+| `--compaction-max-memory` | `false`  | `100`   | 压缩期间日志数据的索引映射大小，默认为100 MB。如果您有足够的内存，您可以打开这个参数 |
+| `--schedule`              | `false`  | `false` | 是否执行调度压缩计划的操作。当写进程仍在写时，打开此参数有丢失数据的风险。因此，开启该参数时，必须确保当前没有写任务向该表写入数据 |
+| `--seq`                   | `false`  | `LIFO`  | 压缩任务执行的顺序。默认情况下从最新的压缩计划执行。`LIFO`:从最新的计划开始执行。`FIFO`:从最古老的计划执行。 |
+
+# Write Rate Limit
+
+* 在现有的数据同步中，`snapshot data`和`incremental data`发送到kafka，然后通过Flink流写入到Hudi。因为直接使用`snapshot data`会导致高吞吐量和严重无序(随机写分区)等问题，这会导致写性能下降和吞吐量故障。此时，可以打开`write.rate.limit`选项，以确保顺利写入。
+
+| Option Name        | Required | Default | Remarks   |
+| ------------------ | -------- | ------- | --------- |
+| `write.rate.limit` | `false`  | `0`     | 默认 关闭 |
