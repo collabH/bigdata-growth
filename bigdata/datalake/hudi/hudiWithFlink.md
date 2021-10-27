@@ -284,3 +284,47 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 | Option Name        | Required | Default | Remarks   |
 | ------------------ | -------- | ------- | --------- |
 | `write.rate.limit` | `false`  | `0`     | 默认 关闭 |
+
+# Flink SQL Writer
+
+| Option Name                                | Required | Default                              | Remarks                                                      |
+| ------------------------------------------ | -------- | ------------------------------------ | ------------------------------------------------------------ |
+| path                                       | Y        | N/A                                  | 目标hudi表的基本路径。如果路径不存在，则会创建该路径，否则hudi表将被成功初始化 |
+| table.type                                 | N        | COPY_ON_WRITE                        | Type of table to write. COPY_ON_WRITE (or) MERGE_ON_READ     |
+| write.operation                            | N        | upsert                               | The write operation, that this write should do (insert or upsert is supported) |
+| write.precombine.field                     | N        | ts                                   | 实际写入前precombine中使用的字段。当两条记录具有相同的键值时，我们将挑选一个值最大的precombine字段，由Object.compareTo(..)决定。预聚合 |
+| write.payload.class                        | N        | OverwriteWithLatestAvroPayload.class | 插入/插入时滚动您自己的合并逻辑                              |
+| write.insert.drop.duplicates               | N        | false                                | 插入时是否删除重复项。                                       |
+| write.ignore.failed                        | N        | true                                 | Flag to indicate whether to ignore any non exception error (e.g. writestatus error). within a checkpoint batch. By default true (in favor of streaming progressing over data integrity) |
+| hoodie.datasource.write.recordkey.field    | N        | uuid                                 | Record key field. Value to be used as the `recordKey` component of `HoodieKey`. Actual value will be obtained by invoking .toString() on the field value. Nested fields can be specified using the dot notation eg: `a.b.c` |
+| hoodie.datasource.write.keygenerator.class | N        | SimpleAvroKeyGenerator.class         | Key generator class, that implements will extract the key out of incoming record |
+| write.tasks                                | N        | 4                                    | Parallelism of tasks that do actual write, default is 4      |
+| write.batch.size.MB                        | N        | 128                                  | Batch buffer size in MB to flush data into the underneath filesystem |
+
+# Key Generation
+
+* Hudi维护hoodie keys(record key + partition path)，以唯一地标识一个特定的记录。key的生成类将从传入的记录中提取这些信息。
+* Hudi目前支持如下不同的记录键和分区路径组合：
+  * 简单的记录键(只包含一个字段)和简单的分区路径(可选的hive风格分区)
+  * 简单的记录键和自定义基于时间戳的分区路径
+  * 复杂的记录键(多个字段的组合)和复杂的分区路径
+  * 复杂的记录键和基于时间戳的分区路径
+  * 非分区表
+
+# Deletes
+
+* hudi支持2种类型删除hudi表数据，通过允许用户指定不同的记录有效负载实现。
+  * `Soft Deletes`:保留记录键，并将所有其他字段的值空出来。这可以通过确保表模式中适当的字段为空，并在将这些字段设置为空后简单地插入表来实现。
+  * `Hard Deletes`:更强的删除形式是物理地从表中删除记录的任何跟踪。这可以通过3种不同的方式实现。
+    * 使用DataSource，设置`OPERATION.key()`为`DELETE_OPERATION_OPT_VAL`.这将会移除这个正在提交的数据集的全部记录。
+    * 使用DataSource，设置`HoodieWriteConfig.WRITE_PAYLOAD_CLASS_NAME.key()`为`org.apache.hudi.EmptyHoodieRecordPayload`.这将会移除这个正在提交的数据集的全部记录。
+    * 使用DataSource或DeltaStreamer，添加列名为`_hoodie_is_deleted`在 这个数据集。对于所有要删除的记录，该列的值必须设置为true，对于要被推翻的记录，该列的值必须设置为false或为空。
+
+```scala
+ deleteDF // dataframe containing just records to be deleted
+   .write().format("org.apache.hudi")
+   .option(...) // Add HUDI options like record-key, partition-path and others as needed for your setup
+   // specify record_key, partition_key, precombine_fieldkey & usual params
+   .option(HoodieWriteConfig.WRITE_PAYLOAD_CLASS_NAME.key(), "org.apache.hudi.EmptyHoodieRecordPayload")
+```
+

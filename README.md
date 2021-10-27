@@ -67,6 +67,7 @@
 
 * [Hudi概览](bigdata/datalake/hudi/hudiOverview.md)
 * [Hudi整合Spark](bigdata/datalake/hudi/hudiWithSpark.md)
+* [Hudi整合Flink](bigdata/datalake/hudi/hudiWithFlink.md)
 
 #### iceberg
 
