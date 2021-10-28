@@ -293,5 +293,154 @@ Options:
 
 ## Single Writer Guarantee
 
-* `UPSERT Guarantee`:
-* *INSERT Guarantee*:
+* `UPSERT Guarantee`:目标表将从不展示重复
+* *INSERT Guarantee*:如果启用重复数据删除，目标表将永远不会有重复数据。
+* *BULK_INSERT Guarantee*: 如果启用重复数据删除，目标表将永远不会有重复数据。
+* *INCREMENTAL PULL Guarantee*:数据消费和检查点永远不会出现故障。
+
+## Multi Writer Guarantees
+
+* *UPSERT Guarantee*: 目标表将从不展示重复
+* *INSERT Guarantee*:即使启用了dedup，目标表也可能有重复数据。
+* *BULK_INSERT Guarantee*: 即使启用了dedup，目标表也可能有重复数据。
+* *INCREMENTAL PULL Guarantee*: 由于多个写入作业在不同的时间完成，数据消费和检查点可能会发生故障。
+
+## 开启多写入
+
+```properties
+hoodie.write.concurrency.mode=optimistic_concurrency_control
+hoodie.cleaner.policy.failed.writes=LAZY
+hoodie.write.lock.provider=<lock-provider-classname>
+
+# lock config of zk
+hoodie.write.lock.provider=org.apache.hudi.client.transaction.lock.ZookeeperBasedLockProvider
+hoodie.write.lock.zookeeper.url
+hoodie.write.lock.zookeeper.port
+hoodie.write.lock.zookeeper.lock_key
+hoodie.write.lock.zookeeper.base_path
+
+# lock config of hiveMetaStore
+hoodie.write.lock.provider=org.apache.hudi.hive.HiveMetastoreBasedLockProvider
+hoodie.write.lock.hivemetastore.database
+hoodie.write.lock.hivemetastore.table
+```
+
+# 查询数据
+
+* 从概念上讲，Hudi在DFS上物理地存储数据一次，同时提供3种不同的查询方式，如前所述。一旦表被同步到Hive metastore，它提供了由Hudi的自定义输入格式支持的外部Hive表。一旦安装了合适的hudi bundle，就可以通过Hive、Spark SQL、Spark Datasource API和PrestoDB等流行的查询引擎查询该表。
+* 如果表名是`test`,表类型是`COW`
+  * 通过`HoodieParquetInputFormat`格式支持snapshot query和incremental query，暴露完整的columnar data。
+* 如果表名是`test`,表类型是`MOR`
+  * 支持对`HoodieParquetRealtimeInputFormat`支持的表进行快照查询和增量查询(提供近实时数据)，公开base数据和日志数据的合并视图。
+  * 支持对`HoodieParquetInputFormat`支持的表进行` read optimized query`，公开存储在base文件中的纯columnar data。
+
+## 支持的能力
+
+### Copy-On-Write tables
+
+| Query Engine         | Snapshot Queries | Incremental Queries |
+| -------------------- | ---------------- | ------------------- |
+| **Hive**             | Y                | Y                   |
+| **Spark SQL**        | Y                | Y                   |
+| **Spark Datasource** | Y                | Y                   |
+| **Flink SQL**        | Y                | N                   |
+| **PrestoDB**         | Y                | N                   |
+| **Trino**            | Y                | N                   |
+| **Impala**           | Y                | N                   |
+
+### Merge-On-Read tables
+
+| Query Engine         | Snapshot Queries | Incremental Queries | Read Optimized Queries |
+| -------------------- | ---------------- | ------------------- | ---------------------- |
+| **Hive**             | Y                | Y                   | Y                      |
+| **Spark SQL**        | Y                | Y                   | Y                      |
+| **Spark Datasource** | Y                | Y                   | Y                      |
+| **Flink SQL**        | Y                | Y                   | Y                      |
+| **PrestoDB**         | Y                | N                   | Y                      |
+| **Trino**            | N                | N                   | Y                      |
+| **Impala**           | N                | N                   | Y                      |
+
+## Hive
+
+### Hive整合Hudi
+
+1. HiveServer2需要在aux path下添加`hudi-hadoop-mr-bundle-x.y.z-SNAPSHOT.jar`
+2. 对于`MERGE_ON_READ`表，此外，bundle需要跨集群安装hadoop/hive，这样查询也可以选择自定义RecordReader。
+
+* 除了上面的设置，对于beeline cli访问，`hive.input.format`变量需要设置为inputformat的`org.apache.hudi.hadoop.HoodieParquetInputFormat`名。另外，对于Tez, `hive.tez.input.format`需要设置为`org.apache.hadoop.hive.ql.io.HiveInputFormat`。
+
+### 增量查询
+
+* `HiveIncrementalPuller允许通过HiveQL从大型`事实/维度表`中`增量提取更改，结合了Hive(可靠地处理复杂的SQL查询)和增量原语(以增量方式加快查询速度，而不是完全扫描)的优点。该工具使用`Hive JDBC`运行Hive查询，并将查询结果保存在临时表中。这可以在以后被upsert。Upsert程序`(HoodieDeltaStreamer)`拥有它需要的目录结构的所有状态，以知道在目标表上的提交时间。例如:`/app/incremental-hql/intermediate/{source_table_name}_temp/{last_commit_included}`。注册的Delta Hive表的形式为`{tmpdb}.{source_table}_{last_commit_included}`.
+
+| **Config**     | **Description**                                              | **Default** |
+| -------------- | ------------------------------------------------------------ | ----------- |
+| hiveUrl        | Hive Server 2 URL to connect to                              |             |
+| hiveUser       | Hive Server 2 Username                                       |             |
+| hivePass       | Hive Server 2 Password                                       |             |
+| queue          | YARN Queue name                                              |             |
+| tmp            | Directory where the temporary delta data is stored in DFS. The directory structure will follow conventions. Please see the below section. |             |
+| extractSQLFile | The SQL to execute on the source table to extract the data. The data extracted will be all the rows that changed since a particular point in time. |             |
+| sourceTable    | Source Table Name. Needed to set hive environment properties. |             |
+| sourceDb       | Source DB name. Needed to set hive environment properties.   |             |
+| targetTable    | Target Table Name. Needed for the intermediate storage directory structure. |             |
+| targetDb       | Target table's DB name.                                      |             |
+| tmpdb          | The database to which the intermediate temp delta table will be created | hoodie_temp |
+| fromCommitTime | This is the most important parameter. 这是查询已更改记录的时间点。 |             |
+| maxCommits     | 要包含在查询中的提交数。将其设置为-1将包括来自fromCommitTime的所有提交。将这个值设置为> 0，将包括只在fromCommitTime之后的指定数量的提交中更改的记录。 | 3           |
+| help           | Utility Help                                                 |             |
+
+* 设置fromCommitTime=0和maxCommits=-1将获取整个源表
+
+## Spark SQL
+
+* 一旦Hudi表注册在hive的元数据说，它就可以通过Spark-Hive进行查询。它支持所有查询类型跨两种Hudi表类型，依赖于自定义Hudi输入格式。用户可以通过Spark-sql查询hudi表再启动的时候指定`--jars`或`--packages`为`hudi-spark-bundle`即可。
+
+### MERGE_ON_READ
+
+* 默认情况下，当Spark SQL读取Hive metastore parquet表时将会尝试使用它自带的parquet读取器去迭代Hive的SerDe。然而，对于`MERGE_ON_READ`表它拥有parquet和avro数据，这个默认设置需要调整设置`spark.sql.hive.convertMetastoreParquet=false`。这将迫使Spark回退到使用Hive Serde读取数据(planning/executions仍然是Spark)。
+
+#### 注意
+
+* 从0.9.0开始，hudi将把表同步到hive作为spark数据源表。因此不需要设置`spark.sql.hive.convertMetastoreParquet=false`
+
+```shell
+$ spark-shell --driver-class-path /etc/hive/conf  --packages org.apache.hudi:hudi-spark-bundle_2.11:0.5.3,org.apache.spark:spark-avro_2.11:2.4.4 --conf spark.sql.hive.convertMetastoreParquet=false --num-executors 10 --driver-memory 7g --executor-memory 2g  --master yarn-client
+```
+
+### COPY_ON_WRITE
+
+* Hive SerDe可以通过关闭`spark.sql.hive.convertMetastoreParquet=false`或者可以利用Spark的内置支持。如果使用spark的内置支持，另外一个路径过滤器需要推入sparkContext，如下所示。这种方法保留了Spark用于读取parquet文件的内置优化，比如对Hudi Hive表的向量化读取。
+
+```scala
+spark.sparkContext.hadoopConfiguration.setClass("mapreduce.input.pathFilter.class", classOf[org.apache.hudi.hadoop.HoodieROTablePathFilter], classOf[org.apache.hadoop.fs.PathFilter]);
+```
+
+## Spark DataSource
+
+* `MERGE_ON_READ`支持` snapshot querying`,`COPY_ON_WRITE`支持`snpshot`和`incremental`查询，添加依赖`org.apache.hudi:hudi-spark-bundle_2.11:0.5.3`
+
+### Snapshot query
+
+```scala
+val hudiIncQueryDF = spark
+     .read()
+     .format("hudi")
+     .option(DataSourceReadOptions.QUERY_TYPE.key(), DataSourceReadOptions.QUERY_TYPE_SNAPSHOT_OPT_VAL())
+     .load(tablePath) 
+```
+
+### Incremental query
+
+```scala
+ Dataset<Row> hudiIncQueryDF = spark.read()
+     .format("org.apache.hudi")
+     .option(DataSourceReadOptions.QUERY_TYPE.key(), DataSourceReadOptions.QUERY_TYPE_INCREMENTAL_OPT_VAL())
+     .option(DataSourceReadOptions.BEGIN_INSTANTTIME.key(), <beginInstantTime>)
+     .option(DataSourceReadOptions.INCR_PATH_GLOB.key(), "/year=2020/month=*/day=*") // Optional, use glob pattern if querying certain partitions
+     .load(tablePath); // For incremental query, pass in the root/base path of table
+     
+hudiIncQueryDF.createOrReplaceTempView("hudi_trips_incremental")
+spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hudi_trips_incremental where fare > 20.0").show()
+```
+
