@@ -94,7 +94,7 @@
 * [HDFSOverView](bigdata/hadoop/HDFS/HDFSOverView.xmind)
 * [Hadoop广义生态系统](bigdata/hadoop/Hadoop广义生态系统.xmind)
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
-* [HadoopCommon分析](bigdata/hadoop/HDFS/Common包解析.md)
+* [HadoopCommon分析](bigdata/hadoop/HDFS/HadoopCommon包分析.pdf)
 * [HDFS集群相关管理](bigdata/hadoop/HDFS/HDFS集群管理.md)
 * [HDFS Shell](bigdata/hadoop/HDFS/HDFS%20Shell命令.md)
 

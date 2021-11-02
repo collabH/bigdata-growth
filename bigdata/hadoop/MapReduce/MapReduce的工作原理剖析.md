@@ -112,7 +112,7 @@ map函数开始产生输出时并不是简单地将它写到磁盘，它利用�
 在写磁盘之前，线程首先根据数据最终要传入的reducer把数据划分成相应的`分区(partition)`。在每个分区中，后台线程按照`键进行内存中排序，如果有一个combiner函数，它就在排序后的输出上运行`。运行combiner函数使得`map输出结果更紧凑，因此减少写到磁盘的数据和传递给reducer的数据`。
 ```
 
-![图片](https://uploader.shimo.im/f/lxEGoRv0A9wsD5kx.png!thumbnail)
+![图片](../img/mrmap.jpg)
 
 #### 内存缓冲区溢出文件
 
@@ -136,9 +136,9 @@ map函数开始产生输出时并不是简单地将它写到磁盘，它利用�
 
 * map输出文件位于运行`map任务的DataNode的本地磁盘`(尽管map输出经常写到map DataNode的本地磁盘，但reduce输出并不是这样)，DN需要为`分区文件运行reduce任务`。并且reduce任务需要集群若干个`map任务的map输出作为其特殊的分区文件`。每个map任务的完成时间不同，因此在每个任务完成时，`reduce就开始复制其输出文件，这是reduce的复制阶段`。reduce任务有少量的复制线程，可以并行取得map输出。`默认值是5个线程，可以通过mapreduce.reduce.shuffle.parallelcopies修改`。
 
-![图片](https://uploader.shimo.im/f/nb0ogNGGjSY1SnLO.png!thumbnail)
+![图片](../img/reduce复制.jpg)
 
-![图片](https://uploader.shimo.im/f/e1yP81u0uqwHlyEo.png!thumbnail)
+![图片](../img/reduce复制1.jpg)
 
 #### 合并Reduce阶段
 
@@ -146,13 +146,13 @@ map函数开始产生输出时并不是简单地将它写到磁盘，它利用�
 
 * 直接把`数据输入reduce函数，从而省略了一次磁盘往返行程`，并没有将这5个文件合并成一个已排序的文件作为最后一趟，`最后的合并可以来自内存和磁盘片段`。
 
-#### reducer如何直到从那台机器获取map输出文件？
+#### reducer如何知道从那台机器获取map输出文件？
 
-![图片](https://uploader.shimo.im/f/dpUqrzwksGsc30lq.png!thumbnail)
+![图片](../img/reduce复制流程.jpg)
 
 #### reduce合并阶段优化
 
-![图片](https://uploader.shimo.im/f/gWkY70wYwh4W6rlo.png!thumbnail)
+![图片](../img/reduce合并阶段.jpg)
 
 ### 排序分类
 
@@ -492,7 +492,7 @@ public class TableReducer extends Reducer<Text, TableBean, TableBean, NullWritab
 
 * 用于监控已处理的输入数据量和已产生的输出数据量，对处理的数据进行比对。
 
-![图片](https://uploader.shimo.im/f/eUAgm022PGo8nJzC.png!thumbnail)
+![图片](../img/计数器.jpg)
 
 ## 任务计数器
 
@@ -502,21 +502,21 @@ public class TableReducer extends Reducer<Text, TableBean, TableBean, NullWritab
 
 ### 内置MapReduce任务计数器
 
-![图片](https://uploader.shimo.im/f/tbrGhSVVFN8Pu0kD.png!thumbnail)
+![图片](../img/mr任务计数器.jpg)
 
-![图片](https://uploader.shimo.im/f/AcYEIc9cA3MEseH1.png!thumbnail)
+![图片](../img/mr任务计数器1.jpg)
 
 ### 内置的文件系统任务计数器
 
-![图片](https://uploader.shimo.im/f/vUwNNcrhEUIGQ93X.png!thumbnail)
+![图片](../img/mr文件系统计数器.jpg)
 
 ### 内置的FileinputFormat任务计数器
 
-![图片](https://uploader.shimo.im/f/lr1hqwy6uWU4Tbip.png!thumbnail)
+![图片](../img/mr.jpg)
 
 ### 内置的FileOutputFormat任务计数器
 
-![图片](https://uploader.shimo.im/f/P82Gnsu6Cz48QqLa.png!thumbnail)
+![图片](../img/mrfileoutput计数器.jpg)
 
 ## 作业计数器
 
@@ -526,9 +526,9 @@ public class TableReducer extends Reducer<Text, TableBean, TableBean, NullWritab
 
 ### 内置作业计数器
 
-![图片](https://uploader.shimo.im/f/rpvhYviQIzIrO8Ks.png!thumbnail)
+![图片](../img/内置作业计数器.jpg)
 
-![图片](https://uploader.shimo.im/f/0PRRzKVorWEfdQWz.png!thumbnail)
+![图片](../img/内置作业计数器1.jpg)
 
 ## 用户定义的Java计数器
 
@@ -659,16 +659,10 @@ public class DistributedCacheDriver extends Configured implements Tool {
 * 通过GenericOptionsParser间接使用分布式缓存
 * 通过Job中使用分布式缓存
 
-![图片](https://uploader.shimo.im/f/zgSfbcRrVpUo25zz.png!thumbnail)
-
 ```
 在缓存汇总可以存放两类对象:文件和存档，文件被直接放置在任务的节点上，而存档则会被解档之后再将具体文件放置在任务节点上。每种对象类型都包含三种方法:addCachexxxx()、setCachexxxx()和addxxxxTOClassPath()。
 addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一次性向分布式缓存中添加一组文件或文档(之后调用生成的集合将被替换)，addXXXToClassPath将文件或存储添加到MapReduce任务下的类路径。
 ```
-
-### 与GenericOptionsParser对比
-
-![图片](https://uploader.shimo.im/f/ky9yHlAplA0zhzTU.png!thumbnail)
 
 # 配置调优
 
@@ -701,8 +695,6 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 * 减少溢写次数:估算map输出大小，就可以合理设置`mapreduce.task.io.sort.*`属性来尽可能减少溢出写的次数。如果可以增加`mapreduce.task.io.sort.mb`的值以及`mapreduce.map.sort.spill.percent`的阈值，MapReduce计数器计算在作业运行整个阶段中溢出写磁盘的次数，包含map和reduce俩端的溢出写。
 * 减少合并次数:通过调整`mapreduce.task.io.sort.factor`，增大Merge的文件数目，减少Merge的次数，从而缩短MR处理时间。
 * 在Map之后，不影响业务逻辑的前提下，先进行Combine处理，减少IO。
-
-![图片](https://uploader.shimo.im/f/mezbGAcxtHwjN9Fh.png!thumbnail)
 
 ## I/O传输
 
@@ -766,5 +758,5 @@ addCacheXXX是将文件或者存档添加到分布式缓存，setCacheXXX将一�
 
 # MapReduce库类
 
-![图片](https://uploader.shimo.im/f/O1vapVOcvz00EiJl.png!thumbnail)
+![图片](../img/mr类库.jpg)
 

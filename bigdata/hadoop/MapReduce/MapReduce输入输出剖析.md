@@ -2,7 +2,7 @@
 
 * Yarn集群block大小为128MB，本地模式为32MB
 
-![图片](https://uploader.shimo.im/f/TefZ6ii9QwYQHrkv.png!thumbnail)
+![图片](../img/mr类型.jpg)
 
 ## 为什么需要设置对应的输出输入key value类型呢
 
@@ -11,7 +11,7 @@
 ```
 ## 类型设置
 
-![图片](https://uploader.shimo.im/f/T0bnCUxhu64RqFm9.png!thumbnail)
+![图片](../img/类型设置.jpg)
 
 ## 默认的MapReduce作业
 
@@ -45,14 +45,14 @@ FileInputFormat类是所有使用文件作为其数据源的InputFormat实现的
 
 #### 输入路径
 
-![图片](https://uploader.shimo.im/f/mF2rpCzEd4AjDnl5.png!thumbnail)
+![图片](../img/输入路径.jpg)
 
 #### 输入分片
 
 ```
 FileInputFormat只分割大文件，文件超过HDFS块的大小，分片通常与HDFS块大小一样，值也可以更具不同的Hadoop属性来改变。
 ```
-![图片](https://uploader.shimo.im/f/AcJRAn3UwSoSUrXK.png!thumbnail)
+![图片](../img/输入分片.jpg)
 
 #### 修改分片大小的问题
 
@@ -168,11 +168,10 @@ public List<InputSplit> getSplits(JobContext job) throws IOException {
 
 ![image-20200719234557572](../../../img/image-20200719234557572.png)
 
-![图片](https://uploader.shimo.im/f/bgaoDLws0yY7sHcW.png!thumbnail)
 
 #### InputSpit与HDFS Block的关系
 
-![图片](https://uploader.shimo.im/f/pVdvJnBoDZU1mU2C.png!thumbnail)
+![图片](../img/inputsplit和block.jpg)
 
 #### 控制一行的最大长度
 
@@ -187,7 +186,7 @@ public List<InputSplit> getSplits(JobContext job) throws IOException {
 
 ## InputFormat类的结构
 
-![图片](https://uploader.shimo.im/f/ghcC1v4gusQuLy0r.png!thumbnail)
+![图片](../img/inputformat结构.jpg)
 
 ### TextInputFormat
 
@@ -196,7 +195,7 @@ public List<InputSplit> getSplits(JobContext job) throws IOException {
 ```
 #### TextInputFormat切片格式
 
-![图片](https://uploader.shimo.im/f/owb4eVI6UTgKQNsp.png!thumbnail)
+![图片](../img/textinput切片.jpg)
 
 ### KeyValueTextInputFormat
 
@@ -564,7 +563,7 @@ public class MutilInputTest extends Configured implements Tool {
 
 * OutputFormat是MR输出的基类，所有MR输出都实现了OutputFormat接口。
 
-![图片](https://uploader.shimo.im/f/zASpEms0qjszo18j.png!thumbnail)
+![图片](../img/输出格式.jpg)
 
 ## TextOutputFormat
 
@@ -572,7 +571,7 @@ public class MutilInputTest extends Configured implements Tool {
 * 通过 `mapreduce.output.textoutputformat.separator`属性改变默认分隔符
 ## SequenceFileOutputFormat
 
-![图片](https://uploader.shimo.im/f/8ZJcvh7vqZkyJMRB.png!thumbnail)
+![图片](../img/seqinput.jpg)
 
 ## MultipleoutputFormat
 

@@ -32,7 +32,6 @@ datanode会在后台线程中运行一个DataBlockScanner，从而定期验证�
 ```
 client在读取数据块时，如果检测到错误，首先向namenode报告已损坏的数据块及其正在尝试读操作的这个datanode，再抛出ChecksumException异常。namenode将这个数据块副本标记为已损坏，这样它不再将client处理请求直接发送到这个节点，或尝试将这个副本复制到另一个datanode。然后安排这个数据块的一个副本复制到另一个datanode，如此一来，数据块的副本因子又回到了期望水平。此后删除已损坏的数据块副本。
 ```
-![图片](https://uploader.shimo.im/f/J68yZzp7bJIopuOF.png!thumbnail)
 
 ## LocalFileSystem
 
@@ -46,7 +45,6 @@ LocalFileSystem通过ChecksumFileSystem来完成自己的任务，通过Checksum
 FileSystem checksummedFS=new ChecksumFileSystem(FileSystem.get(path));
 底层文件系统称为"源"(raw)文件系统，可以使用ChecksumFileSystem实例的getRawFileSystem()方法获取它。ChecksumFileSystem类还有其他一些与校验和相关的有用方法，比如getChecksumFile()获取任意一个文件的校验和文件路径。
 ```
-![图片](https://uploader.shimo.im/f/RpKTCDxmb8s5eqzZ.png!thumbnail)
 
 # 压缩
 
@@ -63,11 +61,7 @@ FileSystem checksummedFS=new ChecksumFileSystem(FileSystem.get(path));
 
 ## Hadoop支持的压缩算法
 
-![图片](https://uploader.shimo.im/f/YEnZZzbIx5MKTsYC.png!thumbnail)
-
 * Codec是压缩-解压缩算法的一种实现。Hadoop中，一个对CompressionCodec接口的实现就代表一个codec。
-
-![图片](https://uploader.shimo.im/f/pUTHtygN9p0vjPy2.png!thumbnail)
 
 ## 压缩方式选择
 
@@ -106,8 +100,6 @@ FileSystem checksummedFS=new ChecksumFileSystem(FileSystem.get(path));
 #### 适用场景
 
 * 当MR作业的MapTask输出端适合使用，作为Map到Reduce的中间数据压缩格式，以及MR作业的输出和另一个MR作业的输入，这种关联JOB，但是压缩完的数据不能过大，因为Snappy不支持切分。
-
-![图片](https://uploader.shimo.im/f/RkonoKV497sq3Bmp.png!thumbnail)
 
 ## 压缩位置选择
 
@@ -251,20 +243,7 @@ return 0;
 * 进程间通信
   * RPC远程过程调用
   * 格式
-
-![图片](https://uploader.shimo.im/f/GaL0wQOugzATVY9u.png!thumbnail)
-
 * 永久存储
-
-![图片](https://uploader.shimo.im/f/XN7AOaQIos4zb5fM.png!thumbnail)
-
-## Writable接口
-
-![图片](https://uploader.shimo.im/f/fYE7g4Uv2jESytO9.png!thumbnail)
-
-### Java基本类型的Writable类
-
-![图片](https://uploader.shimo.im/f/dLwuWNCy1DIpODgU.png!thumbnail)
 
 ### Text类型
 
@@ -335,7 +314,6 @@ hdfs dfs -text可以以文本形式显示顺序文件。
 ```
 顺序文件的前三个字节为SEQ(顺序文件代码),随后的一个字节标示顺序文件的版本号。
 ```
-![图片](https://uploader.shimo.im/f/yFAnxBKm1QY5SiM2.png!thumbnail)
 
 ## MapFile
 
@@ -343,7 +321,3 @@ hdfs dfs -text可以以文本形式显示顺序文件。
 MapFile是已经排过序的SequenceFile，它有索引，可以按键查找。索引自身就是一个SequceceFile，包含了map中的以小部分键(默认情况下，是每个128个键)。由于索引能加载进内存，因此可以提供对主数据文件的快速查找。主数据文件也是一个SequenceFile文件，包含所有map条目，这些条目都是根据键进行了排序。
 MapFile提供一个用于读写、与SequenceFile非常相似的结构，Mapfile.Writer进行写操作时，map条目必须顺序添加，否则会抛出IOException异常。
 ```
-### MapFile的变种
-
-![图片](https://uploader.shimo.im/f/EFi2mNWGog8h9WLa.png!thumbnail)
-
