@@ -269,7 +269,7 @@ hdfs dfs -put tez-0.9.2/ /tez
 
 # Hive的运行机制 
 
-![图片](https://uploader.shimo.im/f/gBD9rs2oeDjRwgDR.png!thumbnail)
+![图片](./img/hive运行机制.jpg)
 
 # Hive和数据库比较 
 

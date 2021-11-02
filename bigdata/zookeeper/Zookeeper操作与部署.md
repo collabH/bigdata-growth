@@ -275,7 +275,7 @@ Super
 1 修改zkServer.sh增加super管理员 
 2 重启zkServer 
 ```
-![图片](https://uploader.shimo.im/f/XrWogcx6pqkMm2YL.png!thumbnail)
+![图片](./img/super权限.jpg)
 
 
 1. zk四字命令Four letter worlds 
