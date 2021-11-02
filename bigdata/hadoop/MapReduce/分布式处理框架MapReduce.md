@@ -16,7 +16,7 @@
 
 **实际为分治算法**
 
-<div align="center"> <img width="600px" src="https://uploader.shimo.im/f/BnsXXhBV2fMzx9rT.png"/> </div>
+![](../img/分治算法.jpg)
 
 >输入文件可以拆分为多个快，通常这个块于HDFS的blocksize对应，然后一个Map处理一个块处理完的结果存在本地，再经过Shuffle网络传输把相同的key写入到一个reduce中，最终写到文件系统。
 ## MapReduce编程模型执行流程
@@ -65,11 +65,9 @@ MapReduce框架仅对<key,value>键值对运行，该框架将作业的输入视
 针对上述wordCount，key是偏移量，value是一行的数据
 ```
 # MapReduce多节点流程图
+![](../img/mr流程图.jpg)
 
-<div align="center"> <img width="600px" src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/Detailed-Hadoop-MapReduce-Data-Flow-14.png"/> </div>
-
-<div align="center"> <img width="600px" src="https://uploader.shimo.im/f/vqUj6KEBxnEYHT2B.png!thumbnail"/> </div>
-
+![](../img/mr流程图1.jpg)
 ## 核心概念
 
 * Split:交由MapReduce作业来处理的数据块，是MapReduce最小的计算单元
@@ -87,7 +85,7 @@ TextInputFormat:处理文本格式数据
 
 ## MapReduce1.x架构图
 
-![图片](https://uploader.shimo.im/f/vUiyJQlgx1Y38Ij2.png!thumbnail)
+![图片](../img/mr1架构.jpg)
 
 * JobTracker
   * 作业的管理者
@@ -109,7 +107,7 @@ TextInputFormat:处理文本格式数据
   * 输出结果写到HDFS(或者其他存储引擎)
 ## MapReduce2.x架构图
 
-![图片](https://uploader.shimo.im/f/o9zbPYFObf4tu7j3.png!thumbnail)
+![图片](../img/mr2.x架构.jpg)
 
 **参考YARN流程图**
 
@@ -254,11 +252,11 @@ yarn jar hadoop-study-1.0-SNAPSHOT.jar com.reasearch.hadoop.mapreduce.paritition
 * 本地reducer
 * 减少Map task输出的数据量以及数据网络传输量
 
-![图片](https://uploader.shimo.im/f/12Efx0ltTdUXwpP2.png!thumbnail)
+![图片](../img/combiner.jpg)
 
 >可以看出来，Combiner会在Map端进行本地的Reducer操作，在传递到最终的reducer处理这样传递的数据少很多
 
-![图片](https://uploader.shimo.im/f/rl8nxYYHRvonnqDT.png!thumbnail)
+![图片](../img/combiner1.jpg)
 
 ## demo及适用场景
 

@@ -10,13 +10,13 @@
 * 资源利用率&运维成本 
 ## Hadoop1.x时代 
 
-![图片](https://uploader.shimo.im/f/oXNqdz9XT2UCU4ZU.png!thumbnail)
+![图片](../img/hadoop1.x.jpg)
 
 ## Hadoop2.x时代 
 
-![图片](https://uploader.shimo.im/f/i8nfZPcMaBU6zh7g.png!thumbnail)
+![图片](../img/hadoop2.x.jpg)
 
-![图片](https://uploader.shimo.im/f/GU6OLLfxmXEcs4YR.png!thumbnail)
+![图片](../img/yarn.jpg)
 
 
 * 不同计算框架可以共享一个HDFS集群上的数据，享受整体的资源 
@@ -24,7 +24,7 @@
     * Spark On YARN 
 ## MapReduce1.x架构图 
 
-![图片](https://uploader.shimo.im/f/iDvmHCgAX9434679.png!thumbnail)
+![图片](../img/mr1架构.jpg)
 
 
 * 可以看出MapReduce1.x版本时架构为Master/Slaves架构 
@@ -42,9 +42,9 @@
 
 >YARN的基本思想是将资源管理和作业调度/监视的功能拆分为单独的守护进程，因此需要一个全局的 ResourceManager (RM)和每个应用程序的ApplicationMaster(AM)，应用程序可以是单个作业也可以是一组作业。 
 
-![图片](https://uploader.shimo.im/f/7U8GpbA35JAMxyZK.png!thumbnail)
+![图片](../img/yarn架构.jpg)
 
-![图片](https://uploader.shimo.im/f/84WasKxXsveQeKJW.png!thumbnail)
+![图片](../img/yarn架构1.jpg)
 
 ### ResourceManger 
 
@@ -76,7 +76,7 @@
 * 查看作业的运行进度 
 * 杀死作业 
 
-![图片](https://uploader.shimo.im/f/K07bzGyEO5sonjvQ.png!thumbnail)
+![图片](../img/yarn核心组件.jpg)
 
 # 作业提交机制
 
@@ -91,17 +91,11 @@
 
 ![Yarn工作机制](../../spark/源码分析/img/作业提交流程.jpg)
 
-![图片](https://uploader.shimo.im/f/T4Nr04nJesoAEg7k.png!thumbnail)
-
-
-
-![图片](https://uploader.shimo.im/f/Y1NagnnPIKwZIq6s.png!thumbnail)
-
-![图片](https://uploader.shimo.im/f/AGFK7zIjFrorVMPL.png!thumbnail)
+![图片](../img/yarn启动流程.jpg)
 
 ### 源码解析流程
 
-![image-20200719221501476](/Users/babywang/Documents/reserch/dev/workspace/repository/img/image-20200719221501476.png)
+![image-20200719221501476](../../../img/image-20200719221501476.png)
 
 ## 作业的初始化
 
@@ -138,12 +132,6 @@ reduce任务能够在集群中任意位置运行，但是map任务的请求有�
 YarnChild在指定的JVM中运行，因此用户定义的map或reduce函数中的任何缺陷不会影响到NM
 每个任务都能够执行搭建(setup)或者提交(commit)动作，它们和任务本身在同一个jvm中运行，并由作业的OutputCommitter确定，对于基于文件的作业，提交动作将任务输出由临时位置搬到最终位置。
 ```
-
-### 进度和状态更新
-
-![图片](https://uploader.shimo.im/f/GegAFROciL8HQGeq.png!thumbnail)
-
-![图片](https://uploader.shimo.im/f/F7KatwROBDIbaujW.png!thumbnail)
 
 ### 作业的完成
 
@@ -215,7 +203,6 @@ Mapreduce客户端向AM轮询进度报告，但是如果它的AM运行失败，�
 
 * 双机热备配置，运行一对RM，所有运行中的应用程序的信息存储在一个高可用的状态存储区中(由Zookeeper或HDFS备份)，这样备份机可以恢复出失败的主RM的关键状态。NM信息没有存储在状态存储区中，因为当NM方法它们的一个心跳信息时，NM的信息就能以相当快的速度被新的RM重构。
 
-![图片](https://uploader.shimo.im/f/kuwzhSd1i9AwRAD3.png!thumbnail)
 
 * 当RM启动后，它从状态存储区中读取应用程序的信息，然后集群中运行的所有应用程序重启AM，这个行为不被计为失败的应用程序重试(所以不会计入`yarn.resourcemanager.am.max-attempts`)，这是因为应用程序并不是因为程序的错误代码而失败，而是系统强行终止的。实际情况中，AM重启不是MR程序的问题，因为它们是恢复已完成的任务的工作。
 * RM从备机到主机的切换是由故障转移控制器处理的，默认的故障转移控制器是自动工作的，使用Zookeeper的leader选举机制以保证同一时刻只有一个masterRM。不同于HDFS的高可用性的实现，故障转移控制器不必是一个独立进程，为了配置方便，默认情况下嵌入在RM中。故障转移也可以手动处理。
@@ -245,10 +232,6 @@ Mapreduce客户端向AM轮询进度报告，但是如果它的AM运行失败，�
 
 ## 任务执行环境
 
-### Mapper和Reducer能够获取的属性
-
-![图片](https://uploader.shimo.im/f/emTfD9auumQaUm90.png!thumbnail)
-
 ## 推测执行
 
 * `作业完成时间取决于最慢的任务完成时间`。
@@ -269,10 +252,6 @@ Mapreduce客户端向AM轮询进度报告，但是如果它的AM运行失败，�
 
 * 任务间存在严重的负载倾斜。
 * 特殊任务，比如任务向数据库写数据。
-
-#### 推测执行存在的问题
-
-![图片](https://uploader.shimo.im/f/1n6R6Jb1o9MwSF9I.png!thumbnail)
 
 #### 推测执行算法原理
 
@@ -301,12 +280,6 @@ MapReduce使用一个提交协议来确保作业和任务都完全成功或失�
 ```
 默认不做任何事情，因为所需的临时文件在任务运行时已经创建
 ```
-
-### ![图片](https://uploader.shimo.im/f/uKEVMLjTLFoqFkTm.png!thumbnail)
-
-### 任务附属文件
-
-![图片](https://uploader.shimo.im/f/D5jiDnzMFj0nN6d1.png!thumbnail)
 
 # 环境搭建 
 

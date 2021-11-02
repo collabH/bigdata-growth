@@ -2,15 +2,15 @@
 
 ## 集群规模
 
-![图片](https://uploader.shimo.im/f/NFwRnZeWGP8CDc0V.png!thumbnail)
+![图片](../img/集群规模.jpg)
 
 ### Master节点场景
 
-![图片](https://uploader.shimo.im/f/wHOM7zOqdmEb2EfP.png!thumbnail)
+![图片](../img/Master节点场景.jpg)
 
 ## 网络拓扑
 
-![图片](https://uploader.shimo.im/f/01dsPB4I3aoN7MQX.png!thumbnail)
+![图片](../img/网络拓扑.jpg)
 
 # 集群构建和安装
 
@@ -47,7 +47,7 @@ cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
 * 配置Hadoop
 * 格式化HDFS文件系统
 
-![图片](https://uploader.shimo.im/f/XUkDZj6xYHoRBN8C.png!thumbnail)
+![图片](../img/格式化HDFS.jpg)
 
 ```shell
 hdfs namenode -format
@@ -135,7 +135,7 @@ Hadoop也支持为所有master机器和worker机器采用同一套配置文件�
 ```
 ### 守护进程需要多少内存
 
-![图片](https://uploader.shimo.im/f/tpr12vxAI94kQMRe.png!thumbnail)
+![图片](../img/内存计算.jpg)
 
 ### 系统日志文件
 
@@ -144,7 +144,7 @@ Hadoop也支持为所有master机器和worker机器采用同一套配置文件�
   * 以.log作为后缀名通过log4j记录，故障诊断的先检查该文件
   * 以.out为后缀的，记录标准输出和标准错误日志，该文件只包含少量记录。系统仅保留最新的5个日志文件，旧的文件会附加一个介于1和5之间的数字后缀，5表示最旧的文件。
 
-![图片](https://uploader.shimo.im/f/aPUdXiOvzHci1Ghy.png!thumbnail)
+![图片](../img/日志文件.jpg)
 
 * 日志名称通过hadoop-env.sh中的`HADOOP_IDENT_STRING`中配置
 ### SSH配置
@@ -159,15 +159,15 @@ Hadoop也支持为所有master机器和worker机器采用同一套配置文件�
 
 * 典型的core-site配置
 
-![图片](https://uploader.shimo.im/f/bC6fsaylsjsMmmi1.png!thumbnail)
+![图片](../img/core配置.jpg)
 
 * 典型的hdfs-site.xml配置
 
-![图片](https://uploader.shimo.im/f/8D9Ep3c64GsP51gW.png!thumbnail)
+![图片](../img/hdfs配置.jpg)
 
 * 典型的yarn-site配置
 
-![图片](https://uploader.shimo.im/f/rjdr2CrDUo8vocdJ.png!thumbnail)
+![图片](../img/yarn配置.jpg)
 
 ### HDFS
 
@@ -184,9 +184,9 @@ dfs.datanode.data.dir可以设定datanode存储数据块的目录列表，datano
 ```
 * HDFS关键属性
 
-![图片](https://uploader.shimo.im/f/DMd6pXCayrcpB0IW.png!thumbnail)
+![图片](../img/hdfs关键属性.jpg)
 
-![图片](https://uploader.shimo.im/f/0Txnh5YO2TY90tzm.png!thumbnail)
+![图片](../img/hdfs关键属性1.jpg)
 
 * 默认情况下，HDFS的存储目录存放在Hadoop的临时目录下(通过hadoop.tmp.dir配置，默认为`/tmp/hadoop-${user.name})`，在配置以上配置后，即使临时目录被情况数据仍然不会丢失。
 ### YARN
@@ -198,7 +198,7 @@ dfs.datanode.data.dir可以设定datanode存储数据块的目录列表，datano
 * 与MapReduce1不同，YARN没有tasktracker，它依赖shuffle句柄将map任务的输出送到reduce任务，Shuffle句柄是长期运行于NM的附加服务。可以在yarn-site.xml中配置`yarn.nodemanager.aux-services`属性设置为`mapreduce_shuffle`来显示启用MapReduce的shuffle句柄。
 * YARN的关键配置
 
-![图片](https://uploader.shimo.im/f/naSx06NFnggoWORS.png!thumbnail)
+![图片](../img/yarn属性配置.jpg)
 
 ### YARN和MapReudce中的内存设置
 
@@ -209,9 +209,9 @@ dfs.datanode.data.dir可以设定datanode存储数据块的目录列表，datano
 ```
 * MapReduce作业内存属性
 
-![图片](https://uploader.shimo.im/f/0swNko4lzAEhW1O1.png!thumbnail)
+![图片](../img/mr作业配置.jpg)
 
-![图片](https://uploader.shimo.im/f/RnO3uwOF7FIMwXk5.png!thumbnail)
+![图片](../img/mr作业配置1.jpg)
 
 ### YARN和MapReduce中的CPU设置
 
@@ -219,7 +219,7 @@ dfs.datanode.data.dir可以设定datanode存储数据块的目录列表，datano
 * 应该设置为机器的总核数减去机器上运行的每个守护进程(datanode、NM核其他长期运行的进程)占用的核数
 * 通过`mapreduce.map.cpu.vcores`核`mapreduce.reduce.cpu.vcores`控制Mapreduce作业分配给map核reduce容器的核数量，默认都为1.
 
-![图片](https://uploader.shimo.im/f/w0fu4Rld0g0ASAvI.png!thumbnail)
+![图片](../img/mrcpu.jpg)
 
 ## Hadoop守护进程的地址和端口
 
@@ -228,15 +228,15 @@ Hadoop守护进程一般同时运行RPC和HTTP两个服务器，RPC服务器支�
 ```
 ### Rpc服务器属性
 
-![图片](https://uploader.shimo.im/f/MiLiLGbOWCwMsVim.png!thumbnail)
+![图片](../img/hadooprpc.jpg)
 
-![图片](https://uploader.shimo.im/f/aPQRpeN1lPQGynEr.png!thumbnail)
+![图片](../img/hadooprpc1.jpg)
 
 ### Http服务器属性
 
-![图片](https://uploader.shimo.im/f/wGXiHHFFvvIuECvx.png!thumbnail)
+![图片](../img/hadoophttp.jpg)
 
-![图片](https://uploader.shimo.im/f/7mKOryu6YQUuLopU.png!thumbnail)
+![图片](../img/hadoophttp1.jpg)
 
 ## Hadoop的其他属性
 
@@ -275,9 +275,9 @@ Hadoop使用一个4KB的缓冲区辅助I/O操作，对于现代硬件和操作�
 * 默认情况下，调度器会一直等待，直到该作业的5%的map任务已经结束才会调度reduce任务，对于大型作业来说，这个会降低集群利用率，在等待的过程中占用率reduce容器，可以将`mapreduce.job.reduce.slowstart.completedmaps`的值设置更大，如0.80,能够提供吞吐率。
 ### 短回路本地读
 
-![图片](https://uploader.shimo.im/f/a5f7Ooz5Q4AZXFF1.png!thumbnail)
+![图片](../img/短回路本地读.jpg)
 
 # 测试Hadoop集群
 
-![图片](https://uploader.shimo.im/f/bdQCh1IafCI275Ig.png!thumbnail)
+![图片](../img/测试集群.jpg)
 
