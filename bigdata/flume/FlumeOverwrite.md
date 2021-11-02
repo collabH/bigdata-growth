@@ -13,7 +13,7 @@
 
 ## 运行流程
 
-​        ![img](https://uploader.shimo.im/f/Fd3AS12j9EIw9fEl.png!thumbnail)      
+![img](./img/运行流程.jpg)      
 
 * 使用Flume需要`运行Flume代理`，Flume代理是由`持续运行的source`、`sink`以及`channel`(用于连接source和sink)构成的Java进程
 * Flume的`sourcgite产生事件`，并将其`传输给channel`，`channel存储这些事件直至转发给sink`。
