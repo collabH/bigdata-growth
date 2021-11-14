@@ -61,6 +61,7 @@
   * `Instant action` : 表中执行的动作类型
   * `Instant time` :瞬时时间通常是一个时间戳(例如:20190117010349)，它按动作开始时间的顺序单调增加。
   * `state` :瞬时的当前状态
+  
 * 主要操作包括一下：
   * `COMMIT`:将一批记录原子方式写入库
   * `CLEANS`:删除表中不再需要的旧版本文件的后台活动。
@@ -68,10 +69,163 @@
   * `COMPACTION`:后台进行COMPACTION操作合并数据，例如基于log文件移动修改的行列格式等
   * `ROLLBACK`:表示提交/增量提交不成功并回滚，删除在此期间在此期间产生的任何部分文件
   * `SAVEPOINT`:将某些文件组标记为“已保存”，以便清洁器不会删除它们。在灾难/数据恢复方案的情况下，它有助于将表恢复到时间轴上的点。
+  
 * 任何给定的瞬间都可能处于以下状态之一:
-  * `REQUESTED`:表示已安排的操作，但尚未启动
-  * `INFLIGHT`:表示当前正在执行操作
+  * `REQUESTED`:表示已安排的操作，但尚未启动,在`.hoodie`目录下是个空文件
+  * `INFLIGHT`:表示当前正在执行操作，文件格式和commit中一致
+  
   * `COMPLETED`:表示执行完成的操作
+  
+  ```json
+  {
+    // 分区和写入的新鲜
+    "partitionToWriteStats" : {
+      "1" : [ {
+        "fileId" : "be3c777e-7ac8-4c35-bde5-0e2fa6f17914",
+        "path" : "1/be3c777e-7ac8-4c35-bde5-0e2fa6f17914_1-4-0_20211030185417.parquet",
+        "prevCommit" : "null",
+        "numWrites" : 1,
+        "numDeletes" : 0,
+        "numUpdateWrites" : 0,
+        "numInserts" : 1,
+        "totalWriteBytes" : 434228,
+        "totalWriteErrors" : 0,
+        "tempPath" : null,
+        "partitionPath" : "1",
+        "totalLogRecords" : 0,
+        "totalLogFilesCompacted" : 0,
+        "totalLogSizeCompacted" : 0,
+        "totalUpdatedRecordsCompacted" : 0,
+        "totalLogBlocks" : 0,
+        "totalCorruptLogBlock" : 0,
+        "totalRollbackBlocks" : 0,
+        "fileSizeInBytes" : 434228,
+        "minEventTime" : null,
+        "maxEventTime" : null
+      } ],
+      "2" : [ {
+        "fileId" : "5abfd9c0-b584-4ca3-8aca-794b8c52b776",
+        "path" : "2/5abfd9c0-b584-4ca3-8aca-794b8c52b776_0-4-0_20211030185417.parquet",
+        "prevCommit" : "null",
+        "numWrites" : 1,
+        "numDeletes" : 0,
+        "numUpdateWrites" : 0,
+        "numInserts" : 1,
+        "totalWriteBytes" : 434218,
+        "totalWriteErrors" : 0,
+        "tempPath" : null,
+        "partitionPath" : "2",
+        "totalLogRecords" : 0,
+        "totalLogFilesCompacted" : 0,
+        "totalLogSizeCompacted" : 0,
+        "totalUpdatedRecordsCompacted" : 0,
+        "totalLogBlocks" : 0,
+        "totalCorruptLogBlock" : 0,
+        "totalRollbackBlocks" : 0,
+        "fileSizeInBytes" : 434218,
+        "minEventTime" : null,
+        "maxEventTime" : null
+      } ],
+      "3" : [ {
+        "fileId" : "0188cd13-c596-46cb-b59a-e08ff90b4b3d",
+        "path" : "3/0188cd13-c596-46cb-b59a-e08ff90b4b3d_1-4-0_20211030185417.parquet",
+        "prevCommit" : "null",
+        "numWrites" : 1,
+        "numDeletes" : 0,
+        "numUpdateWrites" : 0,
+        "numInserts" : 1,
+        "totalWriteBytes" : 434222,
+        "totalWriteErrors" : 0,
+        "tempPath" : null,
+        "partitionPath" : "3",
+        "totalLogRecords" : 0,
+        "totalLogFilesCompacted" : 0,
+        "totalLogSizeCompacted" : 0,
+        "totalUpdatedRecordsCompacted" : 0,
+        "totalLogBlocks" : 0,
+        "totalCorruptLogBlock" : 0,
+        "totalRollbackBlocks" : 0,
+        "fileSizeInBytes" : 434222,
+        "minEventTime" : null,
+        "maxEventTime" : null
+      } ],
+      "4" : [ {
+        "fileId" : "c6387730-ec0e-4d14-89c0-ab1a8a77b8a0",
+        "path" : "4/c6387730-ec0e-4d14-89c0-ab1a8a77b8a0_0-4-0_20211030185417.parquet",
+        "prevCommit" : "null",
+        "numWrites" : 1,
+        "numDeletes" : 0,
+        "numUpdateWrites" : 0,
+        "numInserts" : 1,
+        "totalWriteBytes" : 434218,
+        "totalWriteErrors" : 0,
+        "tempPath" : null,
+        "partitionPath" : "4",
+        "totalLogRecords" : 0,
+        "totalLogFilesCompacted" : 0,
+        "totalLogSizeCompacted" : 0,
+        "totalUpdatedRecordsCompacted" : 0,
+        "totalLogBlocks" : 0,
+        "totalCorruptLogBlock" : 0,
+        "totalRollbackBlocks" : 0,
+        "fileSizeInBytes" : 434218,
+        "minEventTime" : null,
+        "maxEventTime" : null
+      } ],
+      "5" : [ {
+        "fileId" : "c09376d8-2b70-4058-9fbe-51ab67d304a9",
+        "path" : "5/c09376d8-2b70-4058-9fbe-51ab67d304a9_2-4-0_20211030185417.parquet",
+        "prevCommit" : "null",
+        "numWrites" : 1,
+        "numDeletes" : 0,
+        "numUpdateWrites" : 0,
+        "numInserts" : 1,
+        "totalWriteBytes" : 434220,
+        "totalWriteErrors" : 0,
+        "tempPath" : null,
+        "partitionPath" : "5",
+        "totalLogRecords" : 0,
+        "totalLogFilesCompacted" : 0,
+        "totalLogSizeCompacted" : 0,
+        "totalUpdatedRecordsCompacted" : 0,
+        "totalLogBlocks" : 0,
+        "totalCorruptLogBlock" : 0,
+        "totalRollbackBlocks" : 0,
+        "fileSizeInBytes" : 434220,
+        "minEventTime" : null,
+        "maxEventTime" : null
+      } ]
+    },
+    "compacted" : false,
+    // 元数据 avro
+    "extraMetadata" : {
+      "schema" : "{\"type\":\"record\",\"name\":\"record\",\"fields\":[{\"name\":\"id\",\"type\":[\"null\",\"int\"],\"default\":null},{\"name\":\"name\",\"type\":[\"null\",\"string\"],\"default\":null}]}"
+    },
+    "operationType" : null,
+    "totalUpsertTime" : 0,
+    "totalScanTime" : 0,
+    "totalCompactedRecordsUpdated" : 0,
+    "totalLogFilesCompacted" : 0,
+    "totalLogFilesSize" : 0,
+    "minAndMaxEventTime" : {
+      "Optional.empty" : {
+        "val" : null,
+        "present" : false
+      }
+    },
+    "fileIdAndRelativePaths" : {
+      "c6387730-ec0e-4d14-89c0-ab1a8a77b8a0" : "4/c6387730-ec0e-4d14-89c0-ab1a8a77b8a0_0-4-0_20211030185417.parquet",
+      "be3c777e-7ac8-4c35-bde5-0e2fa6f17914" : "1/be3c777e-7ac8-4c35-bde5-0e2fa6f17914_1-4-0_20211030185417.parquet",
+      "c09376d8-2b70-4058-9fbe-51ab67d304a9" : "5/c09376d8-2b70-4058-9fbe-51ab67d304a9_2-4-0_20211030185417.parquet",
+      "5abfd9c0-b584-4ca3-8aca-794b8c52b776" : "2/5abfd9c0-b584-4ca3-8aca-794b8c52b776_0-4-0_20211030185417.parquet",
+      "0188cd13-c596-46cb-b59a-e08ff90b4b3d" : "3/0188cd13-c596-46cb-b59a-e08ff90b4b3d_1-4-0_20211030185417.parquet"
+    },
+    "totalRecordsDeleted" : 0,
+    "totalLogRecordsCompacted" : 0,
+    "writePartitionPaths" : [ "1", "2", "3", "4", "5" ],
+    "totalCreateTime" : 3598
+  }
+  ```
 
 ![](./img/hudi_timeline.png)
 
