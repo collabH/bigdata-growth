@@ -152,3 +152,21 @@ hoodie.cleaner.policy=KEEP_LATEST_COMMITS
 hoodie.cleaner.commits.retained=2
 ```
 
+## 后台运行清理服务
+
+* Hudi 的清理表服务可以作为单独的进程运行，可以与数据摄取一起运行。
+
+```shell
+spark-submit --class org.apache.hudi.utilities.HoodieCleaner \
+  --props s3:///temp/hudi-ingestion-config/config.properties \
+  --target-base-path s3:///temp/hudi \
+  --spark-master yarn-cluster
+```
+
+* config.properties
+
+```properties
+hoodie.clean.automatic=true
+hoodie.clean.async=true
+```
+
