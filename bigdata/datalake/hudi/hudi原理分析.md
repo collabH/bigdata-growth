@@ -155,3 +155,83 @@ hoodie.logfile.data.block.max.size  默认值：256 * 1024 * 1024（256兆） �
 
 ![](./img/MOR表合并.jpg)
 
+## 索引更新
+
+![](./img/索引更新.jpg)
+
+* 数据写入到log文件或者是parquet 文件，这个时候需要更新索引。简易索引和布隆索引对于他们来说索引在parquet文件中是不需要去更新索引的。这里索引更新只有HBase索引和内存索引需要更新。内存索引是更新通过map 算子写入到内存map上，HBase索引通过map算子put到HBase上。
+
+## 完成提交
+
+### 提交&元数据归档
+
+* 上述操作如果都成功且写入时writeStatus中没有任何错误记录，Hudi 会进行完成事务的提交和元数据归档操作，步骤如下
+
+1. sparkRddWriteClient 调用commit 方法，首先会向Hdfs 上提交一个.commit 后缀的文件，里面记录的是writeStatus的信息包括写入多少条数据、fileID快照的信息、Schema结构等等。当commit 文件写入成功就意味着一次upsert 已经成功，Hudi 内的数据就可以查询到。
+2. 为了不让元数据一直增长下去需要对元数据做归档操作。元数据归档会先创建HoodieTimelineArchiveLog对象，通过HoodieTableMetaClient 获取.hoodie目录下所有的元数据信息，根据这些元数据信息来判断是否达到归档条件。如果达到条件构造HooieLogFormatWrite对象对archived文件进行追加。每个元数据文件会封装成 HoodieLogBlock 对象批量写入。**归档参数**
+
+```
+hoodie.keep.max.commits   默认30：最多保留多少个commit元数据，默认会在第31个commit的时候会触发一次元数据归档操作，由这个参数来控制元数据归档时机。
+hoodie.keep.min.commits   默认20： 最少保留多少个commit元数据，默认会将当前所有的commimt提交的个数减去20，剩下的11个元数据被归档，这个参数间接控制每次回收元数据个数。
+hoodie.commits.archival.batch  默认10 ：每多少个元数据写入一次到archived文件里，这里就是一个刷盘的间隔。
+```
+
+![](./img/元数据归档.jpg)
+
+### 数据清理
+
+* 元数据清理后parquet文件也需要清理，在Hudi中有专门的spark任务去清理文件。因为是通过spark 任务去清理文件也有对应XXX.clean.request、xxx.clean.infight、xxx.clean元数据来标识任务的每个任务阶段。数据清理步骤如下：
+  * 构造baseCleanPanActionExecutor 执行器，并调用requestClean方法获取元数据生成清理计划对象HoodieCleanPlan。判断HoodieCleanPlan对象满足触发条件会向元数据写入xxx.request 标识，表示可以开始清理计划。
+  * 生成执行计划后调用baseCleanPanActionExecutor 的继承类clean方法完成执行spark任务前的准备操作，然后向hdfs 写入xxx.clean.inflight对象准备执行spark任务。
+  * spark 任务获取HoodieCleanPlan中所有分区序列化成为Rdd并调用flatMap迭代每个分区的文件。然后在mapPartitions算子中调用deleteFilesFunc方法删除每一个分区的过期的文件。最后reduceBykey汇总删除文件的结果构造成HoodieCleanStat对象，将结果元数据写入xxx.clean中完成数据清理。
+
+```
+hoodie.clean.automatic  默认true :是否开启自动数据清理，如果关闭upsert 不会执行清理任务。
+hoodie.clean.async   默认false: 是否异步清理文件。开启异步清理文件的原理是开启一个后台线程，在client执行upsert时就会被调用。
+hoodie.cleaner.policy  默认 HoodieCleaningPolicy.KEEP_LATEST_COMMITS ：数据清理策略参数，清理策略参数有两个配置KEEP_LATEST_FILE_VERSIONS和KEEP_LATEST_COMMITS。
+hoodie.cleaner.commits.retained 默认10 ：在KEEP_LATEST_COMMITS策略中配置生效，根据commit提交次数计算保留多少个fileID版本文件。因为是根据commit提交次数来计算，参数不能大于hoodie.keep.min.commits（最少保留多少次commmit元数据）。
+hoodie.cleaner.fileversions.retained  默认3 :在KEEP_LATEST_FILE_VERSIONS策略中配置生效,根据文件版本数计算保留多少个fileId版本文件。 
+```
+
+![](./img/数据清理.jpg)
+
+### 数据压缩
+
+* 数据压缩是mor模式才会有的操作，目的是让log文件合并到新的field快照文件中。因为数据压缩也是spark 任务完成的，所以在运行时也对应的`xxx.compaction.requet`、`xxx.compaction.clean`、`xxx.compaction`元数据生成记录每个阶段。数据压缩实现步骤如下：
+  * sparkRDDwirteClient 调用compaction方法构造BaseScheduleCompationActionExecutor对象并调用scheduleCompaction方法，计算是否满足数据压缩条件生成HoodieCompactionPlan执行计划元数据。如果满足条件会向hdfs 写入xxx.compation.request元数据标识请求提交spark任务。
+  * BaseScheduleCompationActionExecutor会调用继承类SparkRunCompactionExecutor类并调用compact方法构造HoodieSparkMergeOnReadTableCompactor 对象来实现压缩逻辑，完成一切准备操作后向hdfs写入xxx.compation.inflight标识。
+  * spark任务执行parallelize加载HooideCompactionPlan 的执行计划,然后调用compact迭代执行每个分区中log的合并逻辑。在 compact会构造HoodieMergelogRecordScanner 扫描文件对象，加载分区中的log构造迭代器遍历log中的数据写入ExtemalSpillableMap。这个ExtemalSpillableMap和cow 模式中内存加载磁盘的map 是一样的。至于合并逻辑是和cow模式的合并逻辑是一样的，这里不重复阐述都是调用cow模式的handleUpdate方法。
+  * 完成合并操作会构造writeStatus结果信息，并写入xxx.compaction标识到hdfs中完成合并操作。
+
+```
+hoodie.compact.inline  默认false：是否在一个事务完成后内联执行压缩操作，这里开启并不一定每次都会触发索引操作后面还有策略判断。
+hoodie.compact.inline.trigger.strategy  默认CompactionTriggerStrategy.NUM_COMMITS: 压缩策略参数。该参数有NUM_COMMITS、TIME_ELAPSED、NUM_AND_TIME、NUM_OR_TIME。NUM_COMMITS根据提交次数来判断是否进行压缩;TIME_ELAPSED根据实际来判断是否进行压缩;NUM_AND_TIME 根据提交次数和时间来判断是否进行压缩；NUM_OR_TIME根据提交次数或时间来判断是否进行压缩。
+hoodie.compact.inline.max.delta.commits  默认5 ：设置提交多少次后触发压缩策略。在NUM_COMMITS、NUM_AND_TIME和NUM_OR_TIME策略中生效。
+hoodie.compact.inline.max.delta.seconds  默认60 * 60（1小时）：设置在经过多长时间后触发压缩策略。在TIME_ELAPSED、NUM_AND_TIME和NUM_OR_TIME策略中生效。
+```
+
+![](./img/压缩数据.jpg)
+
+## Hive元数据同步
+
+* 实现原理比较简单就是根据Hive外表和Hudi表当前表结构和分区做比较，是否有新增字段和新增分区如果有会添加字段和分区到Hive外表。如果不同步Hudi新写入的分区无法查询。在COW模式中只会有ro表（读优化视图，而在mor模式中有ro表（读优化视图）和rt表（实时视图）。
+
+## 提交成功通知回调
+
+* 当事务提交成功后向外部系统发送通知消息，通知方式有俩种，一种是发送http服务消息，一种是发送kafka消息。这个通知过程我们可以把清理操作、压缩操作、hive元数据操作都交给外部系统异步处理或者做其他扩展，也可以自己实现`HoodieWriteCommitCallback`
+
+```
+hoodie.write.commit.callback.on   默认false：是否开启提交成功后向外部系统发送回调指令。
+hoodie.write.commit.callback.class   默认org.apache.Hudi.callback.impl.HoodieWriteCommitHttpCallback： 配置回调实现类，默认通过Http的方式发送消息到外部系统
+http实现类配置参数
+hoodie.write.commit.callback.http.url   无默认配置项：外部服务http url地址。
+hoodie.write.commit.callback.http.api.key  默认Hudi_write_commit_http_callback：外部服务http请求头Hudi-CALLBACK-KEY的值，可用于服务请求验签使用。
+hoodie.write.commit.callback.http.timeout.seconds  默认3秒：请求超时时间。
+kafka实现类配置参数
+hoodie.write.commit.callback.kafka.bootstrap.servers      无默认值：配置kafka broker 服务地址。
+hoodie.write.commit.callback.kafka.topic   无默认值：配置kafka topic名称。
+hoodie.write.commit.callback.kafka.partition  无默认值：配置发送到那个kafka broker分区。
+hoodie.write.commit.callback.kafka.acks    默认值all：配置kafka ack。
+hoodie.write.commit.callback.kafka.retries  默认值值3：配置kafka 失败重试次数。
+```
+
