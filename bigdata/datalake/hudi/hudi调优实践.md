@@ -170,3 +170,162 @@ hoodie.clean.automatic=true
 hoodie.clean.async=true
 ```
 
+# Hudi主键和分区配置
+
+* Hudi中每个记录都由HoodieKey唯一标识，HoodieKey由`记录键`和记录所属的`分区路径`组成。hudi也是基于HoodieKey快速删除和更新记录，hudi使用`分区路径`字段对数据集进行分区，并且分区的记录有唯一的`记录键`。
+
+## KeyGenerators
+
+* Hudi提供了一些开箱即用的键生成器，用户可以基于此满足大部分业务需求，或者自定义实现KeyGenerator。
+
+| 配置                                              | 解释                                                         |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `hoodie.datasource.write.recordkey.field`         | 指定record key字段                                           |
+| `hoodie.datasource.write.partitionpath.field`     | 指定分区字段                                                 |
+| `hoodie.datasource.write.keygenerator.class`      | 指定KeyGenerator类全路径名                                   |
+| `hoodie.datasource.write.partitionpath.urlencode` | 当设置为true，partitionPath将会使用url编码，默认值为false    |
+| `hoodie.datasource.write.hive_style_partitioning` | 当设置为true，使用hive风格的分区，分区将为key=value格式，默认值为false |
+
+* 如果使用`TimestampBasedKeyGenerator`，还会有其他额外的配置
+
+### SimpleKeyGenerator
+
+* 指定一个字段为`record key`,分区字段也指定一个字段，从数据解析出来转换为string。
+
+### ComplexKeyGenerator
+
+* 可以指定`一个或多个字段`为record key或者分区字段，多个字段使用逗号分割，如 `hoodie.datasource.write.recordkey.field` :`col1,col4`
+
+### GlobalDeleteKeyGenerator
+
+* 基于全局索引的删除不需要分区值，所以该生成器不需要使用分区值来生成HoodieKey。
+
+### TimestampBasedKeyGenerator
+
+* 该键生成器依赖timestamp分区字段，字段值将会被转化为timestamp，而不是string类型。Record key设置和前面一样，使用该键生成器时需要一些额外的配置项如下
+
+  | 配置                                                      | 说明                                                         |
+  | --------------------------------------------------------- | ------------------------------------------------------------ |
+  | `hoodie.deltastreamer.keygen.timebased.timestamp.type`    | 支持如下Timestamp类型(UNIX_TIMESTAMP, DATE_STRING, MIXED, EPOCHMILLISECONDS, SCALAR) |
+  | `hoodie.deltastreamer.keygen.timebased.output.dateformat` | 输出日期类型                                                 |
+  | `hoodie.deltastreamer.keygen.timebased.timezone`          | 数据格式的时区                                               |
+  | `hoodie.deltastreamer.keygen.timebased.input.dateformat`  | 输入日期类型                                                 |
+
+* #### Timestamp类型为GMT
+
+| 配置                                                      | 值                  |
+| --------------------------------------------------------- | ------------------- |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`    | “EPOCHMILLISECONDS” |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat` | “yyyy-MM-dd hh”     |
+| `hoodie.deltastreamer.keygen.timebased.timezone`          | “GMT+8:00”          |
+
+```
+输入字段值为1578283932000L
+分区字段将为2020-01-06 12
+如果一些行输入字段只为null
+分区字段将为1970-01-01 08
+```
+
+* #### Timestamp类型为DATE_STRING
+
+| Config field                                              | 值                    |
+| --------------------------------------------------------- | --------------------- |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`    | “DATE_STRING”         |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat` | “yyyy-MM-dd hh”       |
+| `hoodie.deltastreamer.keygen.timebased.timezone`          | “GMT+8:00”            |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat`  | “yyyy-MM-dd hh:mm:ss” |
+
+```
+输入字段值为2020-01-06 12:12:12
+分区字段将为2020-01-06 12
+如果一些行输入字段只为null
+分区字段将为1970-01-01 12:00:00
+```
+
+* #### 标量实例
+
+| Config field                                                 | Value           |
+| ------------------------------------------------------------ | --------------- |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`       | “SCALAR”        |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat`    | “yyyy-MM-dd hh” |
+| `hoodie.deltastreamer.keygen.timebased.timezone`             | “GMT”           |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.scalar.time.unit` | “days”          |
+
+```
+输入字段值为20000L
+分区字段将为2024-10-04 12
+如果一些行输入字段只为null
+分区字段将为1970-01-01 12
+```
+
+* #### ISO8601 Z单输入格式
+
+| Config field                                                 | Value                        |
+| ------------------------------------------------------------ | ---------------------------- |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`       | “DATE_STRING”                |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat`     | “yyyy-MM-dd’T’HH:mm:ss.SSSZ” |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat.list.delimiter.regex` | ””                           |
+| `hoodie.deltastreamer.keygen.timebased.input.timezone`       | ””                           |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat`    | “yyyyMMddHH”                 |
+| `hoodie.deltastreamer.keygen.timebased.output.timezone`      | “GMT”                        |
+
+```
+输入字段值为2020-04-01T13:01:33.428Z
+分区字段将为2020040113
+```
+
+* #### ISO8601 Z多输入格式
+
+| Config field                                                 | Value                                               |
+| ------------------------------------------------------------ | --------------------------------------------------- |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`       | “DATE_STRING”                                       |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat`     | “yyyy-MM-dd’T’HH:mm:ssZ,yyyy-MM-dd’T’HH:mm:ss.SSSZ” |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat.list.delimiter.regex` | ””                                                  |
+| `hoodie.deltastreamer.keygen.timebased.input.timezone`       | ””                                                  |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat`    | “yyyyMMddHH”                                        |
+| `hoodie.deltastreamer.keygen.timebased.output.timezone`      | “UTC”                                               |
+
+```
+输入字段值为2020-04-01T13:01:33.428Z
+分区字段将为2020040113
+```
+
+* #### ISO8601多输入格式
+
+| Config field                                                 | Value                                               |
+| ------------------------------------------------------------ | --------------------------------------------------- |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`       | “DATE_STRING”                                       |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat`     | “yyyy-MM-dd’T’HH:mm:ssZ,yyyy-MM-dd’T’HH:mm:ss.SSSZ” |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat.list.delimiter.regex` | ””                                                  |
+| `hoodie.deltastreamer.keygen.timebased.input.timezone`       | ””                                                  |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat`    | “yyyyMMddHH”                                        |
+| `hoodie.deltastreamer.keygen.timebased.output.timezone`      | “UTC”                                               |
+
+```
+输入字段值为2020-04-01T13:01:33-05:00
+分区字段将为2020-04-01T13:01:33-05:00
+```
+
+* #### 日期类型
+
+| Config field                                                 | Value                                                        |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| `hoodie.deltastreamer.keygen.timebased.timestamp.type`       | “DATE_STRING”                                                |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat`     | “yyyy-MM-dd’T’HH:mm:ssZ,yyyy-MM-dd’T’HH:mm:ss.SSSZ,yyyyMMdd” |
+| `hoodie.deltastreamer.keygen.timebased.input.dateformat.list.delimiter.regex` | ””                                                           |
+| `hoodie.deltastreamer.keygen.timebased.input.timezone`       | “UTC”                                                        |
+| `hoodie.deltastreamer.keygen.timebased.output.dateformat`    | “MM/dd/yyyy”                                                 |
+| `hoodie.deltastreamer.keygen.timebased.output.timezone`      | “UTC”                                                        |
+
+```
+输入字段只为220200401
+分区字段将为04/01/2020
+```
+
+### CustomKeyGenerator
+
+* CustomKeyGenerator是一种通用的KeyGenerator，综合了SimpleKeyGenerator、ComplexKeyGenerator和TImestampBasedKeyGenerator的特性，可以配置键和分区路径为单字段或组合字段，如果要定义基于常规字段和基于时间戳的字段的复杂分区路径，此keyGenerator非常有用，配置项`hoodie.datasource.write.partitionpath.field`的值对应格式应为`field1:PartitionKeyType1,field2:PartitionKeyType2…`
+
+### NonPartitionedKeyGenerator
+
+* `NonPartitionedKeyGenerator`不对数据集分区，所有记录返回到一个空分区中。
