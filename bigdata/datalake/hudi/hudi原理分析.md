@@ -235,3 +235,59 @@ hoodie.write.commit.callback.kafka.acks    默认值all：配置kafka ack。
 hoodie.write.commit.callback.kafka.retries  默认值值3：配置kafka 失败重试次数。
 ```
 
+# Clustering架构
+
+* Hudi通过其写入客户端API提供了不同的操作，如insert/upsert/bulk_insert来将数据写入Hudi表。为了能够在文件大小和摄取速度之间进行权衡，Hudi提供了一个`hoodie.parquet.small.file.limit`配置来设置最小文件大小。用户可以将该配置设置为`0`以强制新数据写入新的文件组，或设置为更高的值以确保新数据被"填充"到现有小的文件组中，直到达到指定大小为止，但其会增加摄取延迟。
+
+* 为能够支持快速摄取的同时不影响查询性能，我们引入了Clustering服务来重写数据以优化Hudi数据湖文件的布局。
+
+  Clustering服务可以异步或同步运行，Clustering会添加了一种新的`REPLACE`操作类型，该操作类型将在Hudi元数据时间轴中标记Clustering操作。总体而言Clustering分为两个部分：
+
+  * 调度Clustering：使用可插拔的Clustering策略创建Clustering计划。
+  * 执行Clustering：使用执行策略处理计划以创建新文件并替换旧文件。
+
+## 调度Clustering
+
+**具体执行步骤：**
+
+* 识别符合Clustering条件的文件：根据所选的Clustering策略，调度逻辑将识别符合Clustering条件的文件。
+* 根据特定条件对符合Clustering条件的文件进行分组。每个组的数据大小应为`targetFileSize`的倍数。分组是计划中定义的"策略"的一部分。此外还有一个选项可以限制组大小，以改善并行性并避免混排大量数据。
+* 最后将Clustering计划以avro元数据格式保存到时间线。
+
+## 执行Clustering
+
+* 读取Clustering计划，并获得`clusteringGroups`，其标记了需要进行Clustering的文件组。
+* 对于每个组使用strategyParams实例化适当的策略类（例如：sortColumns），然后应用该策略重写数据。
+* 创建一个`REPLACE`提交，并更新HoodieReplaceCommitMetadata中的元数据。
+
+Clustering服务基于Hudi的`MVCC设计`，允许继续插入新数据，而Clustering操作在后台运行以重新格式化数据布局，从而确保并发读写者之间的快照隔离。
+
+**现在对表进行Clustering时还不支持更新，将来会支持并发更新。**
+
+![](./img/clustering.jpg)
+
+## Clustering配置
+
+```scala
+ Map(  
+   // 在没hudi每次写入完成后触发inline clustering操作
+    HoodieClusteringConfig.INLINE_CLUSTERING.key()-> "true",
+    HoodieClusteringConfig.INLINE_CLUSTERING_MAX_COMMITS.key() -> "4",
+    HoodieClusteringConfig.PLAN_STRATEGY_TARGET_FILE_MAX_BYTES.key() -> String.valueOf(1024 * 1024 * 1024L),
+    HoodieClusteringConfig.PLAN_STRATEGY_SMALL_FILE_LIMIT.key() -> String.valueOf(600 * 1024 * 1024L),
+    HoodieClusteringConfig.PLAN_STRATEGY_SORT_COLUMNS.key() -> "update_time",
+    HoodieClusteringConfig.PLAN_STRATEGY_SKIP_PARTITIONS_FROM_LATEST.key() -> "0",
+    HoodieClusteringConfig.PLAN_STRATEGY_MAX_GROUPS.key() -> "30",
+    HoodieClusteringConfig.ASYNC_CLUSTERING_ENABLE.key() -> "true",
+    HoodieClusteringConfig.ASYNC_CLUSTERING_MAX_COMMITS.key() -> "4")
+```
+
+## 总结
+
+* 使用Clustering，我们可以通过以下方式提高查询性能：
+  * 利用空间填充曲线之类的概念来适应数据湖布局并减少查询读取的数据量。
+  * 将小文件合并成较大的文件以减少查询引擎需要扫描的文件总数。
+* Clustering使得大数据进行流处理，摄取可以写入小文件以满足流处理的延迟要求，可以在后台使用Clustering将这些小文件重写成较大的文件并减少文件数。
+* 除此之外，Clustering框架还提供了根据特定要求异步重写数据的灵活性，我们预见到许多其他用例将采用带有自定义可插拔策略的Clustering框架来按需管理数据湖数据，如可以通过Clustering解决如下一些用例：
+  * 重写数据并加密数据。
+  * 从表中修剪未使用的列并减少存储空间。
