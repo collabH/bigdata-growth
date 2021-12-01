@@ -329,3 +329,17 @@ hoodie.clean.async=true
 ### NonPartitionedKeyGenerator
 
 * `NonPartitionedKeyGenerator`不对数据集分区，所有记录返回到一个空分区中。
+
+# Hudi频繁更新历史数据场景优化
+
+## 频繁的更新历史导致的问题
+
+* 写放大问题
+* 更高的采集数据延迟
+* 影响HDFS（相同文件的48个版本+过多的IO）
+
+## 优化手段
+
+* 采用mor表类型，更新合并并重写parquet文件
+* 将更新写入增量文件中，将需要在读取端做额外的工作以便能够读取增量文件中记录
+* 采用异步Compaction，减少因实时快照读取合并base和delta log文件导致的延迟
