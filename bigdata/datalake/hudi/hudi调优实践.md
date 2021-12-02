@@ -62,6 +62,14 @@ Hudi中的`marker`是一个表示存储中存在对应的数据文件的标签�
   * 还有助于支持记录级增量查询（与仅跟踪文件的其他表格式相比）
   * 另外即使给定表的键字段在其生命周期内发生更改，它也可以通过确保唯一键约束被强制执行来确保数据质量
 
+## 记录级别元数据
+
+- **_hoodie_commit_time** : 最新记录提交时间
+- **_hoodie_commit_seqno** : 在增量拉取中用于在单次摄取中创建多个窗口。
+- **_hoodie_record_key** : Hudi记录主键，用来处理更新和删除
+- **_hoodie_partition_path** : 分区路径
+- **_hoodie_file_name** : 存储记录的文件名
+
 ## 关闭元数据键
 
 * 可以使用以下配置为给定表启用虚拟键。当设置为 `hoodie.populate.meta.fields=false` 时，Hudi 将使用对应表的虚拟键。此配置的默认值为 `true`，意味着默认情况下将添加所有元数据字段。虚拟键有如下`限制`：
@@ -343,3 +351,37 @@ hoodie.clean.async=true
 * 采用mor表类型，更新合并并重写parquet文件
 * 将更新写入增量文件中，将需要在读取端做额外的工作以便能够读取增量文件中记录
 * 采用异步Compaction，减少因实时快照读取合并base和delta log文件导致的延迟
+
+# 历史数据入Hudi
+
+## 使用Bootstrap方式
+
+1. 用户在原始数据集上停止所有写操作。
+
+2. 用户使用DeltaStreamer或者独立工具开始启动引导，用户需要提供如下引导参数
+
+3. - 原始（非Hudi）数据集位置。
+   - 生成Hudi键的列。
+   - 迁移的并发度。
+   - 新的Hudi数据集位置。
+
+4. 引导时Hudi会扫描原始表位置（`/user/hive/warehouse/fact_events`）的分区和文件，进行如下操作 :
+
+5. - 在新数据集位置创建Hudi分区，在上述示例中，将会在`/user/hive/warehouse/fact_events_hudi`路径创建日期分区。
+   - 生成唯一的文件ID并以此为每个原始parquet文件生成Hudi骨架文件，同时会使用一个特殊的commit，称为`BOOTSTRAP_COMMIT`。下面我们假设`BOOTSTRAP_COMMIT`对应的timestamp为`000000000`，例如一个原始parquet文件为`/user/hive/warehouse/fact_events/year=2015/month=12/day=31/file1.parquet`，假设新生成的文件ID为`h1`，所以相应的骨架文件为`/user/hive/warehouse/fact_events_hudi/year=2015/month=12/day=31/h1_1-0-1_000000000.parquet.`。
+   - 生成一个特殊的bootstrap索引，该索引将生成的骨架文件映射到对应的原始parquet文件。
+   - 使用Hudi timeline状态变更进行原子性提交，也支持回滚操作。
+
+6. 如果开启了Hive同步，那么会创建一张Hudi类型的Hive外表，并指向`/user/hive/warehouse/fact_events_hudi`路径。
+
+7. 随后的写操作将作用在Hudi数据集上。
+
+### boostrap索引
+
+* 索引用于映射Hudi骨架文件和原始包含数据的parquet文件。该信息会作为Hudi file-system view并用于生成FileSlice，Bootstrap索引和CompactionPlan类似，但与CompactionPlan不同的是引导索引可能更大，因此需要一种高效读写的文件格式。
+* Hudi的file-system view是物理文件名到FileGroup和FileSlice的抽象，可以支持到分区级别的API，因此Bootstrap索引一定需要提供快速查找单个分区索引信息的能力。
+  * 引导日志：顺序文件，每一个条目包含单个分区内索引信息，对于分区下引导索引的变更只需要在日志文件中顺序添加新的条目即可。
+  * 索引引导日志：包含Hudi分区、文件名和offset的顺序文件，offset表示引导索引日志条目对应Hudi分区的位置。
+
+![](./img/bootstrap迁移.jpg)
+
