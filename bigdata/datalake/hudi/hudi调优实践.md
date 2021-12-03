@@ -338,6 +338,33 @@ hoodie.clean.async=true
 
 * `NonPartitionedKeyGenerator`不对数据集分区，所有记录返回到一个空分区中。
 
+## Hive分区配置
+
+```properties
+# 开启hive元数据同步
+hoodie.datasource.hive_sync.enable=true
+hoodie.datasource.hive_sync.table=tableName
+# 元数据库用户名
+hoodie.datasource.hive_sync.username=username
+hoodie.datasource.hive_sync.password=password
+# hive库
+hoodie.datasource.hive_sync.jdbcurl=jdbc:hive2://localhost:10000
+hoodie.datasource.hive_sync.partition_fields=分区字段
+hoodie.datasource.hive_sync.partition_extractor_class=hive分区提取类
+```
+
+### **`MultiPartKeysValueExtractor`**
+
+* 支持1至多个hive分区字段
+
+### **`SlashEncodedDayPartitionValueExtractor`**
+
+* 日期格式，将yyyy/MM/dd转换为yyyy-MM-dd
+
+### **`NonPartitionedExtractor`**
+
+* 无hive分区
+
 # Hudi频繁更新历史数据场景优化
 
 ## 频繁的更新历史导致的问题
