@@ -328,3 +328,400 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
    .option(HoodieWriteConfig.WRITE_PAYLOAD_CLASS_NAME.key(), "org.apache.hudi.EmptyHoodieRecordPayload")
 ```
 
+# Flink Hudi Connector源码分析
+
+* 源码都基于Flink-hudi 0.9.0版本
+
+## StreamWriteFunction
+
+* 用于将数据写入外部系统，这个函数首先会buffer一批HoodieRecord数据，当一批buffer数据上超过` FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`，或者是Flink开始做ck，则flush。如果一批数据写入成功，则StreamWriteOperatorCoordinator会标识写入成功。
+* 这个operator coordinator会校验和提交最后一个instant，当最后一个instant提交成功时会启动一个新的instant。它会开启一个新的instant之前回滚全部inflight instant，hoodie的instant只会在一个ck中。写函数在它ck超时抛出异常时刷新数据buffer，任何检查点失败最终都会触发作业失败。
+
+### 核心属性
+
+```java
+ /**
+   * Write buffer as buckets for a checkpoint. The key is bucket ID.
+   */
+  private transient Map<String, DataBucket> buckets;
+
+  /**
+   * Config options.
+   */
+  private final Configuration config;
+
+  /**
+   * Id of current subtask.
+   */
+  private int taskID;
+
+  /**
+   * Write Client.
+   */
+  private transient HoodieFlinkWriteClient writeClient;
+
+/**
+* 写入函数
+*/
+  private transient BiFunction<List<HoodieRecord>, String, List<WriteStatus>> writeFunction;
+
+  /**
+   * The REQUESTED instant we write the data.
+   */
+  private volatile String currentInstant;
+
+  /**
+   * Gateway to send operator events to the operator coordinator.
+   */
+  private transient OperatorEventGateway eventGateway;
+
+  /**
+   * Commit action type.
+   */
+  private transient String actionType;
+
+  /**
+   * Total size tracer. 记录大小的tracer
+   */
+  private transient TotalSizeTracer tracer;
+
+  /**
+   * Flag saying whether the write task is waiting for the checkpoint success notification
+   * after it finished a checkpoint.
+   *
+   * <p>The flag is needed because the write task does not block during the waiting time interval,
+   * some data buckets still flush out with old instant time. There are two cases that the flush may produce
+   * corrupted files if the old instant is committed successfully:
+   * 1) the write handle was writing data but interrupted, left a corrupted parquet file;
+   * 2) the write handle finished the write but was not closed, left an empty parquet file.
+   *
+   * <p>To solve, when this flag was set to true, we block the data flushing thus the #processElement method,
+   * the flag was reset to false if the task receives the checkpoint success event or the latest inflight instant
+   * time changed(the last instant committed successfully).
+   */
+  private volatile boolean confirming = false;
+
+  /**
+   * List state of the write metadata events.
+   */
+  private transient ListState<WriteMetadataEvent> writeMetadataState;
+
+  /**
+   * Write status list for the current checkpoint.
+   */
+  private List<WriteStatus> writeStatuses;
+```
+
+### open
+
+```java
+public void open(Configuration parameters) throws IOException {
+    this.tracer = new TotalSizeTracer(this.config);
+    initBuffer();
+    initWriteFunction();
+  }
+  
+  private static class TotalSizeTracer {
+    private long bufferSize = 0L;
+    private final double maxBufferSize;
+
+    TotalSizeTracer(Configuration conf) {
+      long mergeReaderMem = 100; // constant 100MB
+      long mergeMapMaxMem = conf.getInteger(FlinkOptions.WRITE_MERGE_MAX_MEMORY);
+      // 最大的buffer大小
+      this.maxBufferSize = (conf.getDouble(FlinkOptions.WRITE_TASK_MAX_SIZE) - mergeReaderMem - mergeMapMaxMem) * 1024 * 1024;
+      final String errMsg = String.format("'%s' should be at least greater than '%s' plus merge reader memory(constant 100MB now)",
+          FlinkOptions.WRITE_TASK_MAX_SIZE.key(), FlinkOptions.WRITE_MERGE_MAX_MEMORY.key());
+      ValidationUtils.checkState(this.maxBufferSize > 0, errMsg);
+    }
+
+    /**
+     * Trace the given record size {@code recordSize}.
+     *
+     * @param recordSize The record size
+     * @return true if the buffer size exceeds the maximum buffer size
+     */
+    boolean trace(long recordSize) {
+      // 判断是否大于maxBufferSize
+      this.bufferSize += recordSize;
+      return this.bufferSize > this.maxBufferSize;
+    }
+
+    void countDown(long size) {
+      this.bufferSize -= size;
+    }
+
+    public void reset() {
+      this.bufferSize = 0;
+    }
+  }
+
+// 初始化bucket
+  private void initBuffer() {
+    this.buckets = new LinkedHashMap<>();
+  }
+
+// 初始writeFunction
+ private void initWriteFunction() {
+    final String writeOperation = this.config.get(FlinkOptions.OPERATION);
+    switch (WriteOperationType.fromValue(writeOperation)) {
+      case INSERT:
+        this.writeFunction = (records, instantTime) -> this.writeClient.insert(records, instantTime);
+        break;
+      case UPSERT:
+        this.writeFunction = (records, instantTime) -> this.writeClient.upsert(records, instantTime);
+        break;
+      case INSERT_OVERWRITE:
+        this.writeFunction = (records, instantTime) -> this.writeClient.insertOverwrite(records, instantTime);
+        break;
+      case INSERT_OVERWRITE_TABLE:
+        this.writeFunction = (records, instantTime) -> this.writeClient.insertOverwriteTable(records, instantTime);
+        break;
+      default:
+        throw new RuntimeException("Unsupported write operation : " + writeOperation);
+    }
+  }
+```
+
+### 初始化状态
+
+* 创建hudi写入客户端，获取actionType，然后根据是否savepoint确定是否重新提交inflight阶段的instant
+
+```java
+  public void initializeState(FunctionInitializationContext context) throws Exception {
+    this.taskID = getRuntimeContext().getIndexOfThisSubtask();
+    // 创建hudi写入客户端
+    this.writeClient = StreamerUtil.createWriteClient(this.config, getRuntimeContext());
+    // 读取with配置
+    this.actionType = CommitUtils.getCommitActionType(
+        WriteOperationType.fromValue(config.getString(FlinkOptions.OPERATION)),
+        HoodieTableType.valueOf(config.getString(FlinkOptions.TABLE_TYPE)));
+
+    this.writeStatuses = new ArrayList<>();
+    // 写入元数据状态
+    this.writeMetadataState = context.getOperatorStateStore().getListState(
+        new ListStateDescriptor<>(
+            "write-metadata-state",
+            TypeInformation.of(WriteMetadataEvent.class)
+        ));
+
+    this.currentInstant = this.writeClient.getLastPendingInstant(this.actionType);
+    if (context.isRestored()) {
+      restoreWriteMetadata();
+    } else {
+      sendBootstrapEvent();
+    }
+    // blocks flushing until the coordinator starts a new instant
+    this.confirming = true;
+  }
+
+
+//WriteMetadataEvent
+public class WriteMetadataEvent implements OperatorEvent {
+  private static final long serialVersionUID = 1L;
+
+  public static final String BOOTSTRAP_INSTANT = "";
+
+  private List<WriteStatus> writeStatuses;
+  private int taskID;
+  // instant时间
+  private String instantTime;
+  // 是否最后一个批次
+  private boolean lastBatch;
+
+  /**
+   * Flag saying whether the event comes from the end of input, e.g. the source
+   * is bounded, there are two cases in which this flag should be set to true:
+   * 1. batch execution mode
+   * 2. bounded stream source such as VALUES
+   */
+  private boolean endInput;
+
+  /**
+   * Flag saying whether the event comes from bootstrap of a write function.
+   */
+  private boolean bootstrap;
+}
+
+// 恢复写入元数据
+private void restoreWriteMetadata() throws Exception {
+    String lastInflight = this.writeClient.getLastPendingInstant(this.actionType);
+    boolean eventSent = false;
+    for (WriteMetadataEvent event : this.writeMetadataState.get()) {
+      if (Objects.equals(lastInflight, event.getInstantTime())) {
+        // The checkpoint succeed but the meta does not commit,
+        // re-commit the inflight instant
+        // 重新提交inflight的instant
+        this.eventGateway.sendEventToCoordinator(event);
+        LOG.info("Send uncommitted write metadata event to coordinator, task[{}].", taskID);
+        eventSent = true;
+      }
+    }
+    if (!eventSent) {
+      sendBootstrapEvent();
+    }
+  }
+
+  private void sendBootstrapEvent() {
+    // 发送空的event
+    this.eventGateway.sendEventToCoordinator(WriteMetadataEvent.emptyBootstrap(taskID));
+    LOG.info("Send bootstrap write metadata event to coordinator, task[{}].", taskID);
+  }
+```
+
+### snapshotState
+
+```java
+  public void snapshotState(FunctionSnapshotContext functionSnapshotContext) throws Exception {
+  //基于协调器首先启动检查点的事实，
+  //它将检查有效性。
+  //等待缓冲区数据刷新，并请求一个新的即时
+    flushRemaining(false);
+    // 重新加载writeMeta状态
+    reloadWriteMetaState();
+  }
+// endInput标识是否无界流
+private void flushRemaining(boolean endInput) {
+  	// hasData==(this.buckets.size() > 0 && this.buckets.values().stream().anyMatch(bucket -> bucket.records.size() > 0);)
+  // 获取当前instant
+    this.currentInstant = instantToWrite(hasData());
+    if (this.currentInstant == null) {
+      // in case there are empty checkpoints that has no input data
+      throw new HoodieException("No inflight instant when flushing data!");
+    }
+    final List<WriteStatus> writeStatus;
+    if (buckets.size() > 0) {
+      writeStatus = new ArrayList<>();
+      this.buckets.values()
+          // The records are partitioned by the bucket ID and each batch sent to
+          // the writer belongs to one bucket.
+          .forEach(bucket -> {
+            List<HoodieRecord> records = bucket.writeBuffer();
+            if (records.size() > 0) {
+              if (config.getBoolean(FlinkOptions.INSERT_DROP_DUPS)) {
+                // 去重
+                records = FlinkWriteHelper.newInstance().deduplicateRecords(records, (HoodieIndex) null, -1);
+              }
+              // 预写 在刷新之前设置:用正确的分区路径和fileID修补第一个记录。
+              bucket.preWrite(records);
+              // 写入数据
+              writeStatus.addAll(writeFunction.apply(records, currentInstant));
+              records.clear();
+              bucket.reset();
+            }
+          });
+    } else {
+      LOG.info("No data to write in subtask [{}] for instant [{}]", taskID, currentInstant);
+      writeStatus = Collections.emptyList();
+    }
+  // 构造WriteMetadataEvent
+    final WriteMetadataEvent event = WriteMetadataEvent.builder()
+        .taskID(taskID)
+        .instantTime(currentInstant)
+        .writeStatus(writeStatus)
+        .lastBatch(true)
+        .endInput(endInput)
+        .build();
+	// 发送event
+    this.eventGateway.sendEventToCoordinator(event);
+    this.buckets.clear();
+    this.tracer.reset();
+    this.writeClient.cleanHandles();
+  // 写入状态放入状态
+    this.writeStatuses.addAll(writeStatus);
+    // blocks flushing until the coordinator starts a new instant
+    this.confirming = true;
+  }
+
+ /**
+   * Reload the write metadata state as the current checkpoint.
+   */
+  private void reloadWriteMetaState() throws Exception {
+    // 清理writeMetadataState
+    this.writeMetadataState.clear();
+    WriteMetadataEvent event = WriteMetadataEvent.builder()
+        .taskID(taskID)
+        .instantTime(currentInstant)
+        .writeStatus(new ArrayList<>(writeStatuses))
+        .bootstrap(true)
+        .build();
+    this.writeMetadataState.add(event);
+    writeStatuses.clear();
+  }
+```
+
+### 数据buffer逻辑
+
+```java
+private void bufferRecord(HoodieRecord<?> value) {
+  // 根据record获取bucketId {partition path}_{fileID}.
+    final String bucketID = getBucketID(value);
+		// 获取对应bucket
+    DataBucket bucket = this.buckets.computeIfAbsent(bucketID,
+        k -> new DataBucket(this.config.getDouble(FlinkOptions.WRITE_BATCH_SIZE), value));
+  // 包装hoodie记录
+    final DataItem item = DataItem.fromHoodieRecord(value);
+		// 判断是否需要刷新bucket，是否超过WRITE_BATCH_SIZE大小
+    boolean flushBucket = bucket.detector.detect(item);
+   // 判断是否需要刷新buffer，是否超过maxBufferSize，总buffer大小
+    boolean flushBuffer = this.tracer.trace(bucket.detector.lastRecordSize);
+    if (flushBucket) {
+      if (flushBucket(bucket)) {
+        // 清理总buffer大小
+        this.tracer.countDown(bucket.detector.totalSize);
+        // 重置bucket大小
+        bucket.reset();
+      }
+    } else if (flushBuffer) {
+      // find the max size bucket and flush it out，找到最大的bucket然后flush
+      List<DataBucket> sortedBuckets = this.buckets.values().stream()
+          .sorted((b1, b2) -> Long.compare(b2.detector.totalSize, b1.detector.totalSize))
+          .collect(Collectors.toList());
+      final DataBucket bucketToFlush = sortedBuckets.get(0);
+      if (flushBucket(bucketToFlush)) {
+        this.tracer.countDown(bucketToFlush.detector.totalSize);
+        bucketToFlush.reset();
+      } else {
+        LOG.warn("The buffer size hits the threshold {}, but still flush the max size data bucket failed!", this.tracer.maxBufferSize);
+      }
+    }
+  // 一批buffer数据上不超过` FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`
+    bucket.records.add(item);
+  }
+
+// 刷新bucket
+private boolean flushBucket(DataBucket bucket) {
+    String instant = instantToWrite(true);
+
+    if (instant == null) {
+      // in case there are empty checkpoints that has no input data
+      LOG.info("No inflight instant when flushing data, skip.");
+      return false;
+    }
+
+    List<HoodieRecord> records = bucket.writeBuffer();
+    ValidationUtils.checkState(records.size() > 0, "Data bucket to flush has no buffering records");
+    if (config.getBoolean(FlinkOptions.INSERT_DROP_DUPS)) {
+      // 去重hoodieRecord
+      records = FlinkWriteHelper.newInstance().deduplicateRecords(records, (HoodieIndex) null, -1);
+    }
+  	// 预写 在刷新之前设置:用正确的分区路径和fileID修补第一个记录。
+    bucket.preWrite(records);
+    // 写入记录
+    final List<WriteStatus> writeStatus = new ArrayList<>(writeFunction.apply(records, instant));
+    records.clear();
+   // 发送数据
+    final WriteMetadataEvent event = WriteMetadataEvent.builder()
+        .taskID(taskID)
+        .instantTime(instant) // the write instant may shift but the event still use the currentInstant.
+        .writeStatus(writeStatus)
+        .lastBatch(false)
+        .endInput(false)
+        .build();
+
+    this.eventGateway.sendEventToCoordinator(event);
+    writeStatuses.addAll(writeStatus);
+    return true;
+  }
+```
+
