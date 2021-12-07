@@ -725,3 +725,184 @@ private boolean flushBucket(DataBucket bucket) {
   }
 ```
 
+## BootstrapFunction
+
+* 从外部的hudi表加载索引，当第一个元素进入时，函数的每个子任务都会触发index bootstarp，
+  直到所有索引记录都被发送后，记录才会被发送。
+* 然后输出记录应该按recordKey移动，从而进行可伸缩的写入。
+* index boostrap相关核心参数配置可以通过flink提供的Configuration类配置，比如加载的hoodie表path等
+
+### 核心属性
+
+```java
+ // 外部hudi表
+ private HoodieTable<?, ?, ?, ?> hoodieTable;
+	// flink配置
+  private final Configuration conf;
+	// hadoop配置
+  private transient org.apache.hadoop.conf.Configuration hadoopConf;
+// hudi写入配置
+  private transient HoodieWriteConfig writeConfig;
+	// 全局聚合管理器
+  private GlobalAggregateManager aggregateManager;
+ // 加载的分区规则
+  private final Pattern pattern;
+// 是否已经Bootstrap index
+  private boolean alreadyBootstrap;
+
+  public BootstrapFunction(Configuration conf) {
+    this.conf = conf;
+    this.pattern = Pattern.compile(conf.getString(FlinkOptions.INDEX_PARTITION_REGEX));
+  }
+
+```
+
+### open
+
+* 获取hadoop配置、获取hudi写入配置，获取外部hudiTbale。
+
+```java
+  public void open(Configuration parameters) throws Exception {
+    super.open(parameters);
+    this.hadoopConf = StreamerUtil.getHadoopConf();
+    this.writeConfig = StreamerUtil.getHoodieClientConfig(this.conf);
+    this.hoodieTable = getTable();
+    this.aggregateManager = ((StreamingRuntimeContext) getRuntimeContext()).getGlobalAggregateManager();
+  }
+
+private HoodieFlinkTable getTable() {
+    HoodieFlinkEngineContext context = new HoodieFlinkEngineContext(
+        new SerializableConfiguration(this.hadoopConf),
+        new FlinkTaskContextSupplier(getRuntimeContext()));
+  // 根据配置创建对应的HoodieFlinkTable
+    return HoodieFlinkTable.create(this.writeConfig, context);
+  }
+```
+
+### processElement
+
+* 获取外部hudi表的path，
+
+```java
+ public void processElement(I value, Context ctx, Collector<O> out) throws Exception {
+    if (!alreadyBootstrap) {
+      String basePath = hoodieTable.getMetaClient().getBasePath();
+      int taskID = getRuntimeContext().getIndexOfThisSubtask();
+      LOG.info("Start loading records in table {} into the index state, taskId = {}", basePath, taskID);
+      // 遍历分区文件全部分区文件目录
+      for (String partitionPath : FSUtils.getAllFoldersWithPartitionMetaFile(FSUtils.getFs(basePath, hadoopConf), basePath)) {
+        // 如果符合index加载规则则加载记录
+        if (pattern.matcher(partitionPath).matches()) {
+         	// 加载baseFile和avro log文件并构造为indexRecord下发到下游
+          loadRecords(partitionPath, out);
+        }
+      }
+
+      // wait for others bootstrap task send bootstrap complete.
+      waitForBootstrapReady(taskID);
+
+      alreadyBootstrap = true;
+      LOG.info("Finish sending index records, taskId = {}.", getRuntimeContext().getIndexOfThisSubtask());
+    }
+
+    // send the trigger record
+    out.collect((O) value);
+  }
+
+// 获取全部的分区元数据文件目录
+ public static List<String> getAllFoldersWithPartitionMetaFile(FileSystem fs, String basePathStr) throws IOException {
+    // If the basePathStr is a folder within the .hoodie directory then we are listing partitions within an
+    // internal table.
+   // 判断基础base下是否存在.hoodie/metadata
+    final boolean isMetadataTable = HoodieTableMetadata.isMetadataTable(basePathStr);
+    final Path basePath = new Path(basePathStr);
+    final List<String> partitions = new ArrayList<>();
+    processFiles(fs, basePathStr, (locatedFileStatus) -> {
+      Path filePath = locatedFileStatus.getPath();
+      if (filePath.getName().equals(HoodiePartitionMetadata.HOODIE_PARTITION_METAFILE)) {
+        partitions.add(getRelativePartitionPath(basePath, filePath.getParent()));
+      }
+      return true;
+    }, !isMetadataTable);
+    return partitions;
+  }
+```
+
+## BulkInsertFunction
+
+* 将数据写入配置的文件系统中，将会使用WriteOperationType#BULK_INSERT类型，需要输入数据按照分区路径shuffle。
+
+### 核心属性
+
+```java
+/**
+   * Helper class for bulk insert mode.
+   */
+  private transient BulkInsertWriterHelper writerHelper;
+
+  /**
+   * Config options. flink配置类，支持一些hudi bulk insert配置（未在FlinkOptions下）
+   */
+  private final Configuration config;
+
+  /**
+   * Table row type. 表的类型，Row或RowData格式
+   */
+  private final RowType rowType;
+
+  /**
+   * Id of current subtask.
+   */
+  private int taskID;
+
+  /**
+   * Write Client.
+   */
+  private transient HoodieFlinkWriteClient writeClient;
+
+  /**
+   * The initial inflight instant when start up.
+   */
+  private volatile String initInstant;
+
+  /**
+   * Gateway to send operator events to the operator coordinator.
+   */
+  private transient OperatorEventGateway eventGateway;
+
+  /**
+   * Commit action type.
+   */
+  private transient String actionType;
+
+  /**
+   * Constructs a StreamingSinkFunction.
+   *
+   * @param config The config options
+   */
+  public BulkInsertWriteFunction(Configuration config, RowType rowType) {
+    this.config = config;
+    this.rowType = rowType;
+  }
+```
+
+### open
+
+* 初始化写入客户端、actionType、初始化instant，发送启动event，初始化写入helper类
+
+```java
+public void open(Configuration parameters) throws IOException {
+    this.taskID = getRuntimeContext().getIndexOfThisSubtask();
+    this.writeClient = StreamerUtil.createWriteClient(this.config, getRuntimeContext());
+    this.actionType = CommitUtils.getCommitActionType(
+        WriteOperationType.fromValue(config.getString(FlinkOptions.OPERATION)),
+        HoodieTableType.valueOf(config.getString(FlinkOptions.TABLE_TYPE)));
+
+    this.initInstant = this.writeClient.getLastPendingInstant(this.actionType);
+    sendBootstrapEvent();
+    initWriterHelper();
+  }
+```
+
+
+
