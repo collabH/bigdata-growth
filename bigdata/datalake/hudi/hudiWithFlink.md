@@ -904,5 +904,51 @@ public void open(Configuration parameters) throws IOException {
   }
 ```
 
+### processElement
 
+* RowData格式数据通过HoodieWriterHelper写入hudi
+
+```java
+ public void write(RowData record) throws IOException {
+    try {
+      String recordKey = keyGen.getRecordKey(record);
+      String partitionPath = keyGen.getPartitionPath(record);
+			// 更新lastKnownPartitionPath并且创建新的HoodieRowDataCreateHandle
+      if ((lastKnownPartitionPath == null) || !lastKnownPartitionPath.equals(partitionPath) || !handle.canWrite()) {
+        LOG.info("Creating new file for partition path " + partitionPath);
+        handle = getRowCreateHandle(partitionPath);
+        lastKnownPartitionPath = partitionPath;
+      }
+      // 写入record
+      handle.write(recordKey, partitionPath, record);
+    } catch (Throwable t) {
+      LOG.error("Global error thrown while trying to write records in HoodieRowCreateHandle ", t);
+      throw t;
+    }
+  }
+
+// HoodieRowDataCreateHandle#write
+ public void write(String recordKey, String partitionPath, RowData record) throws IOException {
+    try {
+      String seqId = HoodieRecord.generateSequenceId(instantTime, taskPartitionId, SEQGEN.getAndIncrement());
+      // 创建hoodie自带的meta column+record row，根据"hoodie.allow.operation.metadata.field"确定是否存储记录的操作符
+      HoodieRowData rowData = new HoodieRowData(instantTime, seqId, recordKey, partitionPath, path.getName(),
+          record, writeConfig.allowOperationMetadataField());
+      try {
+        // 写数据
+        fileWriter.writeRow(recordKey, rowData);
+        writeStatus.markSuccess(recordKey);
+      } catch (Throwable t) {
+        writeStatus.markFailure(recordKey, t);
+      }
+    } catch (Throwable ge) {
+      writeStatus.setGlobalError(ge);
+      throw ge;
+    }
+  }
+```
+
+### use case
+
+* 通过Flink SQL将数据按照Bulk Insert的方式将数据落湖。
 
