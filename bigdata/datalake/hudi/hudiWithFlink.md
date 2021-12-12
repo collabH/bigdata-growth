@@ -328,6 +328,14 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
    .option(HoodieWriteConfig.WRITE_PAYLOAD_CLASS_NAME.key(), "org.apache.hudi.EmptyHoodieRecordPayload")
 ```
 
+# Flink SQL使用实践
+
+![](./img/FlinkWithHudi.jpg)
+
+## precombine
+
+* hudi的precombine指定一个字段如果recordKey和basePartitionPath一致会基于改键进行compore取最大，可以实现Top One的效果，这样就可以不用基于flink提供的row number函数求top one。
+
 # Flink Hudi Connector源码分析
 
 * 源码都基于Flink-hudi 0.9.0版本
