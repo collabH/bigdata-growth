@@ -836,7 +836,7 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-## BulkInsertFunction
+## BulkInsertWriteFunction
 
 * 将数据写入配置的文件系统中，将会使用WriteOperationType#BULK_INSERT类型，需要输入数据按照分区路径shuffle。
 
@@ -1037,5 +1037,98 @@ public void open(Configuration parameters) throws IOException {
         });
     }
 
+```
+
+## CompactFunction
+
+* 函数来执行由compaction plan任务分配的实际compaction任务，为了执行可伸缩的，输入应该被压缩事件{@link CompactionPlanEvent}打乱。
+
+```java
+# 传入CompactionPlanEvent，返回CompactionCommitEvent
+public class CompactFunction extends ProcessFunction<CompactionPlanEvent, CompactionCommitEvent>
+  
+# CompactionPlanEvent
+// 压缩instant时间 
+private String compactionInstantTime;
+
+private CompactionOperation operation;  
+## CompactionOperation
+// base文件instant时间
+private String baseInstantTime;
+// 基础文件提交时间
+private Option<String> dataFileCommitTime;
+// delta文件名称
+private List<String> deltaFileNames;
+// data文件名称
+private Option<String> dataFileName;
+// 文件组id
+private HoodieFileGroupId id;
+private Map<String, Double> metrics;
+// 引导文件路径
+private Option<String> bootstrapFilePath;
+
+# CompactionCommitEvent
+  
+/**
+ * The compaction commit instant time.
+ */
+private String instant;
+/**
+   * The write statuses.
+   */
+private List<WriteStatus> writeStatuses;
+/**
+   * The compaction task identifier.
+   */
+private int taskID;  
+```
+
+### 核心属性
+
+```java
+// compact相关配置
+private final Configuration conf;
+// hoodieflink客户端
+private transient HoodieFlinkWriteClient writeClient;
+// 是否异步compact
+private final boolean asyncCompaction;
+// 当先subtaks id
+private int taskID;
+// 不抛异常线程池,异步compact时使用
+private transient NonThrownExecutor executor;
+```
+
+### processElement
+
+* 处理CompactionPlanEvent执行compact
+
+```java
+ final String instantTime = event.getCompactionInstantTime();
+    final CompactionOperation compactionOperation = event.getOperation();
+    if (asyncCompaction) {
+      // executes the compaction task asynchronously to not block the checkpoint barrier propagate.
+      // 异步
+      executor.execute(
+          () -> doCompaction(instantTime, compactionOperation, collector),
+          "Execute compaction for instant %s from task %d", instantTime, taskID);
+    } else {
+      // 同步
+      // executes the compaction task synchronously for batch mode.
+      LOG.info("Execute compaction for instant {} from task {}", instantTime, taskID);
+      doCompaction(instantTime, compactionOperation, collector);
+    }
+
+// doCompaction
+ private void doCompaction(String instantTime, CompactionOperation compactionOperation, Collector<CompactionCommitEvent> collector) throws IOException {
+    List<WriteStatus> writeStatuses = FlinkCompactHelpers.compact(writeClient, instantTime, compactionOperation);
+    collector.collect(new CompactionCommitEvent(instantTime, writeStatuses, taskID));
+  }
+```
+
+### FlinkCompactHelpers
+
+* 核心flink compact类
+
+```
 ```
 
