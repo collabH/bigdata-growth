@@ -836,11 +836,13 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-## BulkInsertWriteFunction
+## BulkInsert
+
+### BulkInsertWriteFunction
 
 * 将数据写入配置的文件系统中，将会使用WriteOperationType#BULK_INSERT类型，需要输入数据按照分区路径shuffle。
 
-### 核心属性
+#### 核心属性
 
 ```java
 /**
@@ -894,7 +896,7 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-### open
+#### open
 
 * 初始化写入客户端、actionType、初始化instant，发送启动event，初始化写入helper类
 
@@ -912,7 +914,7 @@ public void open(Configuration parameters) throws IOException {
   }
 ```
 
-### processElement
+#### processElement
 
 * RowData格式数据通过HoodieWriterHelper写入hudi
 
@@ -1039,7 +1041,157 @@ public void open(Configuration parameters) throws IOException {
 
 ```
 
-## CompactFunction
+### bulk insert引用
+
+```java
+      if (WriteOperationType.fromValue(writeOperation) == WriteOperationType.BULK_INSERT) {
+        return context.isBounded() ? Pipelines.bulkInsert(conf, rowType, dataStream) : Pipelines.append(conf, rowType, dataStream);
+      }
+
+public static DataStreamSink<Object> bulkInsert(Configuration conf, RowType rowType, DataStream<RowData> dataStream) {
+  // 获取bulkInsert opeartorFactory，底层为包装了BulkInsertFunction
+    WriteOperatorFactory<RowData> operatorFactory = BulkInsertWriteOperator.getFactory(conf, rowType);
+		// 获取分区字段
+    final String[] partitionFields = FilePathUtils.extractPartitionKeys(conf);
+    if (partitionFields.length > 0) {
+      // 生产RowDataKey生成器
+      RowDataKeyGen rowDataKeyGen = RowDataKeyGen.instance(conf, rowType);
+      // 如果开启根据partition shuffle
+      if (conf.getBoolean(FlinkOptions.WRITE_BULK_INSERT_SHUFFLE_BY_PARTITION)) {
+
+        // shuffle by partition keys
+        dataStream = dataStream.keyBy(rowDataKeyGen::getPartitionPath);
+      }
+      // 如果开启根据partition sort
+      if (conf.getBoolean(FlinkOptions.WRITE_BULK_INSERT_SORT_BY_PARTITION)) {
+        SortOperatorGen sortOperatorGen = new SortOperatorGen(rowType, partitionFields);
+        // sort by partition keys 外部排序
+        dataStream = dataStream
+            .transform("partition_key_sorter",
+                TypeInformation.of(RowData.class),
+                sortOperatorGen.createSortOperator())
+            .setParallelism(conf.getInteger(FlinkOptions.WRITE_TASKS));
+        ExecNodeUtil.setManagedMemoryWeight(dataStream.getTransformation(),
+            conf.getInteger(FlinkOptions.WRITE_SORT_MEMORY) * 1024L * 1024L);
+      }
+    }
+    return dataStream
+        .transform("hoodie_bulk_insert_write",
+            TypeInformation.of(Object.class),
+            operatorFactory)
+        // follow the parallelism of upstream operators to avoid shuffle
+        .setParallelism(conf.getInteger(FlinkOptions.WRITE_TASKS))
+        .addSink(DummySink.INSTANCE)
+        .name("dummy");
+  }
+```
+
+
+
+## Compact
+
+### CompactionPlanOperator
+
+* 生成特定的compact plan在ck结束时更加插件化生成。
+
+```java
+public class CompactionPlanOperator extends AbstractStreamOperator<CompactionPlanEvent>
+    implements OneInputStreamOperator<Object, CompactionPlanEvent> {
+
+  /**
+   * hudi配置
+   */
+  private final Configuration conf;
+
+  /**
+   * Meta Client.
+   */
+  @SuppressWarnings("rawtypes")
+  private transient HoodieFlinkTable table;
+
+  public CompactionPlanOperator(Configuration conf) {
+    this.conf = conf;
+  }
+
+  @Override
+  public void open() throws Exception {
+    super.open();
+    this.table = FlinkTables.createTable(conf, getRuntimeContext());
+    // when starting up, rolls back all the inflight compaction instants if there exists,
+    // these instants are in priority for scheduling task because the compaction instants are
+    // scheduled from earliest(FIFO sequence).
+   // 当启动时回滚全部的inflight compaction
+    CompactionUtil.rollbackCompaction(table);
+  }
+
+  @Override
+  public void processElement(StreamRecord<Object> streamRecord) {
+    // no operation
+  }
+
+  @Override
+  public void notifyCheckpointComplete(long checkpointId) {
+    try {
+      table.getMetaClient().reloadActiveTimeline();
+      // There is no good way to infer when the compaction task for an instant crushed
+      // or is still undergoing. So we use a configured timeout threshold to control the rollback:
+      // {@code FlinkOptions.COMPACTION_TIMEOUT_SECONDS},
+      // when the earliest inflight instant has timed out, assumes it has failed
+      // already and just rolls it back.
+
+      // comment out: do we really need the timeout rollback ?
+      // CompactionUtil.rollbackEarliestCompaction(table, conf);
+      scheduleCompaction(table, checkpointId);
+    } catch (Throwable throwable) {
+      // make it fail-safe
+      LOG.error("Error while scheduling compaction plan for checkpoint: " + checkpointId, throwable);
+    }
+  }
+
+  private void scheduleCompaction(HoodieFlinkTable<?> table, long checkpointId) throws IOException {
+    // the last instant takes the highest priority.
+    Option<HoodieInstant> firstRequested = table.getActiveTimeline().filterPendingCompactionTimeline()
+        .filter(instant -> instant.getState() == HoodieInstant.State.REQUESTED).firstInstant();
+    if (!firstRequested.isPresent()) {
+      // do nothing.
+      LOG.info("No compaction plan for checkpoint " + checkpointId);
+      return;
+    }
+
+    String compactionInstantTime = firstRequested.get().getTimestamp();
+
+    // generate compaction plan
+    // should support configurable commit metadata
+    HoodieCompactionPlan compactionPlan = CompactionUtils.getCompactionPlan(
+        table.getMetaClient(), compactionInstantTime);
+
+    if (compactionPlan == null || (compactionPlan.getOperations() == null)
+        || (compactionPlan.getOperations().isEmpty())) {
+      // do nothing.
+      LOG.info("Empty compaction plan for instant " + compactionInstantTime);
+    } else {
+      HoodieInstant instant = HoodieTimeline.getCompactionRequestedInstant(compactionInstantTime);
+      // Mark instant as compaction inflight
+      table.getActiveTimeline().transitionCompactionRequestedToInflight(instant);
+      table.getMetaClient().reloadActiveTimeline();
+
+      List<CompactionOperation> operations = compactionPlan.getOperations().stream()
+          .map(CompactionOperation::convertFromAvroRecordInstance).collect(toList());
+      LOG.info("Execute compaction plan for instant {} as {} file groups", compactionInstantTime, operations.size());
+      for (CompactionOperation operation : operations) {
+        output.collect(new StreamRecord<>(new CompactionPlanEvent(compactionInstantTime, operation)));
+      }
+    }
+  }
+
+  @VisibleForTesting
+  public void setOutput(Output<StreamRecord<CompactionPlanEvent>> output) {
+    this.output = output;
+  }
+}
+```
+
+### CompactFunction
 
 * 函数来执行由compaction plan任务分配的实际compaction任务，为了执行可伸缩的，输入应该被压缩事件{@link CompactionPlanEvent}打乱。
 
@@ -1083,7 +1235,7 @@ private List<WriteStatus> writeStatuses;
 private int taskID;  
 ```
 
-### 核心属性
+#### 核心属性
 
 ```java
 // compact相关配置
@@ -1098,7 +1250,7 @@ private int taskID;
 private transient NonThrownExecutor executor;
 ```
 
-### processElement
+#### processElement
 
 * 处理CompactionPlanEvent执行compact
 
@@ -1120,15 +1272,245 @@ private transient NonThrownExecutor executor;
 
 // doCompaction
  private void doCompaction(String instantTime, CompactionOperation compactionOperation, Collector<CompactionCommitEvent> collector) throws IOException {
-    List<WriteStatus> writeStatuses = FlinkCompactHelpers.compact(writeClient, instantTime, compactionOperation);
-    collector.collect(new CompactionCommitEvent(instantTime, writeStatuses, taskID));
+    HoodieFlinkMergeOnReadTableCompactor compactor = new HoodieFlinkMergeOnReadTableCompactor();
+    List<WriteStatus> writeStatuses = compactor.compact(
+      // 将mor表的delta file合并到base file中，通过cow hanlder来处理
+        new HoodieFlinkCopyOnWriteTable<>(
+            writeClient.getConfig(),
+            writeClient.getEngineContext(),
+            writeClient.getHoodieTable().getMetaClient()),
+        writeClient.getHoodieTable().getMetaClient(),
+        writeClient.getConfig(),
+        compactionOperation,
+        instantTime,
+        writeClient.getHoodieTable().getTaskContextSupplier());
+    collector.collect(new CompactionCommitEvent(instantTime, compactionOperation.getFileId(), writeStatuses, taskID));
   }
 ```
 
-### FlinkCompactHelpers
+### HoodieFlinkMergeOnReadTableCompactor
 
 * 核心flink compact类
 
+```java
+public List<WriteStatus> compact(HoodieCompactionHandler compactionHandler,
+                                   HoodieTableMetaClient metaClient,
+                                   HoodieWriteConfig config,
+                                   CompactionOperation operation,
+                                   String instantTime,
+                                   TaskContextSupplier taskContextSupplier) throws IOException {
+    FileSystem fs = metaClient.getFs();
+	// 获取携带hoodie元数据schema配置
+    Schema readerSchema = HoodieAvroUtils.addMetadataFields(
+        new Schema.Parser().parse(config.getSchema()), config.allowOperationMetadataField());
+    LOG.info("Compacting base " + operation.getDataFileName() + " with delta files " + operation.getDeltaFileNames()
+        + " for commit " + instantTime);
+    // TODO - FIX THIS
+    // Reads the entire avro file. Always only specific blocks should be read from the avro file
+    // (failure recover).
+    // Load all the delta commits since the last compaction commit and get all the blocks to be
+    // loaded and load it using CompositeAvroLogReader
+    // Since a DeltaCommit is not defined yet, reading all the records. revisit this soon.
+// 获取commit、rollback、delta_commit类型action中最大的instantTime
+  String maxInstantTime = metaClient
+        .getActiveTimeline().getTimelineOfActions(CollectionUtils.createSet(HoodieTimeline.COMMIT_ACTION,
+            HoodieTimeline.ROLLBACK_ACTION, HoodieTimeline.DELTA_COMMIT_ACTION))
+        .filterCompletedInstants().lastInstant().get().getTimestamp();
+  // 读取配置最大的perCompaction内存
+    long maxMemoryPerCompaction = IOUtils.getMaxMemoryPerCompaction(taskContextSupplier, config);
+    LOG.info("MaxMemoryPerCompaction => " + maxMemoryPerCompaction);
+		// 加载全部delta文件
+    List<String> logFiles = operation.getDeltaFileNames().stream().map(
+        p -> new Path(FSUtils.getPartitionPath(metaClient.getBasePath(), operation.getPartitionPath()), p).toString())
+        .collect(toList());
+  // 构造scanner，读取delta文件
+    HoodieMergedLogRecordScanner scanner = HoodieMergedLogRecordScanner.newBuilder()
+        .withFileSystem(fs)
+        .withBasePath(metaClient.getBasePath())
+        .withLogFilePaths(logFiles)
+        .withReaderSchema(readerSchema)
+        .withLatestInstantTime(maxInstantTime)
+        .withMaxMemorySizeInBytes(maxMemoryPerCompaction)
+        .withReadBlocksLazily(config.getCompactionLazyBlockReadEnabled())
+        .withReverseReader(config.getCompactionReverseLogReadEnabled())
+        .withBufferSize(config.getMaxDFSStreamBufferSize())
+        .withSpillableMapBasePath(config.getSpillableMapBasePath())
+        .withDiskMapType(config.getCommonConfig().getSpillableDiskMapType())
+        .withBitCaskDiskMapCompressionEnabled(config.getCommonConfig().isBitCaskDiskMapCompressionEnabled())
+        .withOperationField(config.allowOperationMetadataField())
+        .withPartition(operation.getPartitionPath())
+        .build();
+  // 如果为null则返回空list
+    if (!scanner.iterator().hasNext()) {
+      scanner.close();
+      return new ArrayList<>();
+    }
+	// 获取老的dataFile文件
+    Option<HoodieBaseFile> oldDataFileOpt =
+        operation.getBaseFile(metaClient.getBasePath(), operation.getPartitionPath());
+
+    // Compacting is very similar to applying updates to existing file
+    Iterator<List<WriteStatus>> result;
+    // If the dataFile is present, perform updates else perform inserts into a new base file.
+    if (oldDataFileOpt.isPresent()) {
+      // 合并deltaFile和dataFile
+      result = compactionHandler.handleUpdate(instantTime, operation.getPartitionPath(),
+          operation.getFileId(), scanner.getRecords(),
+          oldDataFileOpt.get());
+    } else {
+      // 单纯的处理deltaFile
+      result = compactionHandler.handleInsert(instantTime, operation.getPartitionPath(), operation.getFileId(),
+          scanner.getRecords());
+    }
+    scanner.close();
+    Iterable<List<WriteStatus>> resultIterable = () -> result;
+    return StreamSupport.stream(resultIterable.spliterator(), false).flatMap(Collection::stream).peek(s -> {
+      s.getStat().setTotalUpdatedRecordsCompacted(scanner.getNumMergedRecordsInLog());
+      s.getStat().setTotalLogFilesCompacted(scanner.getTotalLogFiles());
+      s.getStat().setTotalLogRecords(scanner.getTotalLogRecords());
+      s.getStat().setPartitionPath(operation.getPartitionPath());
+      s.getStat()
+          .setTotalLogSizeCompacted(operation.getMetrics().get(CompactionStrategy.TOTAL_LOG_FILE_SIZE).longValue());
+      s.getStat().setTotalLogBlocks(scanner.getTotalLogBlocks());
+      s.getStat().setTotalCorruptLogBlock(scanner.getTotalCorruptBlocks());
+      s.getStat().setTotalRollbackBlocks(scanner.getTotalRollbacks());
+      RuntimeStats runtimeStats = new RuntimeStats();
+      runtimeStats.setTotalScanTime(scanner.getTotalTimeTakenToReadAndMergeBlocks());
+      s.getStat().setRuntimeStats(runtimeStats);
+    }).collect(toList());
+  }
 ```
+
+### CompactionCommitSink
+
+* 检查和提交compaction action，每次接收到一个compaction commit event之后，它会加载并且校验这个compaction计划，如果全部的compaction操作已经结果，讲会尝试提交这些compaction action。
+* 这个函数继承了CleanFunction的清理能力，这是必要的，因为SQL API不允许在一个表接收器提供程序中包含多个sink。
+
+```java
+public class CompactionCommitSink extends CleanFunction<CompactionCommitEvent> {
+  private static final Logger LOG = LoggerFactory.getLogger(CompactionCommitSink.class);
+  private final Configuration conf;
+
+  /**
+	** 每个compact任务的缓存
+   *	
+   * <p>Stores the mapping of instant_time -> file_id -> event. Use a map to collect the
+   * events because the rolling back of intermediate compaction tasks generates corrupt
+   * events.
+   */
+  private transient Map<String, Map<String, CompactionCommitEvent>> commitBuffer;
+
+  /**
+   * The hoodie table.
+   */
+  private transient HoodieFlinkTable<?> table;
+
+  public CompactionCommitSink(Configuration conf) {
+    super(conf);
+    this.conf = conf;
+  }
+
+  @Override
+  public void open(Configuration parameters) throws Exception {
+    super.open(parameters);
+    if (writeClient == null) {
+      this.writeClient = StreamerUtil.createWriteClient(conf, getRuntimeContext());
+    }
+    this.commitBuffer = new HashMap<>();
+    this.table = this.writeClient.getHoodieTable();
+  }
+
+  @Override
+  public void invoke(CompactionCommitEvent event, Context context) throws Exception {
+    final String instant = event.getInstant();
+    // 如果失败则回滚
+    if (event.isFailed()) {
+      // handle failure case
+      CompactionUtil.rollbackCompaction(table, event.getInstant());
+      return;
+    }
+    // 存入buffer
+    commitBuffer.computeIfAbsent(instant, k -> new HashMap<>())
+        .put(event.getFileId(), event);
+    // 判断是否提交
+    commitIfNecessary(instant, commitBuffer.get(instant).values());
+  }
+
+  /**
+   * Condition to commit: the commit buffer has equal size with the compaction plan operations
+   * and all the compact commit event {@link CompactionCommitEvent} has the same compaction instant time.
+   *
+   * @param instant Compaction commit instant time
+   * @param events  Commit events ever received for the instant
+   */
+  private void commitIfNecessary(String instant, Collection<CompactionCommitEvent> events) throws IOException {
+    HoodieCompactionPlan compactionPlan = CompactionUtils.getCompactionPlan(
+        this.writeClient.getHoodieTable().getMetaClient(), instant);
+    // 判断这个instant是否已经满足提交逻辑
+    boolean isReady = compactionPlan.getOperations().size() == events.size();
+    if (!isReady) {
+      return;
+    }
+    try {
+      // 提交操作
+      doCommit(instant, events);
+    } catch (Throwable throwable) {
+      // make it fail-safe
+      LOG.error("Error while committing compaction instant: " + instant, throwable);
+    } finally {
+      // reset the status
+      reset(instant);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private void doCommit(String instant, Collection<CompactionCommitEvent> events) throws IOException {
+    List<WriteStatus> statuses = events.stream()
+        .map(CompactionCommitEvent::getWriteStatuses)
+        .flatMap(Collection::stream)
+        .collect(Collectors.toList());
+
+    // commit the compaction
+    this.writeClient.commitCompaction(instant, statuses, Option.empty());
+
+    // Whether to clean up the old log file when compaction
+    if (!conf.getBoolean(FlinkOptions.CLEAN_ASYNC_ENABLED)) {
+      this.writeClient.clean();
+    }
+  }
+
+  private void reset(String instant) {
+    this.commitBuffer.remove(instant);
+  }
+}
+
+```
+
+### compact引用方
+
+* 根据配置调用compact对应opeartor或function
+
+```java
+ // compaction
+      if (StreamerUtil.needsAsyncCompaction(conf)) {
+        return Pipelines.compact(conf, pipeline);
+      } else {
+        return Pipelines.clean(conf, pipeline);
+      }
+
+public static DataStreamSink<CompactionCommitEvent> compact(Configuration conf, DataStream<Object> dataStream) {
+    return dataStream.transform("compact_plan_generate",
+        TypeInformation.of(CompactionPlanEvent.class),
+        new CompactionPlanOperator(conf))
+        .setParallelism(1) // plan generate must be singleton
+        .rebalance()
+        .transform("compact_task",
+            TypeInformation.of(CompactionCommitEvent.class),
+            new ProcessOperator<>(new CompactFunction(conf)))
+        .setParallelism(conf.getInteger(FlinkOptions.COMPACTION_TASKS))
+        .addSink(new CompactionCommitSink(conf))
+        .name("compact_commit")
+        .setParallelism(1); // compaction commit should be singleton
+  }
 ```
 
