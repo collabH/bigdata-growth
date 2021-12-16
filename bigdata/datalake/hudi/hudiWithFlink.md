@@ -1486,7 +1486,7 @@ public class CompactionCommitSink extends CleanFunction<CompactionCommitEvent> {
 
 ```
 
-### compact引用方
+### Compact引用方
 
 * 根据配置调用compact对应opeartor或function
 
@@ -1512,5 +1512,125 @@ public static DataStreamSink<CompactionCommitEvent> compact(Configuration conf, 
         .name("compact_commit")
         .setParallelism(1); // compaction commit should be singleton
   }
+```
+
+## Append
+
+* 如果是COW表并且operation为`insert`并且`write.insert.cluster`配置为false，不为insert模式合并小文件，append模式才会生效。
+
+### AppendWriteOperator
+
+* 创建对应的ProcessOperator,底层保证对应的ProcessFunction
+
+```java
+public class AppendWriteOperator<I> extends AbstractWriteOperator<I> {
+
+  public AppendWriteOperator(Configuration conf, RowType rowType) {
+    super(new AppendWriteFunction<>(conf, rowType));
+  }
+
+  public static <I> WriteOperatorFactory<I> getFactory(Configuration conf, RowType rowType) {
+    return WriteOperatorFactory.instance(conf, new AppendWriteOperator<>(conf, rowType));
+  }
+}
+```
+
+### AppendWriteFunction
+
+* 该函数直接为每个检查点写入base文件，当它的大小达到配置的阈值时，文件可能会滚动。
+
+```java
+public class AppendWriteFunction<I> extends AbstractStreamWriteFunction<I> {
+
+  private static final long serialVersionUID = 1L;
+
+  /**
+   * bulk insert写入hepler
+   */
+  private transient BulkInsertWriterHelper writerHelper;
+
+  /**
+   * 表的行类型
+   */
+  private final RowType rowType;
+
+  /**
+   * Constructs an AppendWriteFunction.
+   *
+   * @param config The config options
+   */
+  public AppendWriteFunction(Configuration config, RowType rowType) {
+    super(config);
+    this.rowType = rowType;
+  }
+
+  @Override
+  public void snapshotState() {
+	// 每次ck刷新数据，底层类似bulk insert
+    flushData(false);
+  }
+
+  @Override
+  public void processElement(I value, Context ctx, Collector<Object> out) throws Exception {
+    if (this.writerHelper == null) {
+      // 初始化写入helper
+      initWriterHelper();
+    }
+    // 写入数据
+    this.writerHelper.write((RowData) value);
+  }
+
+  /**
+   * End input action for batch source.
+   */
+  public void endInput() {
+    flushData(true);
+    this.writeStatuses.clear();
+  }
+
+  // -------------------------------------------------------------------------
+  //  GetterSetter
+  // -------------------------------------------------------------------------
+  @VisibleForTesting
+  public BulkInsertWriterHelper getWriterHelper() {
+    return this.writerHelper;
+  }
+
+  // -------------------------------------------------------------------------
+  //  Utilities
+  // -------------------------------------------------------------------------
+  private void initWriterHelper() {
+    this.currentInstant = instantToWrite(true);
+    if (this.currentInstant == null) {
+      // in case there are empty checkpoints that has no input data
+      throw new HoodieException("No inflight instant when flushing data!");
+    }
+    this.writerHelper = new BulkInsertWriterHelper(this.config, this.writeClient.getHoodieTable(), this.writeClient.getConfig(),
+        this.currentInstant, this.taskID, getRuntimeContext().getNumberOfParallelSubtasks(), getRuntimeContext().getAttemptNumber(),
+        this.rowType);
+  }
+
+  private void flushData(boolean endInput) {
+    if (this.writerHelper == null) {
+      // does not process any inputs, returns early.
+      return;
+    }
+    // 提交元数据记录，每次快照的时候提交
+    final List<WriteStatus> writeStatus = this.writerHelper.getWriteStatuses(this.taskID);
+    final WriteMetadataEvent event = WriteMetadataEvent.builder()
+        .taskID(taskID)
+        .instantTime(this.writerHelper.getInstantTime())
+        .writeStatus(writeStatus)
+        .lastBatch(true)
+        .endInput(endInput)
+        .build();
+    this.eventGateway.sendEventToCoordinator(event);
+    // nullify the write helper for next ckp
+    this.writerHelper = null;
+    this.writeStatuses.addAll(writeStatus);
+    // blocks flushing until the coordinator starts a new instant
+    this.confirming = true;
+  }
+}
 ```
 
