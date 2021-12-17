@@ -340,12 +340,14 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 
 * 源码都基于Flink-hudi 0.9.0版本
 
-## StreamWriteFunction
+## WritePipeline
+
+### StreamWriteFunction
 
 * 用于将数据写入外部系统，这个函数首先会buffer一批HoodieRecord数据，当一批buffer数据上超过` FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`，或者是Flink开始做ck，则flush。如果一批数据写入成功，则StreamWriteOperatorCoordinator会标识写入成功。
 * 这个operator coordinator会校验和提交最后一个instant，当最后一个instant提交成功时会启动一个新的instant。它会开启一个新的instant之前回滚全部inflight instant，hoodie的instant只会在一个ck中。写函数在它ck超时抛出异常时刷新数据buffer，任何检查点失败最终都会触发作业失败。
 
-### 核心属性
+#### 核心属性
 
 ```java
  /**
@@ -420,7 +422,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
   private List<WriteStatus> writeStatuses;
 ```
 
-### open
+#### open
 
 ```java
 public void open(Configuration parameters) throws IOException {
@@ -491,7 +493,7 @@ public void open(Configuration parameters) throws IOException {
   }
 ```
 
-### 初始化状态
+#### 初始化状态
 
 * 创建hudi写入客户端，获取actionType，然后根据是否savepoint确定是否重新提交inflight阶段的instant
 
@@ -577,7 +579,7 @@ private void restoreWriteMetadata() throws Exception {
   }
 ```
 
-### snapshotState
+#### snapshotState
 
 ```java
   public void snapshotState(FunctionSnapshotContext functionSnapshotContext) throws Exception {
@@ -658,7 +660,7 @@ private void flushRemaining(boolean endInput) {
   }
 ```
 
-### 数据buffer逻辑
+#### bufferRecord
 
 ```java
 private void bufferRecord(HoodieRecord<?> value) {
@@ -733,14 +735,543 @@ private boolean flushBucket(DataBucket bucket) {
   }
 ```
 
-## BootstrapFunction
+### StreamWriteOperator
+
+```java
+public class StreamWriteOperator<I> extends AbstractWriteOperator<I> {
+
+  public StreamWriteOperator(Configuration conf) {
+    super(new StreamWriteFunction<>(conf));
+  }
+
+  public static <I> WriteOperatorFactory<I> getFactory(Configuration conf) {
+    return WriteOperatorFactory.instance(conf, new StreamWriteOperator<>(conf));
+  }
+}
+```
+
+### BucketAssignFunction
+
+* 为检查点内的记录构建增量写入配置文件的功能，然后，它使用{@link BucketAssigner}分配带有ID的桶。
+
+```java
+public class BucketAssignFunction<K, I, O extends HoodieRecord<?>>
+    extends KeyedProcessFunction<K, I, O>
+    implements CheckpointedFunction, CheckpointListener {
+
+  /**
+   * 为外部文件基于BloomFilter构建索引cache(用于加速)状态
+   * 当消费记录的时候
+   *1. 尝试加载该记录所属的分区路径中的所有记录
+   *2. 检查状态是否包含这个record key
+   *3. 如果包含这标注这个记录的location
+   *4. 如果不包含则生成一个新的bucket id
+   */
+  private ValueState<HoodieRecordGlobalLocation> indexState;
+
+  /**
+   * 桶分配器分配新的桶id或重用现有的桶id。
+   */
+  private BucketAssigner bucketAssigner;
+
+  private final Configuration conf;
+
+  private final boolean isChangingRecords;
+
+  /**
+   * 用于创建DELETE的payload
+   */
+  private PayloadCreation payloadCreation;
+
+  /**
+   * If the index is global, update the index for the old partition path
+   * if same key record with different partition path came in.
+   */
+  private final boolean globalIndex;
+
+  public BucketAssignFunction(Configuration conf) {
+    this.conf = conf;
+    //是以下操作 operationType == UPSERT || operationType == UPSERT_PREPPED || operationType == DELETE;
+    this.isChangingRecords = WriteOperationType.isChangingRecords(
+        WriteOperationType.fromValue(conf.getString(FlinkOptions.OPERATION)));
+    // 是否开启全局索引，并且没有开启changelog
+    this.globalIndex = conf.getBoolean(FlinkOptions.INDEX_GLOBAL_ENABLED)
+        && !conf.getBoolean(FlinkOptions.CHANGELOG_ENABLED);
+  }
+
+  @Override
+  public void open(Configuration parameters) throws Exception {
+    super.open(parameters);
+    // 获取hoodieClient配置
+    HoodieWriteConfig writeConfig = StreamerUtil.getHoodieClientConfig(this.conf);
+    // 创建flink引擎上下文
+    HoodieFlinkEngineContext context = new HoodieFlinkEngineContext(
+        new SerializableConfiguration(StreamerUtil.getHadoopConf()),
+        new FlinkTaskContextSupplier(getRuntimeContext()));
+    // 创建bucket assigger
+    this.bucketAssigner = BucketAssigners.create(
+        getRuntimeContext().getIndexOfThisSubtask(),
+        getRuntimeContext().getMaxNumberOfParallelSubtasks(),
+        getRuntimeContext().getNumberOfParallelSubtasks(),
+      // insert overwrite和insert_overwrite_table忽略小文件
+        ignoreSmallFiles(),
+        HoodieTableType.valueOf(conf.getString(FlinkOptions.TABLE_TYPE)),
+        context,
+        writeConfig);
+    // 创建PayloadCreation
+    this.payloadCreation = PayloadCreation.instance(this.conf);
+  }
+
+  private boolean ignoreSmallFiles() {
+    WriteOperationType operationType = WriteOperationType.fromValue(conf.getString(FlinkOptions.OPERATION));
+    return WriteOperationType.isOverwrite(operationType);
+  }
+
+  @Override
+  public void snapshotState(FunctionSnapshotContext context) {
+    // 每次ck重置bucket分配器
+    this.bucketAssigner.reset();
+  }
+
+  @Override
+  public void initializeState(FunctionInitializationContext context) {
+    ValueStateDescriptor<HoodieRecordGlobalLocation> indexStateDesc =
+        new ValueStateDescriptor<>(
+            "indexState",
+            TypeInformation.of(HoodieRecordGlobalLocation.class));
+    double ttl = conf.getDouble(FlinkOptions.INDEX_STATE_TTL) * 24 * 60 * 60 * 1000;
+    if (ttl > 0) {
+      indexStateDesc.enableTimeToLive(StateTtlConfig.newBuilder(Time.milliseconds((long) ttl)).build());
+    }
+    indexState = context.getKeyedStateStore().getState(indexStateDesc);
+  }
+
+  @Override
+  public void processElement(I value, Context ctx, Collector<O> out) throws Exception {
+    if (value instanceof IndexRecord) {
+      IndexRecord<?> indexRecord = (IndexRecord<?>) value;
+      // 更新index状态
+      this.indexState.update((HoodieRecordGlobalLocation) indexRecord.getCurrentLocation());
+    } else {
+      processRecord((HoodieRecord<?>) value, out);
+    }
+  }
+
+  @SuppressWarnings("unchecked")
+  private void processRecord(HoodieRecord<?> record, Collector<O> out) throws Exception {
+    // 1. put the record into the BucketAssigner;
+    // 2. look up the state for location, if the record has a location, just send it out;
+    // 3. if it is an INSERT, decide the location using the BucketAssigner then send it out.
+    final HoodieKey hoodieKey = record.getKey();
+    final String recordKey = hoodieKey.getRecordKey();
+    final String partitionPath = hoodieKey.getPartitionPath();
+    final HoodieRecordLocation location;
+
+    // Only changing records need looking up the index for the location,
+    // append only records are always recognized as INSERT.
+    HoodieRecordGlobalLocation oldLoc = indexState.value();
+    if (isChangingRecords && oldLoc != null) {
+      if (!Objects.equals(oldLoc.getPartitionPath(), partitionPath)) {
+        if (globalIndex) {
+          HoodieRecord<?> deleteRecord = new HoodieRecord<>(new HoodieKey(recordKey, oldLoc.getPartitionPath()),
+              payloadCreation.createDeletePayload((BaseAvroPayload) record.getData()));
+          deleteRecord.setCurrentLocation(oldLoc.toLocal("U"));
+          deleteRecord.seal();
+          out.collect((O) deleteRecord);
+        }
+       	// 获取新记录的location
+        location = getNewRecordLocation(partitionPath);
+        // 更新indexState
+        updateIndexState(partitionPath, location);
+      } else {
+        location = oldLoc.toLocal("U");
+        // 添加到bucekt中
+        this.bucketAssigner.addUpdate(partitionPath, location.getFileId());
+      }
+    } else {
+      location = getNewRecordLocation(partitionPath);
+    }
+    // always refresh the index
+    if (isChangingRecords) {
+      updateIndexState(partitionPath, location);
+    }
+    record.setCurrentLocation(location);
+    out.collect((O) record);
+  }
+
+  private HoodieRecordLocation getNewRecordLocation(String partitionPath) {
+    final BucketInfo bucketInfo = this.bucketAssigner.addInsert(partitionPath);
+    final HoodieRecordLocation location;
+    switch (bucketInfo.getBucketType()) {
+      case INSERT:
+        // This is an insert bucket, use HoodieRecordLocation instant time as "I".
+        // Downstream operators can then check the instant time to know whether
+        // a record belongs to an insert bucket.
+        location = new HoodieRecordLocation("I", bucketInfo.getFileIdPrefix());
+        break;
+      case UPDATE:
+        location = new HoodieRecordLocation("U", bucketInfo.getFileIdPrefix());
+        break;
+      default:
+        throw new AssertionError();
+    }
+    return location;
+  }
+
+  private void updateIndexState(
+      String partitionPath,
+      HoodieRecordLocation localLoc) throws Exception {
+    this.indexState.update(HoodieRecordGlobalLocation.fromLocal(partitionPath, localLoc));
+  }
+
+  @Override
+  public void notifyCheckpointComplete(long checkpointId) {
+    // Refresh the table state when there are new commits.
+    this.bucketAssigner.reload(checkpointId);
+  }
+
+  @Override
+  public void close() throws Exception {
+    this.bucketAssigner.close();
+  }
+}
+
+```
+
+#### BucketAssigner
+
+* bucket分配器，如果记录是一个更新，检查并重用现有的update桶或生成一个新的;如果记录是插入的，首先检查记录分区是否有小文件，尝试找到一个小文件有空间追加新记录和重用小文件的数据桶，如果没有小文件(或没有留给新记录的空间)，生成一个INSERT桶。
+
+```java
+public abstract class BucketAssigners {
+
+  private BucketAssigners() {
+  }
+
+  public static BucketAssigner create(
+      int taskID,
+      int maxParallelism,
+      int numTasks,
+      boolean ignoreSmallFiles,
+      HoodieTableType tableType,
+      HoodieFlinkEngineContext context,
+      HoodieWriteConfig config) {
+    // 是否delta file
+    boolean delta = tableType.equals(HoodieTableType.MERGE_ON_READ);
+    // 写入的配置
+    WriteProfile writeProfile = WriteProfiles.singleton(ignoreSmallFiles, delta, config, context);
+    // 创建bucket分配器
+    return new BucketAssigner(taskID, maxParallelism, numTasks, writeProfile, config);
+  }
+}
+
+// bucket分配器
+public class BucketAssigner implements AutoCloseable {
+  private static final Logger LOG = LogManager.getLogger(BucketAssigner.class);
+  private final int taskID;
+  private final int maxParallelism;
+   // subTask个数
+  private final int numTasks;
+  //每个桶的类型
+  private final HashMap<String, BucketInfo> bucketInfoMap;
+  protected final HoodieWriteConfig config;
+  private final WriteProfile writeProfile;
+  // 小文件分配映射
+  private final Map<String, SmallFileAssign> smallFileAssignMap;
+  /**
+   * Bucket ID(partition + fileId) -> new file assign state.
+   */
+  private final Map<String, NewFileAssignState> newFileAssignStates;
+  /**
+   * Num of accumulated successful checkpoints, used for cleaning the new file assign state.
+   */
+  private int accCkp = 0;
+
+  public BucketAssigner(
+      int taskID,
+      int maxParallelism,
+      int numTasks,
+      WriteProfile profile,
+      HoodieWriteConfig config) {
+    this.taskID = taskID;
+    this.maxParallelism = maxParallelism;
+    this.numTasks = numTasks;
+    this.config = config;
+    this.writeProfile = profile;
+
+    this.bucketInfoMap = new HashMap<>();
+    this.smallFileAssignMap = new HashMap<>();
+    this.newFileAssignStates = new HashMap<>();
+  }
+  // 重置bucket类型记录map
+  public void reset() {
+    bucketInfoMap.clear();
+  }
+  public BucketInfo addUpdate(String partitionPath, String fileIdHint) {
+    final String key = StreamerUtil.generateBucketKey(partitionPath, fileIdHint);
+    // 如果bucketmap没有则创建update bucket
+    if (!bucketInfoMap.containsKey(key)) {
+      BucketInfo bucketInfo = new BucketInfo(BucketType.UPDATE, fileIdHint, partitionPath);
+      bucketInfoMap.put(key, bucketInfo);
+    }
+	// 复用现有的
+    return bucketInfoMap.get(key);
+  }
+
+  public BucketInfo addInsert(String partitionPath) {
+    // 判断是否存在小文件的bucket
+    SmallFileAssign smallFileAssign = getSmallFileAssign(partitionPath);
+
+    // 首先尝试将其打包到一个smallfile中
+    if (smallFileAssign != null && smallFileAssign.assign()) {
+      return new BucketInfo(BucketType.UPDATE, smallFileAssign.getFileId(), partitionPath);
+    }
+
+    // if we have anything more, create new insert buckets, like normal
+    if (newFileAssignStates.containsKey(partitionPath)) {
+      NewFileAssignState newFileAssignState = newFileAssignStates.get(partitionPath);
+      if (newFileAssignState.canAssign()) {
+        newFileAssignState.assign();
+        final String key = StreamerUtil.generateBucketKey(partitionPath, newFileAssignState.fileId);
+        if (bucketInfoMap.containsKey(key)) {
+          // the newFileAssignStates is cleaned asynchronously when received the checkpoint success notification,
+          // the records processed within the time range:
+          // (start checkpoint, checkpoint success(and instant committed))
+          // should still be assigned to the small buckets of last checkpoint instead of new one.
+
+          // the bucketInfoMap is cleaned when checkpoint starts.
+
+          // A promotion: when the HoodieRecord can record whether it is an UPDATE or INSERT,
+          // we can always return an UPDATE BucketInfo here, and there is no need to record the
+          // UPDATE bucket through calling #addUpdate.
+          return bucketInfoMap.get(key);
+        }
+        return new BucketInfo(BucketType.UPDATE, newFileAssignState.fileId, partitionPath);
+      }
+    }
+    BucketInfo bucketInfo = new BucketInfo(BucketType.INSERT, createFileIdOfThisTask(), partitionPath);
+    final String key = StreamerUtil.generateBucketKey(partitionPath, bucketInfo.getFileIdPrefix());
+    bucketInfoMap.put(key, bucketInfo);
+    NewFileAssignState newFileAssignState = new NewFileAssignState(bucketInfo.getFileIdPrefix(), writeProfile.getRecordsPerBucket());
+    newFileAssignState.assign();
+    newFileAssignStates.put(partitionPath, newFileAssignState);
+    return bucketInfo;
+  }
+
+  private synchronized SmallFileAssign getSmallFileAssign(String partitionPath) {
+    if (smallFileAssignMap.containsKey(partitionPath)) {
+      return smallFileAssignMap.get(partitionPath);
+    }
+    List<SmallFile> smallFiles = smallFilesOfThisTask(writeProfile.getSmallFiles(partitionPath));
+    if (smallFiles.size() > 0) {
+      LOG.info("For partitionPath : " + partitionPath + " Small Files => " + smallFiles);
+      SmallFileAssignState[] states = smallFiles.stream()
+          .map(smallFile -> new SmallFileAssignState(config.getParquetMaxFileSize(), smallFile, writeProfile.getAvgSize()))
+          .toArray(SmallFileAssignState[]::new);
+      SmallFileAssign assign = new SmallFileAssign(states);
+      smallFileAssignMap.put(partitionPath, assign);
+      return assign;
+    }
+    smallFileAssignMap.put(partitionPath, null);
+    return null;
+  }
+
+  /**
+   * Refresh the table state like TableFileSystemView and HoodieTimeline.
+   */
+  public synchronized void reload(long checkpointId) {
+    this.accCkp += 1;
+    if (this.accCkp > 1) {
+      // do not clean the new file assignment state for the first checkpoint,
+      // this #reload calling is triggered by checkpoint success event, the coordinator
+      // also relies on the checkpoint success event to commit the inflight instant,
+      // and very possibly this component receives the notification before the coordinator,
+      // if we do the cleaning, the records processed within the time range:
+      // (start checkpoint, checkpoint success(and instant committed))
+      // would be assigned to a fresh new data bucket which is not the right behavior.
+      this.newFileAssignStates.clear();
+      this.accCkp = 0;
+    }
+    this.smallFileAssignMap.clear();
+    this.writeProfile.reload(checkpointId);
+  }
+
+  private boolean fileIdOfThisTask(String fileId) {
+    // the file id can shuffle to this task
+    return KeyGroupRangeAssignment.assignKeyToParallelOperator(fileId, maxParallelism, numTasks) == taskID;
+  }
+
+  @VisibleForTesting
+  public String createFileIdOfThisTask() {
+    String newFileIdPfx = FSUtils.createNewFileIdPfx();
+    while (!fileIdOfThisTask(newFileIdPfx)) {
+      newFileIdPfx = FSUtils.createNewFileIdPfx();
+    }
+    return newFileIdPfx;
+  }
+
+  @VisibleForTesting
+  public List<SmallFile> smallFilesOfThisTask(List<SmallFile> smallFiles) {
+    // computes the small files to write inserts for this task.
+    return smallFiles.stream()
+        .filter(smallFile -> fileIdOfThisTask(smallFile.location.getFileId()))
+        .collect(Collectors.toList());
+  }
+
+  public void close() {
+    reset();
+    WriteProfiles.clean(config.getBasePath());
+  }
+
+  /**
+   * Assigns the record to one of the small files under one partition.
+   *
+   * <p> The tool is initialized with an array of {@link SmallFileAssignState}s.
+   * A pointer points to the current small file we are ready to assign,
+   * if the current small file can not be assigned anymore (full assigned), the pointer
+   * move to next small file.
+   * <pre>
+   *       |  ->
+   *       V
+   *   | smallFile_1 | smallFile_2 | smallFile_3 | ... | smallFile_N |
+   * </pre>
+   *
+   * <p>If all the small files are full assigned, a flag {@code noSpace} was marked to true, and
+   * we can return early for future check.
+   */
+  private static class SmallFileAssign {
+    final SmallFileAssignState[] states;
+    int assignIdx = 0;
+    boolean noSpace = false;
+
+    SmallFileAssign(SmallFileAssignState[] states) {
+      this.states = states;
+    }
+
+    public boolean assign() {
+      if (noSpace) {
+        return false;
+      }
+      SmallFileAssignState state = states[assignIdx];
+      while (!state.canAssign()) {
+        assignIdx += 1;
+        if (assignIdx >= states.length) {
+          noSpace = true;
+          return false;
+        }
+        // move to next slot if possible
+        state = states[assignIdx];
+      }
+      state.assign();
+      return true;
+    }
+
+    public String getFileId() {
+      return states[assignIdx].fileId;
+    }
+  }
+
+  /**
+   * Candidate bucket state for small file. It records the total number of records
+   * that the bucket can append and the current number of assigned records.
+   */
+  private static class SmallFileAssignState {
+    long assigned;
+    long totalUnassigned;
+    final String fileId;
+
+    SmallFileAssignState(long parquetMaxFileSize, SmallFile smallFile, long averageRecordSize) {
+      this.assigned = 0;
+      this.totalUnassigned = (parquetMaxFileSize - smallFile.sizeBytes) / averageRecordSize;
+      this.fileId = smallFile.location.getFileId();
+    }
+
+    public boolean canAssign() {
+      return this.totalUnassigned > 0 && this.totalUnassigned > this.assigned;
+    }
+
+    /**
+     * Remembers to invoke {@link #canAssign()} first.
+     */
+    public void assign() {
+      Preconditions.checkState(canAssign(),
+          "Can not assign insert to small file: assigned => "
+              + this.assigned + " totalUnassigned => " + this.totalUnassigned);
+      this.assigned++;
+    }
+  }
+
+  /**
+   * Candidate bucket state for a new file. It records the total number of records
+   * that the bucket can append and the current number of assigned records.
+   */
+  private static class NewFileAssignState {
+    long assigned;
+    long totalUnassigned;
+    final String fileId;
+
+    NewFileAssignState(String fileId, long insertRecordsPerBucket) {
+      this.fileId = fileId;
+      this.assigned = 0;
+      this.totalUnassigned = insertRecordsPerBucket;
+    }
+
+    public boolean canAssign() {
+      return this.totalUnassigned > 0 && this.totalUnassigned > this.assigned;
+    }
+
+    /**
+     * Remembers to invoke {@link #canAssign()} first.
+     */
+    public void assign() {
+      Preconditions.checkState(canAssign(),
+          "Can not assign insert to new file: assigned => "
+              + this.assigned + " totalUnassigned => " + this.totalUnassigned);
+      this.assigned++;
+    }
+  }
+}
+```
+
+### Pipelines
+
+* 构造write pipeline
+
+```java
+public static DataStream<Object> hoodieStreamWrite(Configuration conf, int defaultParallelism, DataStream<HoodieRecord> dataStream) {
+    WriteOperatorFactory<HoodieRecord> operatorFactory = StreamWriteOperator.getFactory(conf);
+    return dataStream
+        // Key-by record key, to avoid multiple subtasks write to a bucket at the same time
+        .keyBy(HoodieRecord::getRecordKey)
+       // 分配桶
+        .transform(
+            "bucket_assigner",
+            TypeInformation.of(HoodieRecord.class),
+            new KeyedProcessOperator<>(new BucketAssignFunction<>(conf)))
+        .uid("uid_bucket_assigner_" + conf.getString(FlinkOptions.TABLE_NAME))
+        .setParallelism(conf.getOptional(FlinkOptions.BUCKET_ASSIGN_TASKS).orElse(defaultParallelism))
+        // shuffle by fileId(bucket id)
+        .keyBy(record -> record.getCurrentLocation().getFileId())
+        .transform("hoodie_stream_write", TypeInformation.of(Object.class), operatorFactory)
+        .uid("uid_hoodie_stream_write" + conf.getString(FlinkOptions.TABLE_NAME))
+        .setParallelism(conf.getInteger(FlinkOptions.WRITE_TASKS));
+  }
+  
+  
+// write pipeline
+pipeline = Pipelines.hoodieStreamWrite(conf, parallelism, hoodieRecordDataStream);
+```
+
+## Bootstrap
+
+### BootstrapFunction
 
 * 从外部的hudi表加载索引，当第一个元素进入时，函数的每个子任务都会触发index bootstarp，
   直到所有索引记录都被发送后，记录才会被发送。
 * 然后输出记录应该按recordKey移动，从而进行可伸缩的写入。
 * index boostrap相关核心参数配置可以通过flink提供的Configuration类配置，比如加载的hoodie表path等
 
-### 核心属性
+#### 核心属性
 
 ```java
  // 外部hudi表
@@ -765,7 +1296,7 @@ private boolean flushBucket(DataBucket bucket) {
 
 ```
 
-### open
+#### open
 
 * 获取hadoop配置、获取hudi写入配置，获取外部hudiTbale。
 
@@ -787,7 +1318,7 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-### processElement
+#### processElement
 
 * 获取外部hudi表的path，
 
