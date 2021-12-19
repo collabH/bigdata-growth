@@ -1264,6 +1264,48 @@ pipeline = Pipelines.hoodieStreamWrite(conf, parallelism, hoodieRecordDataStream
 
 ## Bootstrap
 
+### BatchBootstrapOperator
+
+* 批量Bootstrap函数
+
+```java
+public class BatchBootstrapOperator<I, O extends HoodieRecord<?>> extends BootstrapOperator<I, O> {
+    private Set<String> partitionPathSet;
+    private boolean haveSuccessfulCommits;
+
+    public BatchBootstrapOperator(Configuration conf) {
+        super(conf);
+    }
+
+    public void open() throws Exception {
+        super.open();
+        this.partitionPathSet = new HashSet();
+        this.haveSuccessfulCommits = StreamerUtil.haveSuccessfulCommits(this.hoodieTable.getMetaClient());
+    }
+
+    protected void preLoadIndexRecords() {
+    }
+
+    public void processElement(StreamRecord<I> element) throws Exception {
+        HoodieRecord<?> record = (HoodieRecord)element.getValue();
+        String partitionPath = record.getKey().getPartitionPath();
+        if (this.haveSuccessfulCommits && !this.partitionPathSet.contains(partitionPath)) {
+            this.loadRecords(partitionPath);
+            this.partitionPathSet.add(partitionPath);
+        }
+
+        this.output.collect(element);
+    }
+
+    protected boolean shouldLoadFile(String fileId, int maxParallelism, int parallelism, int taskID) {
+        return true;
+    }
+}
+
+```
+
+
+
 ### BootstrapFunction
 
 * 从外部的hudi表加载索引，当第一个元素进入时，函数的每个子任务都会触发index bootstarp，
