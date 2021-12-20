@@ -2207,3 +2207,120 @@ public class AppendWriteFunction<I> extends AbstractStreamWriteFunction<I> {
 }
 ```
 
+## Clean
+
+### CleanFunction
+
+* 清理老的commit数据函数,每次新的ck会开始一个清理任务，同一时间下只有一个清理任务，新的任务不能立刻调度直到最后的任务完成（失败或者成功），清理任务异常永远不会抛出，而只会抛出日志。
+
+```java
+public class CleanFunction<T> extends AbstractRichFunction
+    implements SinkFunction<T>, CheckpointedFunction, CheckpointListener {
+  private static final Logger LOG = LoggerFactory.getLogger(CleanFunction.class);
+  private final Configuration conf;
+  protected HoodieFlinkWriteClient writeClient;
+	// 异步clean执行器
+  private NonThrownExecutor executor;
+	// 标识是否正在进行清理，每次ck会设置为true，ck完毕等待清理完毕后设置为false
+  private volatile boolean isCleaning;
+
+  public CleanFunction(Configuration conf) {
+    this.conf = conf;
+  }
+
+  @Override
+  public void open(Configuration parameters) throws Exception {
+    super.open(parameters);
+    // 是否启用异步clean
+    if (conf.getBoolean(FlinkOptions.CLEAN_ASYNC_ENABLED)) {
+      // do not use the remote filesystem view because the async cleaning service
+      // local timeline is very probably to fall behind with the remote one.
+      this.writeClient = StreamerUtil.createWriteClient(conf, getRuntimeContext());
+      this.executor = NonThrownExecutor.builder(LOG).build();
+    }
+  }
+
+  @Override
+  public void notifyCheckpointComplete(long l) throws Exception {
+    if (conf.getBoolean(FlinkOptions.CLEAN_ASYNC_ENABLED) && isCleaning) {
+      executor.execute(() -> {
+        try {
+          this.writeClient.waitForCleaningFinish();
+        } finally {
+          // ensure to switch the isCleaning flag
+          this.isCleaning = false;
+        }
+      }, "wait for cleaning finish");
+    }
+  }
+
+  @Override
+  public void snapshotState(FunctionSnapshotContext context) throws Exception {
+    if (conf.getBoolean(FlinkOptions.CLEAN_ASYNC_ENABLED) && !isCleaning) {
+      try {
+        // 异步清理old commit
+        this.writeClient.startAsyncCleaning();
+        this.isCleaning = true;
+      } catch (Throwable throwable) {
+        // catch the exception to not affect the normal checkpointing
+        LOG.warn("Error while start async cleaning", throwable);
+      }
+    }
+  }
+
+  @Override
+  public void initializeState(FunctionInitializationContext context) throws Exception {
+    // no operation
+  }
+}
+```
+
+#### Pipelines
+
+```java
+public static DataStreamSink<Object> clean(Configuration conf, DataStream<Object> dataStream) {
+    return dataStream.addSink(new CleanFunction<>(conf))
+        .setParallelism(1)
+        .name("clean_commits");
+  }
+
+ public SinkRuntimeProvider getSinkRuntimeProvider(Context context) {
+    return (DataStreamSinkProvider) dataStream -> {
+
+      // setup configuration
+      long ckpTimeout = dataStream.getExecutionEnvironment()
+          .getCheckpointConfig().getCheckpointTimeout();
+      conf.setLong(FlinkOptions.WRITE_COMMIT_ACK_TIMEOUT, ckpTimeout);
+
+      RowType rowType = (RowType) schema.toSourceRowDataType().notNull().getLogicalType();
+
+      // bulk_insert mode
+      final String writeOperation = this.conf.get(FlinkOptions.OPERATION);
+      if (WriteOperationType.fromValue(writeOperation) == WriteOperationType.BULK_INSERT) {
+        return context.isBounded() ? Pipelines.bulkInsert(conf, rowType, dataStream) : Pipelines.append(conf, rowType, dataStream);
+      }
+
+      // Append mode
+      if (OptionsResolver.isAppendMode(conf)) {
+        return Pipelines.append(conf, rowType, dataStream);
+      }
+
+      // default parallelism
+      int parallelism = dataStream.getExecutionConfig().getParallelism();
+      DataStream<Object> pipeline;
+
+      // bootstrap
+      final DataStream<HoodieRecord> hoodieRecordDataStream =
+          Pipelines.bootstrap(conf, rowType, parallelism, dataStream, context.isBounded(), overwrite);
+      // write pipeline
+      pipeline = Pipelines.hoodieStreamWrite(conf, parallelism, hoodieRecordDataStream);
+      // compaction
+      if (StreamerUtil.needsAsyncCompaction(conf)) {
+        return Pipelines.compact(conf, pipeline);
+      } else {
+        return Pipelines.clean(conf, pipeline);
+      }
+    };
+  }
+```
+
