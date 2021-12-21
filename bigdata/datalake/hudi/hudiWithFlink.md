@@ -2324,3 +2324,340 @@ public static DataStreamSink<Object> clean(Configuration conf, DataStream<Object
   }
 ```
 
+## Source
+
+* 读取Hudi表数据
+
+### StreamReadOperator
+
+* 这个operator通过`StreamReadMonitoringFunction`读取`MergeOnReadInputSplit`分片数据，与并行度为1的`StreamReadMonitoringFunction`相反，这个运算符可以有多个并行度。
+* 一旦收到一个input split  `MergeOnReadInputSplit`，它就被放入一个队列中，`MailboxExecutor`读取分裂的实际数据。这种架构允许分离读取和处理检查点障碍，从而消除任何潜在的背压。
+
+#### 源码分析
+
+```java
+// 入参MergeOnReadInputSplit转换为RowData
+public class StreamReadOperator extends AbstractStreamOperator<RowData>
+    implements OneInputStreamOperator<MergeOnReadInputSplit, RowData> {
+  private static final Logger LOG = LoggerFactory.getLogger(StreamReadOperator.class);
+	// 一批消费的数据量
+  private static final int MINI_BATCH_SIZE = 1000;
+//运行这个操作符和检查点操作的是同一个线程。仅使用此执行程序来调度
+//对后续的读取进行拆分，这样可以触发一个新的检查点，而不会阻塞很长时间
+//用于耗尽所有预定的分割阅读任务。
+  private final MailboxExecutor executor;
+	// 读取hoodie data和log文件
+  private MergeOnReadInputFormat format;
+	// source上下文
+  private transient SourceFunction.SourceContext<RowData> sourceContext;
+  private transient ListState<MergeOnReadInputSplit> inputSplitsState;
+  private transient Queue<MergeOnReadInputSplit> splits;
+//当队列中有读任务时，它被设置为RUNNING。当没有更多的文件可读时，这将被设置为IDLE。
+  private transient volatile SplitState currentSplitState;
+	// mor输入格式读取inputSplit， processTime服务
+  private StreamReadOperator(MergeOnReadInputFormat format, ProcessingTimeService timeService,
+                             MailboxExecutor mailboxExecutor) {
+    this.format = Preconditions.checkNotNull(format, "The InputFormat should not be null.");
+    this.processingTimeService = timeService;
+    this.executor = Preconditions.checkNotNull(mailboxExecutor, "The mailboxExecutor should not be null.");
+ @Override
+  public void initializeState(StateInitializationContext context) throws Exception {
+    super.initializeState(context);
+		// 处理事split状态
+    // TODO Replace Java serialization with Avro approach to keep state compatibility.
+    inputSplitsState = context.getOperatorStateStore().getListState(
+        new ListStateDescriptor<>("splits", new JavaSerializer<>()));
+    // Initialize the current split state to IDLE.
+    currentSplitState = SplitState.IDLE;
+		// 用于从状态后端服务split状态的双端阻塞队列
+    // Recover splits state from flink state backend if possible.
+    splits = new LinkedBlockingDeque<>();
+    if (context.isRestored()) {
+      int subtaskIdx = getRuntimeContext().getIndexOfThisSubtask();
+      LOG.info("Restoring state for operator {} (task ID: {}).", getClass().getSimpleName(), subtaskIdx);
+
+      for (MergeOnReadInputSplit split : inputSplitsState.get()) {
+        // state放入队列
+        splits.add(split);
+      }
+    }
+		// 获取sourceContext
+    this.sourceContext = StreamSourceContexts.getSourceContext(
+        getOperatorConfig().getTimeCharacteristic(),
+        getProcessingTimeService(),
+        new Object(), // no actual locking needed
+        getContainingTask().getStreamStatusMaintainer(),
+        output,
+        getRuntimeContext().getExecutionConfig().getAutoWatermarkInterval(),
+        -1);
+
+    // Enqueue to process the recovered input splits.
+    // 入队列处理恢复input split
+    enqueueProcessSplits();
+  }
+
+  @Override
+  public void snapshotState(StateSnapshotContext context) throws Exception {
+    super.snapshotState(context);
+    inputSplitsState.clear();
+    inputSplitsState.addAll(new ArrayList<>(splits));
+  }
+
+  @Override
+  public void processElement(StreamRecord<MergeOnReadInputSplit> element) {
+    // 放入双端队列
+    splits.add(element.getValue());
+    // 处理split
+    enqueueProcessSplits();
+  }
+
+  private void enqueueProcessSplits() {
+    // 如果挡圈是空闲状态并且split队列不为空则处理队列的split
+    if (currentSplitState == SplitState.IDLE && !splits.isEmpty()) {
+      currentSplitState = SplitState.RUNNING;
+      executor.execute(this::processSplits, "process input split");
+    }
+  }
+
+  private void processSplits() throws IOException {
+    // 获取头部split但是不移除
+    MergeOnReadInputSplit split = splits.peek();
+    // 为空则设置当前split状态为空闲
+    if (split == null) {
+      currentSplitState = SplitState.IDLE;
+      return;
+    }
+
+    // 1. open a fresh new input split and start reading as mini-batch
+    // 2. if the input split has remaining records to read, switches to another runnable to handle
+    // 3. if the input split reads to the end, close the format and remove the split from the queue #splits
+    // 4. for each runnable, reads at most #MINI_BATCH_SIZE number of records
+    if (format.isClosed()) {
+      // This log is important to indicate the consuming process,
+      // there is only one log message for one data bucket.
+      LOG.info("Processing input split : {}", split);
+      format.open(split);
+    }
+    try {
+      // 消费微批数据
+      consumeAsMiniBatch(split);
+    } finally {
+      currentSplitState = SplitState.IDLE;
+    }
+		// 再次调度
+    // Re-schedule to process the next split.
+    enqueueProcessSplits();
+  }
+
+  /**
+   * Consumes at most {@link #MINI_BATCH_SIZE} number of records
+   * for the given input split {@code split}.
+   *
+   * <p>Note: close the input format and remove the input split for the queue {@link #splits}
+   * if the split reads to the end.
+   *
+   * @param split The input split
+   */
+  private void consumeAsMiniBatch(MergeOnReadInputSplit split) throws IOException {
+    for (int i = 0; i < MINI_BATCH_SIZE; i++) {
+      // 如果没读取完毕，继续下发
+      if (!format.reachedEnd()) {
+        // 下发记录
+        sourceContext.collect(format.nextRecord(null));
+        // 消费标识+1
+        split.consume();
+      } else {
+
+        // close the input format
+        format.close();
+        // remove the split
+        // 删除队列里消费完的数据
+        splits.poll();
+        break;
+      }
+    }
+  }
+
+  @Override
+  public void processWatermark(Watermark mark) {
+    // we do nothing because we emit our own watermarks if needed.
+  }
+
+  @Override
+  public void dispose() throws Exception {
+    super.dispose();
+
+    if (format != null) {
+      format.close();
+      format.closeInputFormat();
+      format = null;
+    }
+
+    sourceContext = null;
+  }
+
+  @Override
+  public void close() throws Exception {
+    super.close();
+    output.close();
+    if (sourceContext != null) {
+      sourceContext.emitWatermark(Watermark.MAX_WATERMARK);
+      sourceContext.close();
+      sourceContext = null;
+    }
+  }
+
+  public static OneInputStreamOperatorFactory<MergeOnReadInputSplit, RowData> factory(MergeOnReadInputFormat format) {
+    return new OperatorFactory(format);
+  }
+
+  private enum SplitState {
+    IDLE, RUNNING
+  }
+
+  private static class OperatorFactory extends AbstractStreamOperatorFactory<RowData>
+      implements YieldingOperatorFactory<RowData>, OneInputStreamOperatorFactory<MergeOnReadInputSplit, RowData> {
+
+    private final MergeOnReadInputFormat format;
+
+    private transient MailboxExecutor mailboxExecutor;
+
+    private OperatorFactory(MergeOnReadInputFormat format) {
+      this.format = format;
+    }
+
+    @Override
+    public void setMailboxExecutor(MailboxExecutor mailboxExecutor) {
+      this.mailboxExecutor = mailboxExecutor;
+    }
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public <O extends StreamOperator<RowData>> O createStreamOperator(StreamOperatorParameters<RowData> parameters) {
+      StreamReadOperator operator = new StreamReadOperator(format, processingTimeService, mailboxExecutor);
+      operator.setup(parameters.getContainingTask(), parameters.getStreamConfig(), parameters.getOutput());
+      return (O) operator;
+    }
+
+    @Override
+    public Class<? extends StreamOperator> getStreamOperatorClass(ClassLoader classLoader) {
+      return StreamReadOperator.class;
+    }
+  }
+}
+```
+
+### MergeOnReadInputFormat
+
+* 基于Flink的InputFormat用于处理hoodie data和log文件，使用`ParquetRecordReader`替代`FSDataInputStream`读取文件，重写`createInputSplits`和`close`方法
+
+#### 核心属性
+
+```java
+// flink配置
+ private final Configuration conf;
+	// hadoop配置
+  private transient org.apache.hadoop.conf.Configuration hadoopConf;
+	// 表状态
+  private final MergeOnReadTableState tableState;
+  /**
+   * 读取数据迭代器
+   */
+  private transient RecordIterator iterator;
+  // for project push down
+  /**
+   * Full table names.
+   */
+  private final List<String> fieldNames;
+  /**
+   * Full field data types.
+   */
+  private final List<DataType> fieldTypes;
+  /**
+   * Default partition name when the field value is null.
+   */
+  private final String defaultPartName;
+  /**
+   * Required field positions.
+   */
+  private final int[] requiredPos;
+
+  // for limit push down
+  /**
+   * Limit for the reader, -1 when the reading is not limited.
+   */
+  private final long limit;
+  /**
+   * Recording the current read count for limit check.
+   */
+  private long currentReadCount = 0;
+  /**
+  标识是否输出delete记录
+   * Flag saying whether to emit the deletes. In streaming read mode, downstream
+   * operators need the DELETE messages to retract the legacy accumulator.
+   */
+  private boolean emitDelete;
+  /**
+   * Flag saying whether the input format has been closed.
+   */
+  private boolean closed = true;
+```
+
+#### open
+
+```java
+ public void open(MergeOnReadInputSplit split) throws IOException {
+    this.currentReadCount = 0L;
+    this.closed = false;
+    this.hadoopConf = StreamerUtil.getHadoopConf();
+   // 如果不存在delta log，创建base fileiterator
+    if (!(split.getLogPaths().isPresent() && split.getLogPaths().get().size() > 0)) {
+      if (split.getInstantRange() != null) {
+        // base file only with commit time filtering
+        this.iterator = new BaseFileOnlyFilteringIterator(
+            split.getInstantRange(),
+            this.tableState.getRequiredRowType(),
+            getReader(split.getBasePath().get(), getRequiredPosWithCommitTime(this.requiredPos)));
+      } else {
+        // base file only
+        this.iterator = new BaseFileOnlyIterator(getRequiredSchemaReader(split.getBasePath().get()));
+      }
+      // 如果不存在base file
+    } else if (!split.getBasePath().isPresent()) {
+      // log files only
+      if (OptionsResolver.emitChangelog(conf)) {
+        this.iterator = new LogFileOnlyIterator(getUnMergedLogFileIterator(split));
+      } else {
+        this.iterator = new LogFileOnlyIterator(getLogFileIterator(split));
+      }
+      // 创建skipMerge iterator
+    } else if (split.getMergeType().equals(FlinkOptions.REALTIME_SKIP_MERGE)) {
+      this.iterator = new SkipMergeIterator(
+          getRequiredSchemaReader(split.getBasePath().get()),
+          getLogFileIterator(split));
+      // 创建merge iterator，会根据precombine去最新的
+    } else if (split.getMergeType().equals(FlinkOptions.REALTIME_PAYLOAD_COMBINE)) {
+      this.iterator = new MergeIterator(
+          hadoopConf,
+          split,
+          this.tableState.getRowType(),
+          this.tableState.getRequiredRowType(),
+          new Schema.Parser().parse(this.tableState.getAvroSchema()),
+          new Schema.Parser().parse(this.tableState.getRequiredAvroSchema()),
+          this.requiredPos,
+          this.emitDelete,
+          this.conf.getBoolean(FlinkOptions.CHANGELOG_ENABLED),
+          this.tableState.getOperationPos(),
+          getFullSchemaReader(split.getBasePath().get()));
+    } else {
+      throw new HoodieException("Unable to select an Iterator to read the Hoodie MOR File Split for "
+          + "file path: " + split.getBasePath()
+          + "log paths: " + split.getLogPaths()
+          + "hoodie table path: " + split.getTablePath()
+          + "spark partition Index: " + split.getSplitNumber()
+          + "merge type: " + split.getMergeType());
+    }
+    mayShiftInputSplit(split);
+  }
+```
+
