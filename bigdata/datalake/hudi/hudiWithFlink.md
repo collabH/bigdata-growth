@@ -2605,7 +2605,7 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
 
 #### open
 
-```java
+```#java
  public void open(MergeOnReadInputSplit split) throws IOException {
     this.currentReadCount = 0L;
     this.closed = false;
@@ -2659,5 +2659,280 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
     }
     mayShiftInputSplit(split);
   }
+```
+
+### 读取Hudi表
+
+```java
+public DataStream<RowData> produceDataStream(StreamExecutionEnvironment execEnv) {
+        @SuppressWarnings("unchecked")
+        TypeInformation<RowData> typeInfo =
+            (TypeInformation<RowData>) TypeInfoDataTypeConverter.fromDataTypeToTypeInfo(getProducedDataType());
+  // 	根据配置是否流式读取
+        if (conf.getBoolean(FlinkOptions.READ_AS_STREAMING)) {
+          StreamReadMonitoringFunction monitoringFunction = new StreamReadMonitoringFunction(
+              conf, FilePathUtils.toFlinkPath(path), metaClient, maxCompactionMemoryInBytes);
+          InputFormat<RowData, ?> inputFormat = getInputFormat(true);
+          if (!(inputFormat instanceof MergeOnReadInputFormat)) {
+            throw new HoodieException("No successful commits under path " + path);
+          }
+          OneInputStreamOperatorFactory<MergeOnReadInputSplit, RowData> factory = StreamReadOperator.factory((MergeOnReadInputFormat) inputFormat);
+          SingleOutputStreamOperator<RowData> source = execEnv.addSource(monitoringFunction, "streaming_source")
+              .uid("uid_streaming_source_" + conf.getString(FlinkOptions.TABLE_NAME))
+              .setParallelism(1)
+              .transform("split_reader", typeInfo, factory)
+              .uid("uid_split_reader_" + conf.getString(FlinkOptions.TABLE_NAME))
+              .setParallelism(conf.getInteger(FlinkOptions.READ_TASKS));
+          return new DataStreamSource<>(source);
+        } else {
+          InputFormatSourceFunction<RowData> func = new InputFormatSourceFunction<>(getInputFormat(), typeInfo);
+          DataStreamSource<RowData> source = execEnv.addSource(func, asSummaryString(), typeInfo);
+          return source.name("bounded_source").setParallelism(conf.getInteger(FlinkOptions.READ_TASKS));
+        }
+      }
+    };
+  }
+```
+
+### StreamReadMonitoringFunction
+
+```java
+public class StreamReadMonitoringFunction
+    extends RichSourceFunction<MergeOnReadInputSplit> implements CheckpointedFunction {
+  private static final Logger LOG = LoggerFactory.getLogger(StreamReadMonitoringFunction.class);
+  private static final long serialVersionUID = 1L;
+  // 监听的表路径
+  private final Path path;
+  // 监听的间隔
+  private final long interval;
+	// ck lock保证数据一致性写入
+  private transient Object checkpointLock;
+	// 标识允许状态
+  private volatile boolean isRunning = true;
+  private String issuedInstant;
+	// instant状态
+  private transient ListState<String> instantState;
+  private final Configuration conf;
+  private transient org.apache.hadoop.conf.Configuration hadoopConf;
+  private final HoodieTableMetaClient metaClient;
+	// 最大的compaction内存
+  private final long maxCompactionMemoryInBytes;
+  public StreamReadMonitoringFunction(
+      Configuration conf,
+      Path path,
+      HoodieTableMetaClient metaClient,
+      long maxCompactionMemoryInBytes) {
+    this.conf = conf;
+    this.path = path;
+    this.metaClient = metaClient;
+    this.interval = conf.getInteger(FlinkOptions.READ_STREAMING_CHECK_INTERVAL);
+    this.maxCompactionMemoryInBytes = maxCompactionMemoryInBytes;
+  }
+  @Override
+  public void initializeState(FunctionInitializationContext context) throws Exception {
+		// 防止state多次初始化
+    ValidationUtils.checkState(this.instantState == null,
+        "The " + getClass().getSimpleName() + " has already been initialized.");
+    this.instantState = context.getOperatorStateStore().getListState(
+        new ListStateDescriptor<>(
+            "file-monitoring-state",
+            StringSerializer.INSTANCE
+        )
+    );
+		// 恢复状态
+    if (context.isRestored()) {
+      LOG.info("Restoring state for the class {} with table {} and base path {}.",
+          getClass().getSimpleName(), conf.getString(FlinkOptions.TABLE_NAME), path);
+      List<String> retrievedStates = new ArrayList<>();
+      for (String entry : this.instantState.get()) {
+        retrievedStates.add(entry);
+      }
+      // 状态只存储一个元素
+      ValidationUtils.checkArgument(retrievedStates.size() <= 1,
+          getClass().getSimpleName() + " retrieved invalid state.");
+      // issuedInstant没被赋值
+      if (retrievedStates.size() == 1 && issuedInstant != null) {
+        // this is the case where we have both legacy and new state.
+        // the two should be mutually exclusive for the operator, thus we throw the exception.
+        throw new IllegalArgumentException(
+            "The " + getClass().getSimpleName() + " has already restored from a previous Flink version.");
+
+      } else if (retrievedStates.size() == 1) {
+        this.issuedInstant = retrievedStates.get(0);
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("{} retrieved a issued instant of time {} for table {} with path {}.",
+              getClass().getSimpleName(), issuedInstant, conf.get(FlinkOptions.TABLE_NAME), path);
+        }
+      }
+    }
+  }
+
+  @Override
+  public void open(Configuration parameters) throws Exception {
+    super.open(parameters);
+    this.hadoopConf = StreamerUtil.getHadoopConf();
+  }
+
+  @Override
+  public void run(SourceFunction.SourceContext<MergeOnReadInputSplit> context) throws Exception {
+    // 获取cklock
+    checkpointLock = context.getCheckpointLock();
+    while (isRunning) {
+      synchronized (checkpointLock) {
+        monitorDirAndForwardSplits(context);
+      }
+      TimeUnit.SECONDS.sleep(interval);
+    }
+  }
+
+  @VisibleForTesting
+  public void monitorDirAndForwardSplits(SourceContext<MergeOnReadInputSplit> context) {
+    metaClient.reloadActiveTimeline();
+    HoodieTimeline commitTimeline = metaClient.getCommitsAndCompactionTimeline().filterCompletedInstants();
+    // 没有新增的提交
+    if (commitTimeline.empty()) {
+      LOG.warn("No splits found for the table under path " + path);
+      return;
+    }
+    List<HoodieInstant> instants = filterInstantsWithStart(commitTimeline, this.issuedInstant);
+    // get the latest instant that satisfies condition
+    final HoodieInstant instantToIssue = instants.size() == 0 ? null : instants.get(instants.size() - 1);
+    final InstantRange instantRange;
+    if (instantToIssue != null) {
+      if (this.issuedInstant != null) {
+        // had already consumed an instant
+        instantRange = InstantRange.getInstance(this.issuedInstant, instantToIssue.getTimestamp(),
+            InstantRange.RangeType.OPEN_CLOSE);
+      } else if (this.conf.getOptional(FlinkOptions.READ_STREAMING_START_COMMIT).isPresent()) {
+        // first time consume and has a start commit
+        final String specifiedStart = this.conf.getString(FlinkOptions.READ_STREAMING_START_COMMIT);
+        instantRange = InstantRange.getInstance(specifiedStart, instantToIssue.getTimestamp(),
+            InstantRange.RangeType.CLOSE_CLOSE);
+      } else {
+        // first time consume and no start commit, consumes the latest incremental data set.
+        HoodieInstant latestCommitInstant = metaClient.getCommitsTimeline().filterCompletedInstants().lastInstant().get();
+        instantRange = InstantRange.getInstance(latestCommitInstant.getTimestamp(), instantToIssue.getTimestamp(),
+            InstantRange.RangeType.CLOSE_CLOSE);
+      }
+    } else {
+      LOG.info("No new instant found for the table under path " + path + ", skip reading");
+      return;
+    }
+    // generate input split:
+    // 1. first fetch all the commit metadata for the incremental instants;
+    // 2. filter the relative partition paths
+    // 3. filter the full file paths
+    // 4. use the file paths from #step 3 as the back-up of the filesystem view
+
+    String tableName = conf.getString(FlinkOptions.TABLE_NAME);
+    List<HoodieCommitMetadata> metadataList = instants.stream()
+        .map(instant -> WriteProfiles.getCommitMetadata(tableName, path, instant, commitTimeline)).collect(Collectors.toList());
+    Set<String> writePartitions = getWritePartitionPaths(metadataList);
+    FileStatus[] fileStatuses = WriteProfiles.getWritePathsOfInstants(path, hadoopConf, metadataList);
+    if (fileStatuses.length == 0) {
+      LOG.warn("No files found for reading in user provided path.");
+      return;
+    }
+
+    HoodieTableFileSystemView fsView = new HoodieTableFileSystemView(metaClient, commitTimeline, fileStatuses);
+    final String commitToIssue = instantToIssue.getTimestamp();
+    final AtomicInteger cnt = new AtomicInteger(0);
+    final String mergeType = this.conf.getString(FlinkOptions.MERGE_TYPE);
+    List<MergeOnReadInputSplit> inputSplits = writePartitions.stream()
+        .map(relPartitionPath -> fsView.getLatestMergedFileSlicesBeforeOrOn(relPartitionPath, commitToIssue)
+        .map(fileSlice -> {
+          Option<List<String>> logPaths = Option.ofNullable(fileSlice.getLogFiles()
+              .sorted(HoodieLogFile.getLogFileComparator())
+              .map(logFile -> logFile.getPath().toString())
+              .collect(Collectors.toList()));
+          String basePath = fileSlice.getBaseFile().map(BaseFile::getPath).orElse(null);
+          return new MergeOnReadInputSplit(cnt.getAndAdd(1),
+              basePath, logPaths, commitToIssue,
+              metaClient.getBasePath(), maxCompactionMemoryInBytes, mergeType, instantRange);
+        }).collect(Collectors.toList()))
+        .flatMap(Collection::stream)
+        .collect(Collectors.toList());
+
+    for (MergeOnReadInputSplit split : inputSplits) {
+      context.collect(split);
+    }
+    // update the issues instant time
+    this.issuedInstant = commitToIssue;
+  }
+
+  @Override
+  public void close() throws Exception {
+    super.close();
+
+    if (checkpointLock != null) {
+      synchronized (checkpointLock) {
+        issuedInstant = null;
+        isRunning = false;
+      }
+    }
+
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Closed File Monitoring Source for path: " + path + ".");
+    }
+  }
+
+  @Override
+  public void cancel() {
+    if (checkpointLock != null) {
+      // this is to cover the case where cancel() is called before the run()
+      synchronized (checkpointLock) {
+        issuedInstant = null;
+        isRunning = false;
+      }
+    } else {
+      issuedInstant = null;
+      isRunning = false;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  //  Checkpointing
+  // -------------------------------------------------------------------------
+
+  @Override
+  public void snapshotState(FunctionSnapshotContext context) throws Exception {
+    this.instantState.clear();
+    if (this.issuedInstant != null) {
+      this.instantState.add(this.issuedInstant);
+    }
+  }
+
+  /**
+   * Returns the instants with a given issuedInstant to start from.
+   *
+   * @param commitTimeline The completed commits timeline
+   * @param issuedInstant  The last issued instant that has already been delivered to downstream
+   * @return the filtered hoodie instants
+   */
+  private List<HoodieInstant> filterInstantsWithStart(
+      HoodieTimeline commitTimeline,
+      final String issuedInstant) {
+    if (issuedInstant != null) {
+      return commitTimeline.getInstants()
+          .filter(s -> HoodieTimeline.compareTimestamps(s.getTimestamp(), GREATER_THAN, issuedInstant))
+          .collect(Collectors.toList());
+    } else if (this.conf.getOptional(FlinkOptions.READ_STREAMING_START_COMMIT).isPresent()) {
+      String definedStartCommit = this.conf.get(FlinkOptions.READ_STREAMING_START_COMMIT);
+      return commitTimeline.getInstants()
+          .filter(s -> HoodieTimeline.compareTimestamps(s.getTimestamp(), GREATER_THAN_OR_EQUALS, definedStartCommit))
+          .collect(Collectors.toList());
+    } else {
+      return commitTimeline.getInstants()
+          .collect(Collectors.toList());
+    }
+  }
+  private Set<String> getWritePartitionPaths(List<HoodieCommitMetadata> metadataList) {
+    return metadataList.stream()
+        .map(HoodieCommitMetadata::getWritePartitionPaths)
+        .flatMap(Collection::stream)
+        .collect(Collectors.toSet());
+  }
+}
+
 ```
 
