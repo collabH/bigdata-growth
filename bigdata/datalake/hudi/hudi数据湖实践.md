@@ -25,3 +25,11 @@
 #### Hudi解决方式
 
 ![](./img/流量毛刺.jpg)
+
+## hudi实践
+
+1. 0.8.0版本写Hudi重试失败导致数据丢失风险。解决办法：`hoodie.datasource.write.streaming.ignore.failed.batch`设置为false，不然Task会间隔`hoodie.datasource.write.streaming.retry.interval.ms`(默认2000)重试`hoodie.datasource.write.streaming.retry.count`(默认3)
+2. 根据业务场景合理设置保留版本数对应参数为`hoodie.keep.min.commits`、`hoodie.keep.max.commits`调大cleanup retention版本数对应参数为`hoodie.cleaner.commits.retained`
+3. 0.8.0版本Upsert模式下数据丢失问题。解决办法：`hoodie.datasource.write.insert.drop.duplicates`设置为false，这个参数会将已经存在index的record丢弃，如果存在update的record会被丢弃
+4. Spark读取hudi可能会存在path not exists的问题，这个是由于cleanup导致的，解决办法：调整文件版本并进行重试读取
+
