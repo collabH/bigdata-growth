@@ -9,7 +9,7 @@
 
 ## Flume适合场景
 
-![Flume场景](../zookeeper/img/Flume场景.jpg)
+![Flume场景](../../zookeeper/img/Flume场景.jpg)
 
 ## 运行流程
 
@@ -268,7 +268,7 @@ flume-ng agent -n a1 -c $FLUME_HOME/conf -f dir-flume-hdfs.conf
 
 ### 原理
 
-![flume事务原理](../zookeeper/img/flume事务原理.jpg)
+![flume事务原理](../../zookeeper/img/flume事务原理.jpg)
 
 * Flume使用`两个独立的事务`分别负责从`source到channel`以及从`channel到sink`的事件传递
 * 一旦事务中的所有事件全部传递到channel且提交成功，那么source就将该文件标记为已完成。如果`事件失败就会回滚保存在channel中等待重新传递`。
@@ -285,7 +285,7 @@ flume-ng agent -n a1 -c $FLUME_HOME/conf -f dir-flume-hdfs.conf
 
 ## Flume Agent原理
 
-![Agent原理流程图](../zookeeper/img/Agent原理流程图.jpg)
+![Agent原理流程图](../../zookeeper/img/Agent原理流程图.jpg)
 
 ### Multiplexing Channel Selector
 
@@ -310,7 +310,7 @@ a1.sources.r1.selector.default = c4
 
 ### 复制和多路复用
 
-![Agent原理流程图](../zookeeper/img/复制和多路复用.jpg)
+![Agent原理流程图](../../zookeeper/img/复制和多路复用.jpg)
 
 * Flume支持将事件流向一个或多个目的地。这种模式可以将相同数据复制到多个channel中，或者将不同数据分发到不同channel中，sink可以选择传送到不同的目的地。
 
@@ -439,7 +439,7 @@ flume-3.sources.s1.channels = c1
 
 ### 负载均衡和故障转移
 
-![Agent原理流程图](../zookeeper/img/负载均衡和故障转移.jpg)
+![Agent原理流程图](../../zookeeper/img/负载均衡和故障转移.jpg)
 
 * 将多个sink逻辑上分到一个sink组，sink组配合不同的SinkProcessor可以实现负载均衡和故障转移。
 
