@@ -481,6 +481,11 @@ Options:
 
 # Schema Evolution
 
+1. Backwards compatible: 向后兼容，用新的schema可以读取旧数据，如果字段没值，就用default值，这也是Hudi提供的兼容方式。
+2. Forwards compatible: 向前兼容，用旧schema可以读取新数据，Avro将忽略新加的字段，如果要向前兼容，删掉的字段必须要有默认值。
+3. Full compatible: 支持向前兼容，向后兼容，如果要全兼容，那么就需要只添加有默认值的字段，并且只移除有默认值的字段。
+4. No Compatibility Checking：这种情况一般来说就是需要强制改变某个字段的类型，此时就需要做全量的数据迁移，不推荐。
+
 * Hudi支持常见的模式演化场景，比如添加一个可空的字段或提升字段的数据类型，开箱即用。此外，该模式可以跨引擎查询，如Presto、Hive和Spark SQL。下表总结了与不同Hudi表类型兼容的模式更改类型。
 
 | Schema Change                                                | COW  | MOR  | Remarks                                                      |
