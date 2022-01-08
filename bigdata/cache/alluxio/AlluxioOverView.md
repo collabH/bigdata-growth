@@ -2,6 +2,8 @@
 
 # 特点
 
+## 特点
+
 ![Ecosystem](https://d39kqat1wpn1o5.cloudfront.net/app/uploads/2021/07/alluxio-overview-r071521.png)
 
 * **内存速度 I/O**：Alluxio 能够用作分布式共享缓存服务，这样与 Alluxio 通信的计算应用程序可以透明地缓存频繁访问的数据（尤其是从远程位置），以提供内存级 I/O 吞吐率。此外，Alluxio的层次化存储机制能够充分利用内存、固态硬盘或者磁盘，降低具有弹性扩张特性的数据驱动型应用的成本开销。
@@ -62,6 +64,11 @@ alluxio fs mount --readonly alluxio://localhost:19998/mnt/hdfs hdfs://hadoop:802
 
 * 使用Alluxio加速数据访问,如果ls文件状态下显示100%则代表文件已经完全加载至`alluxio`则可以利用`alluxio`来加速读取。
 
+# 核心功能
+
+## 缓存
+
+* 
 # 核心功能
 
 ## 缓存
@@ -172,4 +179,147 @@ alluxio.worker.tieredstore.level1.dirs.quota=2TB,5TB,500GB
 
 ##### 块对齐
 
-* 
+* Alluxio将动态地跨层移动数据块，以使块组成与配置的块注释策略一致。为了辅助块对齐，Alluxio会监视I/O模式并会跨层重组数据块，以确保 **较高层的最低块比下面层的最高块具有更高的次序**。
+* `alluxio.worker.management.tier.align.enabled`:是否启用层对齐任务。 (默认: `true`)
+* `alluxio.worker.management.tier.align.range`:单个任务运行中对齐多少个块。 (默认值:`100`)
+* `alluxio.worker.management.tier.align.reserved.bytes`:配置多层时，默认情况下在所有目录上保留的空间大小。 (默认:1GB) 用于内部块移动。
+* `alluxio.worker.management.tier.swap.restore.enabled`:控制一个特殊任务，该任务用于在内部保留空间用尽时unblock层对齐。 (默认:true) 由于Alluxio支持可变的块大小，因此保留空间可能会用尽，因此，当块大小不匹配时在块对齐期间在层之间块交换会导致一个目录保留空间的减少。
+
+##### 块升级
+
+* 当较高层具有可用空间时，低层的块将向上层移动，以便更好地利用较快的磁盘介质，因为假定较高的层配置了较快的磁盘介质。
+* `alluxio.worker.management.tier.promote.enabled`:是否启用层升级任务。 (默认: `true`)
+* `alluxio.worker.management.tier.promote.range`:单个任务运行中升级块数。 (默认值:`100`)
+* `alluxio.worker.management.tier.promote.quota.percent`:每一层可以用于升级最大百分比。 一旦其已用空间超过此值，向此层升级将停止。 (0表示永不升级，100表示总是升级。)
+
+### Alluxio中数据生命周期管理
+
+* 基础概念
+  * free：释放alluxio缓存中的数据，并不会删除UFS中的数据，释放后的数据会从UFS中拉取性能会下降。
+  * load：将数据从UFS复制到Alluxio缓存中。
+  * persist：将Alluxio存储中可能被修改或未修改的数据写回UFS，这样在alluxio节点发生故障时数据仍然可以恢复。
+  * TTL(time to Live):文件和目录的生存时间。在数据超过其生存时间时将它们从Alluxio空间中删除。还可以配置 TTL来删除存储在UFS中的相应数据。
+
+```shell
+# 释放数据
+alluxio fs free /tmp/data
+# 加载数据
+alluxio fs load /LICENSE
+# 持久化数据
+alluxio fs persist /LICENSE
+# 修改alluxio-site.properties
+## 设置ttl检查间隔,每间隔多久检查一次ttl是否过期
+alluxio.master.ttl.checker.interval=10m
+## 设置文件ttl
+alluxio.user.file.create.ttl=3m
+## 设置ttl过期后的action
+alluxio.user.file.create.ttl.action=DELETE
+# 使用ttl api设置
+SetTTL(path，duration，action)
+`path` 		Alluxio命名空间中的路径
+`duration`	TTL动作生效前的毫秒数，这会覆盖任何先前的设置
+`action`	生存时间过去后要执行的`action`。 `FREE`将导致文件
+            从Alluxio存储中删除释放，无论其目前的状态如何。 `DELETE`将导致
+            文件从Alluxio命名空间和底层存储中删除。
+            注意:`DELETE`是某些命令的默认设置，它将导致文件被
+            永久删除。
+```
+
+### 在Alluxio中管理数据复制
+
+#### 被动复制
+
+* Alluxio中的每个文件都包含一个或多个分布在集群中存储的存储块。默认情况下，Alluxio可以根据工作负载和存储容量自动调整不同块的复制级别，默认情况下，此复制或征回决定以及相应的数据传输 对访问存储在Alluxio中数据的用户和应用程序完全透明。
+
+#### 主动复制
+
+* `alluxio.user.file.replication.min`是此文件的最小副本数。 默认值为0，即在默认情况下，Alluxio可能会在文件变冷后从Alluxio管理空间完全删除该文件。 通过将此属性设置为正整数，Alluxio 将定期检查此文件中所有块的复制级别。当某些块的复制数不足时，Alluxio不会删除这些块中的任何一个，而是主动创建更多 副本以恢复其复制级别。
+* `alluxio.user.file.replication.max`是最大副本数。一旦文件该属性 设置为正整数，Alluxio将检查复制级别并删除多余的副本。将此属性设置为-1为不设上限(默认情况)，设置为0以防止 在Alluxio中存储此文件的任何数据。注意，`alluxio.user.file.replication.max`的值必须不少于`alluxio.user.file.replication.min`。
+
+```shell
+# 设置file的复制副本区间在3~5，max为-1表示复制无上限
+alluxio fs setReplication --min 3 --max 5 /file
+# 使用—R设置/dir目录下所有文件复制级别
+alluxio fs setReplication --min 3 --max -5 -R /dir
+# 检查复制状态,查看replicationMin和replicationMax字段。
+alluxio fs stat /foo
+```
+
+### 检查Alluxio缓存容量和使用情况
+
+```shell
+alluxio fsadmin report
+# 获取使用的总字节数
+alluxio fs getUsedBytes
+# 获取总容量，单位字节
+alluxio fs getCapacityBytes
+```
+
+## 统一命名空间
+
+### 概述
+
+#### 统一命名空间
+
+* 用户可以通过统一的alluxio命令来访问多个外部存储。
+
+![](./img/统一命名空间.png)
+
+#### UFS命名空间
+
+* 每个已挂载的基础文件系统 在Alluxio命名空间中有自己的命名空间； 称为UFS命名空间。
+
+### 透明命名机制
+
+* 透明命名机制保证alluxio和底层存储系统命名空间身份一致，当用户在 Alluxio命名空间中对一个持久化的对象进行重命名或者删除操作时，底层存储系统中也会对其执行相同的重命名或删除操作。
+
+![](./img/透明命名机制.png)
+
+### 挂载底层存储系统
+
+#### 根挂载点
+
+* 将一个HDFS路径挂在到Alluxio命名空间的根目录
+
+```shell
+alluxio.master.mount.table.root.ufs=hdfs://hadoop:8020
+# 根据配置前缀来配置根挂载点的挂在选项alluxio.master.mount.table.root.option.<some alluxio property>
+alluxio.master.mount.table.root.option.aws.accessKeyId=<AWS_ACCESS_KEY_ID>
+alluxio.master.mount.table.root.option.aws.secretKey=<AWS_SECRET_ACCESS_KEY>
+alluxio.master.mount.table.root.option.alluxio.security.underfs.hdfs.kerberos.client.principal=client
+alluxio.master.mount.table.root.option.alluxio.security.underfs.hdfs.kerberos.client.keytab.file=keytab
+alluxio.master.mount.table.root.option.alluxio.security.underfs.hdfs.impersonation.enabled=true
+alluxio.master.mount.table.root.option.alluxio.underfs.version=2.7
+```
+
+#### 嵌套挂载点
+
+* 除了根挂载点之外，其他底层文件系统也可以挂载到Alluxio命名空间中。 这些额外的挂载点可以通过`mount`命令在运行时添加到Alluxio。 `--option`选项允许用户传递挂载操作的附加参数，如凭证。
+
+```shell
+# 挂载hdfs
+alluxio fs mount /mnt/hdfs hdfs://host1:9000/data/
+# 挂载s3存储
+alluxio fs mount \
+  --option aws.accessKeyId=<accessKeyId> --option aws.secretKey=<secretKey> \
+  /mnt/s3 s3://data-bucket/
+```
+
+* 注意，挂载点也允许嵌套。 例如，如果将UFS挂载到 `alluxio:///path1`，可以在`alluxio:///path1/path2`处挂载另一个UFS。
+
+### UDFS元数据同步
+
+* 当Alluxio扫描UFS目录并加载其子目录元数据时， 它将创建元数据的副本，以便将来无需再从UFS加载。 元数据的缓存副本将根据 `alluxio.user.file.metadata.sync.interval`客户端属性配置的间隔段刷新，默认值`-1`表示在初始加载后不会再重新同步元数据。
+
+```shell
+# 同步特定目录元数据
+alluxio fs startSync /syncdir
+alluxio fs stopSync /syncdir
+# 获取同步列表
+alluxio fs getSyncPathList
+```
+
+
+
+## Catalog
+
