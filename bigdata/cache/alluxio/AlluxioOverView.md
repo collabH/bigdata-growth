@@ -319,7 +319,79 @@ alluxio fs stopSync /syncdir
 alluxio fs getSyncPathList
 ```
 
-
-
 ## Catalog
+
+### 系统架构
+
+```
+Query Engine     Metadata service                   Under meta service
++--------+       +--------------------------+       +----------------+
+| Presto | <---> | Alluxio Catalog Service  | <---> | Hive Metastore |
++--------+       +--------------------------+       +----------------+
+```
+
+### 配置catalog
+
+* 默认情况下catalog服务是开启的，相关配置需要在`alluxio-site.properties`中配置
+
+```properties
+# 关闭catalog服务
+alluxio.table.enabled=false
+# catalog挂载目录
+alluxio.table.catalog.path=</desired/alluxio/path>
+```
+
+#### 管理catalog
+
+* table cli命令，可以添加对应的元数据db
+
+```shell
+alluxio table
+Usage: alluxio table [generic options]
+	 [attachdb [-o|--option <key=value>] [--db <alluxio db name>] [--ignore-sync-errors] <udb type> <udb connection uri> <udb db name>]
+	 [detachdb <db name>]
+	 [ls [<db name> [<table name>]]]
+	 [sync <db name>]
+	 [transform <db name> <table name>]
+	 [transformStatus [<job ID>]]
+```
+
+* demo
+
+```shell
+# 添加hive metastore
+alluxio table attachdb --db alluxio_db hive \
+    thrift://metastore_host:9083 default
+# 查看存在的db
+alluxio table ls 
+# 查看某个db下所有的表
+alluxio table ls hivedb
+# 查看表配置
+alluxio table ls alluxio_db test
+
+# 移出数据库
+alluxio table detach <database name>
+# 同步数据库
+alluxio table sync <database name>
+```
+
+## 数据转换
+
+### 转换类型
+
+* 合并文件，便于每个文件都至少达到一定的大小，并且最多不超过一定数量的文件
+* 将CSV文件转换为Parquet文件
+
+#### demo
+
+```shell
+# 数据转换之前需要先`attach`一个数据，不如将Hive的默认数据库添加至Alluxio
+alluxio table attachdb hive thrift://localhost:9083 default
+# 将default库下的test表转换为最多100个文件
+alluxio table transform default test
+# 输出的日志
+Started transformation job with job ID 1572296710137, you can monitor the status of the job with './bin/alluxio table transformStatus 1572296710137'.
+# 查看数据转换状态
+alluxio table transformStatus 1572296710137
+```
 
