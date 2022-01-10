@@ -53,6 +53,7 @@
 #### alluxio
 
 * [Alluxio概览](bigdata/cache/alluxio/AlluxioOverView.md)
+* [Alluxio部署](bigdata/cache/alluxio/AlluxioDeployment.md)
 
 ### datalake
 
