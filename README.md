@@ -54,6 +54,7 @@
 
 * [Alluxio概览](bigdata/cache/alluxio/AlluxioOverView.md)
 * [Alluxio部署](bigdata/cache/alluxio/AlluxioDeployment.md)
+* [Alluxio整合计算引擎](bigdata/cache/alluxio/AlluxioWithEngine.md)
 
 ### datalake
 
