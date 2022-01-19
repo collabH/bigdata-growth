@@ -1,7 +1,5 @@
 # 概述
 
-# 特点
-
 ## 特点
 
 ![Ecosystem](https://d39kqat1wpn1o5.cloudfront.net/app/uploads/2021/07/alluxio-overview-r071521.png)
@@ -320,6 +318,15 @@ alluxio fs getSyncPathList
 ```
 
 ## Catalog
+
+### 系统架构
+
+```
+Query Engine     Metadata service                   Under meta service
++--------+       +--------------------------+       +----------------+
+| Presto | <---> | Alluxio Catalog Service  | <---> | Hive Metastore |
++--------+       +--------------------------+       +----------------+
+```
 
 ### 系统架构
 
