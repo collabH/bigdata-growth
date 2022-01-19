@@ -10,7 +10,7 @@
 
 ### 不支持事务
 
-* 不支持事务导致下游任务可能会读取到未写完的数据造成数据统计错误。为了规避该问题，通常控制读写任务顺序调用，在保证写任务完成后才能启动读任务。但并不是所有读任务都能够被调度系统约束住，在读取时仍存在该问题。
+* 不支持事务导致下游任务可能会`读取到未写完的数据`造成数据统计错误。为了规避该问题，通常`控制读写任务顺序调用`，在保证写任务完成后才能启动读任务。但并不是所有读任务都能够被调度系统约束住，在读取时仍存在该问题。
 
 ### 数据更新效率低
 
@@ -26,7 +26,7 @@
 
 ### 小批量增量数据处理成本高
 
-* 传统数据湖为了实现增量ETL，通常将增量数据按照分区的方式进行存储，若为了实现T+0的数据处理，增量数据需要按照小时级或者分钟级的分区粒度。该种实现形式会导致小文件问题，大量分区也会导致元数据服务压力增大。
+* 传统数据湖为了实现增量ETL，通常将`增量数据按照分区的方式进行存储`，若为了实现T+0的数据处理，增量数据需要按照小时级或者分钟级的分区粒度。该种实现形式会导致小文件问题，大量分区也会导致元数据服务压力增大。
 
 # Hudu概览
 
@@ -37,10 +37,10 @@
 ## 支持的能力
 
 * 支持ACID
-  * 支持SnapShot数据隔离，保证数据读取完整性，实现读写并发能力
+  * 支持`Snapshot`数据隔离，保证数据读取完整性，实现读写并发能力
   * 数据commit，数据入湖秒级可见
 * 快速Upsert能力
-  * 支持可插拔索引进制实现新增更新数据快速入湖
+  * 支持`可插拔索引机制`实现新增更新数据快速入湖
   * 扩展Merge操作，实现新增、更新、删除混合数据同时入湖
   * 支持写入同步小文件合并能力，写入数据自动按照预设文件大小进行文件合并
 * Schema Evolution
@@ -57,16 +57,16 @@
 
 ## Timeline
 
-* 在其核心，Hudi维护了在不同时刻对表执行的所有操作的时间轴，这有助于提供表的瞬时视图，同时也有效地支持按到达顺序检索数据。一个Hudi instant由以下组件组成
+* 在其核心，Hudi维护了在不同时刻对表执行的所有操作的时间轴，这有助于提供表的`瞬时视图`，同时也有效地支持按到达顺序检索数据。一个Hudi instant由以下组件组成
   * `Instant action` : 表中执行的动作类型
   * `Instant time` :瞬时时间通常是一个时间戳(例如:20190117010349)，它按动作开始时间的顺序单调增加。
   * `state` :瞬时的当前状态
   
 * 主要操作包括一下：
-  * `COMMIT`:将一批记录原子方式写入库
-  * `CLEANS`:删除表中不再需要的旧版本文件的后台活动。
-  * `DELTA_COMMIT`:增量提交指的是将一批记录原子写入MergeOnRead类型的表中，其中一些/所有的数据可以只写入增量日志。
-  * `COMPACTION`:后台进行COMPACTION操作合并数据，例如基于log文件移动修改的行列格式等
+  * `COMMIT`:将一批记录`原子`方式写入库
+  * `CLEANS`:删除表中不再需要的`旧版本文件`的后台线程。
+  * `DELTA_COMMIT`:`增量提交`指的是将一批记录原子写入`MergeOnRead`类型的表中，其中一些/所有的数据可以只写入增量日志。
+  * `COMPACTION`:后台进行`COMPACTION`操作合并数据，例如基于log文件移动修改的行列格式等
   * `ROLLBACK`:表示提交/增量提交不成功并回滚，删除在此期间在此期间产生的任何部分文件
   * `SAVEPOINT`:将某些文件组标记为“已保存”，以便清洁器不会删除它们。在灾难/数据恢复方案的情况下，它有助于将表恢复到时间轴上的点。
   
@@ -78,7 +78,7 @@
   
   ```json
   {
-    // 分区和写入的新鲜
+    // 分区和写入的状态
     "partitionToWriteStats" : {
       "1" : [ {
         "fileId" : "be3c777e-7ac8-4c35-bde5-0e2fa6f17914",
@@ -197,7 +197,7 @@
       } ]
     },
     "compacted" : false,
-    // 元数据 avro
+    // 元数据 avro 映射data数据的配置
     "extraMetadata" : {
       "schema" : "{\"type\":\"record\",\"name\":\"record\",\"fields\":[{\"name\":\"id\",\"type\":[\"null\",\"int\"],\"default\":null},{\"name\":\"name\",\"type\":[\"null\",\"string\"],\"default\":null}]}"
     },
@@ -213,6 +213,7 @@
         "present" : false
       }
     },
+    // 文件绝对路径映射
     "fileIdAndRelativePaths" : {
       "c6387730-ec0e-4d14-89c0-ab1a8a77b8a0" : "4/c6387730-ec0e-4d14-89c0-ab1a8a77b8a0_0-4-0_20211030185417.parquet",
       "be3c777e-7ac8-4c35-bde5-0e2fa6f17914" : "1/be3c777e-7ac8-4c35-bde5-0e2fa6f17914_1-4-0_20211030185417.parquet",
@@ -222,32 +223,33 @@
     },
     "totalRecordsDeleted" : 0,
     "totalLogRecordsCompacted" : 0,
+    // 写入分区
     "writePartitionPaths" : [ "1", "2", "3", "4", "5" ],
     "totalCreateTime" : 3598
   }
   ```
 
-**Arrival time**: 数据到达 Hudi 的时间，commit time
+**Arrival time**: 数据到达 Hudi 的时间，`commit time`
 
 **Event time**: record 中记录的时间
 
 ![](./img/hudi_timeline.png)
 
-* 上面的例子显示了在10:00到10:20之间在Hudi表上发生的upserts，大约每5分钟，在Hudi时间轴上留下提交元数据，以及其他后台清理/压缩。需要做的一个关键观察是，提交时间指示数据的到达时间(10:20AM)，而实际数据组织反映实际时间或事件时间，数据的目的是(从07:00开始的每小时桶)。在权衡延迟和数据完整性时，这是两个关键概念。
+* 在10:00到10:20之间在Hudi表上发生的upserts，大约每5分钟，在Hudi时间轴上留下提交元数据，以及其他后台清理/压缩。需要做的一个关键观察是，提交时间指示数据的到达时间`(commit time)`(10:20AM)，而实际数据组织反映实际时间或事件时间，数据的目的是(从07:00开始的每小时桶)。在权衡延迟和数据完整性时，这是两个关键概念。
 * 当有延迟到达的数据(原定为9:00到达>的数据在10:20晚了1小时)时，我们可以看到upsert将新数据生成到更旧的时间桶/文件夹中。在时间轴的帮助下，尝试获取从10:00小时以来成功提交的所有新数据的增量查询，能够非常有效地只使用更改的文件，而不必扫描所有时间桶> 07:00。这里主要是延迟的时间虽然10点20才commit但是他的数据增量逻辑9点的分区中，根据commit time增量读取仍然能读取到延迟的数据。
 
 ## 文件布局
 
 * Hudi将表组织到DFS的`basepath`的目录结构中。表被分成多个分区，分区是包含该分区数据文件的文件夹，非常类似于Hive表。每个分区由它的`partitionpath`惟一标识，`partitionpath`相对于基本路径。
-* 在每个分区中，文件被组织成`file group`，由`file id`唯一标识。每个文件组包含一系列`file slices`,其中，每个`slice`包含在某个提交/压缩瞬间生成的基本文件(`*.parquet`)，以及一组日志文件(`*.log.*`)，这些日志文件包含自基本文件生成以来对基本文件的插入/更新。
+* 在每个分区中，文件被组织成`file group`，由`file id`唯一标识。每个`file group`包含一系列`file slices`,其中，每个`slice`包含在某个提交/压缩瞬间生成的基本文件(`*.parquet`)，以及一组日志文件(`*.log.*`)，这些日志文件包含自基本文件生成以来对基本文件的插入/更新。
 
 ### index
 
-* hudi提供高性能的upsert能力，通过索引机制将给定的hoodie键(记录键+分区路径)一致地映射到一个文件id。记录键和文件组/文件id之间的映射，在记录的第一个版本被写入文件后不会改变。简言之，映射文件组包含一组记录的所有版本。
+* hudi提供高性能的upsert能力，通过索引机制将给定的`hoodie键(记录键+分区路径)`一致地映射到一个`文件id`。记录键和文件组/文件id之间的映射，在记录的第一个版本被写入文件后不会改变。简言之，映射文件组包含一组记录的所有版本。
 
 ## Table Types&Queries
 
-* hudi表列席定义数据如何被索引和布局在DFS上并且如何在这样的组织之上实现上面的原语和时间轴活动（数据如何被写入），反过来，查询类型定义底层数据是如何暴露于查询的（即如何读取数据）。
+* hudi表类型定义数据如何被索引和布局在DFS上并且如何在这样的组织之上实现上面的原语和时间轴活动（数据如何被写入），反过来，查询类型定义底层数据是如何暴露于查询的（即如何读取数据）。
 
 | Table Type    | Supported Query types                  |
 | ------------- | -------------------------------------- |
@@ -256,12 +258,12 @@
 
 ### Table Type
 
-* Copy On Write:使用专用的columnar文件格式存在数据(例如parquet)，通过在写入期间执行同步合并，简单地更新版本和重写文件。
+* Copy On Write:使用专用的columnar文件格式存在数据(例如parquet)，通过在`写入期间执行同步合并`，简单地更新版本和重写文件。
   * 寻找一种简单的替换现有的parquet表的方法，而无需实时数据。
   * 当前的工作流是重写整个表/分区以处理更新，而每个分区中实际上只有几个文件发生更改。
-  * 想使操作更为简单（无需压缩等），并且摄取/写入性能仅受parquet文件大小以及受更新影响文件数量限制
+  * 想使操作更为简单（无需compact等），并且摄取/写入性能仅受parquet文件大小以及受更新影响文件数量限制
   * 工作流很简单，并且不会突然爆发大量更新或插入到较旧的分区。COW写入时付出了合并成本，因此，这些突然的更改可能会阻塞摄取，并干扰正常摄取延迟目标。
-* Merge On Read:使用混合的columnar(例如parquet)+row based(例如avro)文件格式来存储数据。更新被记录到增量文件中，然后被压缩以同步或异步地生成新版本的columnar文件。
+* Merge On Read:使用混合的columnar(例如parquet)+row based(例如avro)文件格式来存储数据。更新被记录到增量文件中，然后被compact以同步或异步地生成新版本的columnar文件。
   * 希望数据尽快被摄取并尽可能快地可被查询。
   * 工作负载可能会突然出现模式的峰值/变化（例如，对上游数据库中较旧事务的批量更新导致对DFS上旧分区的大量更新）。异步压缩（Compaction）有助于缓解由这种情况引起的写放大，而正常的提取则需跟上上游流的变化。
 
@@ -278,7 +280,7 @@
 ### Query types
 
 * hudi支持以下查询类型：
-  * `Snapshot Queries`：查询查看给定提交或压缩操作时表的最新快照。对于**MergeOnRead**，它通过动态合并最新文件片的base文件和delte文件来公开接近实时的数据(几分钟)。对于**CopyOnWrite**，它提供了现有parquet表的临时替代品，同时提供了插入/删除和其他写侧功能。
+  * `Snapshot Queries`：查询查看给定提交或压缩操作时表的最新快照。对于**MergeOnRead**，它通过动态合并最新文件片的base文件和delte文件来公开接近实时的数据(几分钟)。对于**CopyOnWrite**，它提供了现有parquet表的临时替代品，同时提供了插入/删除和其他写功能。
   * `Incremental Queries`:由于给定的commit/compaction，查询只能看到写入表的新数据。这有效地提供了更改流来支持增量数据管道。
   * `Read Optimized Queries`:查询查看给定commit/compaction操作时的表的最新快照。仅公开最新文件片中的base/columnar文件，并保证与非hudi columnar表相比具有相同的columnar查询性能，只读取最近compaction的base file。
 
@@ -291,20 +293,20 @@
 
 ## Copy On Write Table
 
-* Copy-On-Write的File Slices只包含base/columnar文件并且每次提交都提供一个新版本的base文件。换句话说，我们隐式地压缩了每个提交，这样只存在columnar数据。因此，写放大(输入数据的1个字节所写的字节数)要高得多，而读放大为零。这是分析负载所需要的属性，因为分析场景的压力在于读场景。
+* Copy-On-Write的`File Slices`只包含base/columnar(底层数据parquet)文件并且每次提交都提供一个新版本的base文件。隐式地压缩了每个提交，这样只存在columnar数据。因此，写放大(输入数据的1个字节所写的字节数)要高得多，而读放大为零。这是分析负载所需要的属性，因为分析场景的压力在于读场景。
 * 下面演示了从概念上讲，当数据写入copy-on-write表并在其上运行两个查询时，这是如何工作的。
 
 ![](./img/copy_on_write.png)
 
-* 当数据写入的时候，对现有文件组的更新将为该文件组生成一个带有提交即时时间戳的新片，插入时，分配一个新的文件组，并为该文件组写入第一个片。这些文件片和它们的提交时间在上面用颜色编码。针对这样一个表运行的SQL查询(例如:select count(*)计算该分区中的总记录)，首先检查最近提交的时间轴，然后过滤每个文件组中除最近的文件片以外的所有文件片。如您所见，旧查询没有看到当前用粉红色编码的inflight提交文件，但在提交后开始的新查询将获得新数据。因此，查询不受任何写失败/部分写的影响，只在已提交的数据上运行。
+* 当数据写入的时候，对现有文件组的更新将为该文件组生成一个带有`提交即时时间戳`的新片，插入时，分配一个新的文件组，并为该文件组写入第一个片。这些文件片和它们的提交时间在上面用颜色编码。针对这样一个表运行的SQL查询(例如:select count(*)计算该分区中的总记录)，首先检查最近提交的时间轴，然后过滤每个文件组中除最近的文件片以外的所有文件片。如您所见，旧查询没有看到当前用粉红色编码的inflight提交文件，但在提交后开始的新查询将获得新数据。因此，查询不受任何写失败/部分写的影响，只在已提交的数据上运行。
 * Copy On Write Table的目的，是从根本上改进目前表的管理方式
-  * 第一类支持在文件级原子更新数据，而不是重写整个表/分区
+  * 第一类支持在文件级`原子更新数据，而不是重写整个表/分区`
   * 能够增量地消费更改，而不是浪费的扫描或摸索启发式
   * 严格控制文件大小以保持优异的查询性能(小文件会极大地影响查询性能)。
 
 ## Merge On Read Table
 
-* Merge on Read Table是copy on write的一个超集，从某种意义上说，它仍然支持对表的读优化查询，方法是只公开最新文件片中的base/columnar文件。另外，它将每个文件组传入的upserts存储到基于行的增量日志中，以便在查询期间动态地将增量日志应用到每个文件id的最新版本中，从而支持快照查询。因此，这种表类型试图智能地平衡读和写放大，以提供接近实时的数据。这里最重要的变化是压缩器，它现在仔细选择需要将哪些增量日志文件压缩到它们的columnar base文件中，以保持查询性能(较大的增量日志文件在查询端合并数据时会导致更长的合并时间)
+* Merge on Read Table是`copy on write`的一个超集，从某种意义上说，它仍然支持对表的读优化查询，方法是只公开最新文件片中的base/columnar文件。另外，它将每个文件组传入的upserts存储到基于行的增量日志中，以便在查询期间动态地将增量日志应用到每个文件id的最新版本中，从而支持快照查询。因此，这种表类型试图智能地平衡读和写放大，以提供接近实时的数据。这里最重要的变化是压缩(compact)器，它现在仔细选择需要将哪些增量日志文件压缩到它们的columnar base文件中，以保持查询性能(较大的增量日志文件在查询端合并数据时会导致更长的合并时间)
 
 ![](./img/merge_on_read.png)
 
@@ -490,18 +492,18 @@ Options:
 
 | Schema Change                                                | COW  | MOR  | Remarks                                                      |
 | ------------------------------------------------------------ | ---- | ---- | ------------------------------------------------------------ |
-| Add a new nullable column at root level at the end           | Yes  | Yes  | `Yes` means that a write with evolved schema succeeds and a read following the write succeeds to read entire dataset. |
-| Add a new nullable column to inner struct (at the end)       | Yes  | Yes  |                                                              |
-| Add a new complex type field with default (map and array)    | Yes  | Yes  |                                                              |
-| Add a new nullable column and change the ordering of fields  | No   | No   | Write succeeds but read fails if the write with evolved schema updated only some of the base files but not all. Currently, Hudi does not maintain a schema registry with history of changes across base files. Nevertheless, if the upsert touched all base files then the read will succeed. |
-| Add a custom nullable Hudi meta column, e.g. `_hoodie_meta_col` | Yes  | Yes  |                                                              |
-| Promote datatype from `int` to `long` for a field at root level | Yes  | Yes  | For other types, Hudi supports promotion as specified in [Avro schema resolution](http://avro.apache.org/docs/current/spec#Schema+Resolution). |
-| Promote datatype from `int` to `long` for a nested field     | Yes  | Yes  |                                                              |
-| Promote datatype from `int` to `long` for a complex type (value of map or array) | Yes  | Yes  |                                                              |
-| Add a new non-nullable column at root level at the end       | No   | No   | In case of MOR table with Spark data source, write succeeds but read fails. As a **workaround**, you can make the field nullable. |
-| Add a new non-nullable column to inner struct (at the end)   | No   | No   |                                                              |
-| Change datatype from `long` to `int` for a nested field      | No   | No   |                                                              |
-| Change datatype from `long` to `int` for a complex type (value of map or array) | No   | No   |                                                              |
+| 在根级末尾添加一个新的可为空的列                             | Yes  | Yes  | `Yes` means that a write with evolved schema succeeds and a read following the write succeeds to read entire dataset. |
+| 在内部结构中添加一个新的可空列(在末尾)                       | Yes  | Yes  |                                                              |
+| 使用default (map和array)添加一个新的复杂类型字段             | Yes  | Yes  |                                                              |
+| 添加一个新的可空列，并更改字段的顺序                         | No   | No   | Write succeeds but read fails if the write with evolved schema updated only some of the base files but not all. Currently, Hudi does not maintain a schema registry with history of changes across base files. Nevertheless, if the upsert touched all base files then the read will succeed. |
+| 添加一个自定义可为空的Hudi元列，例如。“_hoodie_meta_col”     | Yes  | Yes  |                                                              |
+| 将根级字段的数据类型从' int '提升为' long '                  | Yes  | Yes  | For other types, Hudi supports promotion as specified in [Avro schema resolution](http://avro.apache.org/docs/current/spec#Schema+Resolution). |
+| 对于嵌套字段，将数据类型从' int '提升为' long '              | Yes  | Yes  |                                                              |
+| 对于复杂类型(map或array的值)，将数据类型从' int '提升为' long ' | Yes  | Yes  |                                                              |
+| 在末尾的根级添加一个新的非空列                               | No   | No   | In case of MOR table with Spark data source, write succeeds but read fails. As a **workaround**, you can make the field nullable. |
+| 在内部结构中添加一个新的非空列(在末尾)                       | No   | No   |                                                              |
+| 将嵌套字段的数据类型从' long '更改为' int '                  | No   | No   |                                                              |
+| 将复杂类型的数据类型从' long '改为' int ' (map或array的值)   | No   | No   |                                                              |
 |                                                              |      |      |                                                              |
 
 # 并发控制
@@ -528,6 +530,7 @@ Options:
 ## 开启多写入
 
 ```properties
+# 具体查看HoodieWriteConfig类
 hoodie.write.concurrency.mode=optimistic_concurrency_control
 hoodie.cleaner.policy.failed.writes=LAZY
 hoodie.write.lock.provider=<lock-provider-classname>
@@ -547,12 +550,12 @@ hoodie.write.lock.hivemetastore.table
 
 # 查询数据
 
-* 从概念上讲，Hudi在DFS上物理地存储数据一次，同时提供3种不同的查询方式，如前所述。一旦表被同步到Hive metastore，它提供了由Hudi的自定义输入格式支持的外部Hive表。一旦安装了合适的hudi bundle，就可以通过Hive、Spark SQL、Spark Datasource API和PrestoDB等流行的查询引擎查询该表。
+* 从概念上讲，Hudi在DFS上物理地存储数据一次，同时提供3种不同的查询方式，如前所述。一旦表被同步到`Hive metastore`，它提供了由Hudi的自定义输入格式支持的外部Hive表。一旦安装了合适的hudi bundle，就可以通过Hive、Spark SQL、Spark Datasource API和PrestoDB等流行的查询引擎查询该表。
 * 如果表名是`test`,表类型是`COW`
-  * 通过`HoodieParquetInputFormat`格式支持snapshot query和incremental query，暴露完整的columnar data。
+  * 通过`HoodieParquetInputFormat`格式支持`snapshot query和incremental query`，暴露完整的`columnar data`。
 * 如果表名是`test`,表类型是`MOR`
   * 支持对`HoodieParquetRealtimeInputFormat`支持的表进行快照查询和增量查询(提供近实时数据)，公开base数据和日志数据的合并视图。
-  * 支持对`HoodieParquetInputFormat`支持的表进行` read optimized query`，公开存储在base文件中的纯columnar data。
+  * 支持对`HoodieParquetInputFormat`支持的表进行` read optimized query`，公开存储在base文件中的纯`columnar data`。
 
 ## 支持的能力
 
