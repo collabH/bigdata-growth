@@ -99,7 +99,7 @@ select * from t1;
 | `write.batch.size`       | 为了提高写的效率，Flink写任务会根据写桶将数据缓存到缓冲区中，直到内存达到阈值。当达到阈值时，数据缓冲区将被清除。默认64 mb | `64D`   | 推荐使用默认值                                               |
 | `write.log_block.size`   | hudi的日志写入器接收到消息后不会立刻flush数据，写入器以LogBlock为单位将数据刷新到磁盘。在LogBlock达到阈值之前，记录将以序列化字节的形式在写入器中进行缓冲。默认128 mb | `128`   | 推荐使用默认值                                               |
 | `write.merge.max_memory` | 如果写入类型是`COPY_ON_WRITE`，Hudi将会合并增量数据和base文件数据。增量数据将会被缓存和溢写磁盘。这个阈值控制可使用的最大堆大小。默认100 mb | `100`   | 推荐使用默认值                                               |
-| `compaction.max_memory`  | 与write.merge.max内存相同，但在压缩期间发生。默认100 mb      | `100`   | 如果是在线压缩，则可以在资源足够时打开它，例如设置为1024MB   |
+| `compaction.max_memory`  | 与write.merge.max内存相同，但在compact期间发生。默认100 mb   | `100`   | 如果是在线压缩，则可以在资源足够时打开它，例如设置为1024MB   |
 
 ## Parallelism
 
@@ -144,9 +144,9 @@ select * from t1;
 # Bulk Insert
 
 * 用于快照数据导入。如果快照数据来自其他数据源，可以使用bulk_insert模式将快照数据快速导入到Hudi中。
-* Bulk_insert消除了序列化和数据合并。用户无需重复数据删除，因此需要保证数据的唯一性。
+* Bulk_insert消除了序列化和数据合并。用户`无需重复数据删除`，因此需要`保证数据的唯一性`。
 * Bulk_insert在批处理执行模式下效率更高。默认情况下，批处理执行方式根据分区路径对输入记录进行排序，并将这些记录写入Hudi，避免了频繁切换文件句柄导致的写性能下降。有序写入一个分区中不会频繁写换对应的数据分区
-* bulk_insert的并行度由write.tasks指定。并行度会影响小文件的数量。从理论上讲，bulk_insert的并行性是bucket的数量(特别是，当每个bucket写到最大文件大小时，它将转到新的文件句柄。最后，文件的数量>= write.bucket_assign.tasks)。
+* bulk_insert的并行度由`write.tasks`指定。并行度会影响小文件的数量。从理论上讲，bulk_insert的并行性是bucket的数量(特别是，当每个bucket写到最大文件大小时，它将转到新的文件句柄。最后，文件的数量>=` write.bucket_assign.tasks`)。
 
 | Option Name                              | Required | Default  | Remarks                                                      |
 | ---------------------------------------- | -------- | -------- | ------------------------------------------------------------ |
@@ -158,8 +158,8 @@ select * from t1;
 
 # Index Bootstrap
 
-* 用于`snapshot data`+`incremental data`导入的需求。如果`snapshot data`已经通过`bulk insert`插入到Hudi中。通过`Index Bootstrap`功能，用户可以实时插入`incremental data`，保证数据不重复。
-* 如果您认为这个过程非常耗时，可以在写入快照数据的同时增加资源以流模式写入，然后减少资源以写入增量数据(或打开速率限制函数)。
+* 用于`snapshot data`+`incremental data`导入的需求。如果`snapshot data`已经通过`bulk insert`插入到Hudi中。通过`Index Bootstrap`功能，用户可以实时插入`incremental data`，保证数据不重复，构造离线数据`indexState`
+* 可以在写入快照数据的同时增加资源以流模式写入，然后减少资源以写入增量数据(或打开速率限制函数)。
 
 | Option Name               | Required | Default | Remarks                                                      |
 | ------------------------- | -------- | ------- | ------------------------------------------------------------ |
@@ -169,7 +169,7 @@ select * from t1;
 ## 使用方式
 
 1. `CREATE TABLE`创建一条与Hudi表对应的语句。注意这个`table.type`必须正确。
-2. 设置`index.bootstrao.enabled`为true开启index bootstrap。
+2. 设置`index.bootstrao.enabled`为`true`开启index bootstrap。
 3. 设置`execution.checkpointing.tolerable-failed-checkpoints = n`
 4. 等待第一次ck成功则index boostrap执行完毕。
 5. 等待index boostrap完成，用户可以退出并保存保存点(或直接使用外部化检查点)。
@@ -177,19 +177,19 @@ select * from t1;
 
 # Changelog Mode
 
-* Hudi可以保留消息的所有中间变化(I / -U / U / D)，然后通过flink的状态计算消费，从而拥有一个接近实时的数据仓库ETL管道(增量计算)。Hudi MOR表以行的形式存储消息，支持保留所有更改日志(格式级集成)。所有的更新日志记录可以使用Flink流reader
+* Hudi可以保留消息的所有中间变化`(I / -U / U / D)`，然后通过flink的状态计算消费，从而拥有一个接近实时的数据仓库ETL管道(增量计算)。Hudi MOR表以行的形式存储消息，支持保留所有更改日志(格式级集成)。所有的更新日志记录可以使用Flink流reader
 
 | Option Name         | Required | Default | Remarks                                                      |
 | ------------------- | -------- | ------- | ------------------------------------------------------------ |
 | `changelog.enabled` | `false`  | `false` | 它在默认情况下是关闭的，为了拥有upsert语义，只有合并的消息被确保保留，中间的更改可以被合并。设置为true以支持使用所有更改 |
 
 * 批处理(快照)读取仍然合并所有中间更改，不管格式是否存储了中间更改日志消息。
-* `changelog.enable`设置为true后，更改日志记录的保留只是最好的工作:异步压缩任务将更改日志记录合并到一个记录中，因此，如果流源不及时使用，则压缩后只能读取每个键的合并记录。解决方案是通过调整压缩策略，比如压缩选项:compress .delta_commits和compression .delta_seconds，为读取器保留一些缓冲时间。
+* `changelog.enable`设置为true后，更改日志记录的保留只是最好的工作:异步压缩任务将更改日志记录合并到一个记录中，因此，如果流源不及时使用，则压缩后只能读取每个键的合并记录。解决方案是通过调整压缩策略，比如压缩选项:`compress.delta_commits`和`compression .delta_seconds`，为读取器保留一些缓冲时间。
 
 # Insert Mode
 
 * 默认情况下，Hudi对插入模式采用小文件策略:MOR将增量记录追加到日志文件中，COW合并 base parquet文件(增量数据集将被重复数据删除)。这种策略会导致性能下降。
-* 如果要禁止文件合并行为，可将`write.insert.deduplicate`设置为`false`，则跳过重复数据删除。每次刷新行为直接写入一个now parquet文件(MOR表也直接写入parquet文件)。
+* 如果要禁止文件合并行为，可将`write.insert.deduplicate`设置为`false`，则跳过重复数据删除。每次刷新行为直接写入一个`now parquet`文件(MOR表也直接写入parquet文件)。
 
 | Option Name                | Required | Default | Remarks                                                      |
 | -------------------------- | -------- | ------- | ------------------------------------------------------------ |
@@ -206,7 +206,7 @@ select * from t1;
 
 ## 同步模板
 
-* Flink hive sync现在支持两种hive同步模式，hms和jdbc。HMS模式只需要配置metastore uris即可。对于jdbc模式，需要配置jdbc属性和metastore uri。选项模板如下:
+* Flink hive sync现在支持两种hive同步模式，`hms和jdbc`。HMS模式`只需要配置metastore uris即可`。对于jdbc模式，需要配置`jdbc属性和metastore uri`。选项模板如下:
 
 ```sql
 -- hms mode template
@@ -242,7 +242,7 @@ WITH (
   'path' = 'oss://vvr-daily/hudi/t1',
   'table.type' = 'COPY_ON_WRITE',  --If MERGE_ON_READ, hive query will not have output until the parquet file is generated
   'hive_sync.enable' = 'true',     -- Required. To enable hive synchronization
-  'hive_sync.mode' = 'hms'         -- Required. Setting hive sync mode to hms, default jdbc
+  'hive_sync.mode' = 'jdbc'         -- Required. Setting hive sync mode to hms, default jdbc
   'hive_sync.metastore.uris' = 'thrift://ip:9083'  -- Required. The port need set on hive-site.xml
   'hive_sync.jdbc_url'='jdbc:hive2://ip:10000',    -- required, hiveServer port
   'hive_sync.table'='t1',                          -- required, hive table name
@@ -262,7 +262,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 
 # Offline Compaction
 
-* 默认情况下，MERGE_ON_READ表的压缩是启用的。触发器策略是在完成五次提交后执行压缩。因为压缩会消耗大量内存，并且与写操作处于相同的管道中，所以当数据量很大(> 100000 /秒)时，很容易干扰写操作。此时，使用离线压缩更稳定地执行压缩任务。
+* 默认情况下，MERGE_ON_READ表的压缩是启用的。触发器策略是在完成五次提交后执行压缩。因为压缩会消耗大量内存，并且与写操作处于相同的管道中，所以当`数据量很大(> 100000 /秒)时，很容易干扰写操作`。此时，使用离线压缩更稳定地执行压缩任务。
 * 压缩任务的执行包含俩个部分：调度压缩计划和执行压缩计划。建议调度压缩计划的进程由写任务周期性触发，默认情况下写参数`compact.schedule.enable`为启用状态。
 * offline compaction需要提交一个flink任务后台运行
 
@@ -334,7 +334,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 
 ## precombine
 
-* hudi的precombine指定一个字段如果recordKey和basePartitionPath一致会基于改键进行compore取最大，可以实现Top One的效果，这样就可以不用基于flink提供的row number函数求top one。
+* hudi的`precombine`指定一个字段如果`recordKey和basePartitionPath一致`会基于该键进行compore取最大，可以实现Top One的效果，这样就可以不用基于flink提供的row number函数求top one。
 
 # Flink Hudi Connector源码分析
 
@@ -1263,6 +1263,8 @@ pipeline = Pipelines.hoodieStreamWrite(conf, parallelism, hoodieRecordDataStream
 ```
 
 ## Bootstrap
+
+* 用于全量+增量读取时构造flink index state,用于后续实时数据写入upsert
 
 ### BatchBootstrapOperator
 
