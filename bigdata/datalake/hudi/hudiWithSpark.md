@@ -38,7 +38,7 @@ spark-sql --packages org.apache.hudi:hudi-spark3-bundle_2.12:0.9.0,org.apache.sp
 * Spark-sql使用显式的创建表命令：
   * Table types：两种类型的hudi表(CopyOnWrite (COW)和MergeOnRead (MOR))都可以使用spark-sql创建。`type=cow`或`type=mor`
   * 分区表和非分区表:可以创建一个分区表或非分区表通过spark sql，创建分区表需要通过`partitioned by`语句指定分区键。
-  * Managed&External Table：spark-sql支持2种类型的表，叫做管理表和外部表。如果指定`location`语句则是外部表，否则是管理表。
+  * `Managed&External Table`：spark-sql支持2种类型的表，叫做管理表和外部表。如果指定`location`语句则是外部表，否则是管理表。
   * 主键：用户可以根据需要选择创建带有主键的表。通过`primaryKey`来指定表的主键。
 
 ## 创建非分区表
@@ -137,11 +137,11 @@ partitioned by (datestr) as select * from parquet_mngd;
 
 ## 创建表参数
 
-| Parameter Name  | Introduction                                                 |
-| --------------- | ------------------------------------------------------------ |
-| primaryKey      | The primary key names of the table, multiple fields separated by commas. |
-| type            | The table type to create. type = 'cow' means a COPY-ON-WRITE table,while type = 'mor' means a MERGE-ON-READ table. Default value is 'cow' without specified this option. |
-| preCombineField | The Pre-Combine field of the table.                          |
+| Parameter Name  | Introduction   |
+| --------------- | -------------- |
+| primaryKey      | recordKey      |
+| type            | 表类型         |
+| preCombineField | preCombine字段 |
 
 # Insert data
 
@@ -167,10 +167,10 @@ insert overwrite h_p0 partition(dt = '2021-01-02') select 1, 'a1';
   insert overwrite table h_p1 select 2 as id, 'a2', '2021-01-03' as dt, '19' as hh;
 ```
 
-* insert mode:当使用主键将数据插入到表中时，Hudi支持两种插入模式(下面我们称之为pk-table):
+* `insert mode`:当使用主键将数据插入到表中时，Hudi支持两种插入模式(下面我们称之为pk-table):
   * 使用`strict`模式，insert语句对不允许重复记录的COW表保持主键唯一性约束。如果在insert过程中已经存在一个记录，则对COW表抛出HoodieDuplicateKeyException。对于MOR表，允许对现有记录进行更新。
   * 使用`non-strict`模式，Hudi使用与spark数据源中pk表的插入操作相同的代码路径。可以使用`config: hoodie.sql.insert.mode`设置插入模式
-* Bulk Insert:默认情况下，hudi对插入语句使用普通的插入操作。用户可以将`hoodie.sql.bulk.insert.enable`设置为true，以启用insert语句的批量插入。
+* `Bulk Insert`:默认情况下，hudi对插入语句使用普通的插入操作。用户可以将`hoodie.sql.bulk.insert.enable`设置为true，以启用insert语句的批量插入。
 
 # Query Data
 
