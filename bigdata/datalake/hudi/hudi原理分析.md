@@ -4,11 +4,11 @@
 
 ![](./img/upsert执行流程.jpg)
 
-1. 开始提交`：判断上次任务是否失败，如果失败会触发回滚操作。然后会根据当前时间生成一个事务开始的请求标识元数据。
+1. `开始提交`：判断上次任务是否失败，如果失败会`触发回滚`操作。然后会根据当前时间生成一个事务开始的请求标识元数据。
 2. `构造HoodieRecord Rdd对象`：Hudi 会根据元数据信息构造HoodieRecord Rdd 对象，方便后续数据去重和数据合并。
 3. `数据去重`:一批增量数据中可能会有重复的数据，Hudi会根据主键对数据进行去重避免重复数据写入Hudi 表。
 4. `数据fileId位置信息获取`:在修改记录中可以根据索引获取当前记录所属文件的fileid，在数据合并时需要知道数据update操作向那个fileId文件写入新的快照文件。
-5. `数据合并`：Hudi 有两种模式cow和mor。在cow模式中会重写索引命中的fileId快照文件；在mor 模式中根据fileId 追加到分区中的log 文件。
+5. `数据合并`：Hudi 有两种模式cow和mor。在cow模式中会`重写索引命中的fileId快照文件`；在mor 模式中根据fileId 追加到分区中的log 文件。
 6. `完成提交`：在元数据中生成`xxxx.commit`文件，只有生成commit 元数据文件，查询引擎才能根据元数据查询到刚刚upsert 后的数据。
 7. `compaction压缩`：主要是mor 模式中才会有，他会将mor模式中的xxx.log 数据合并到xxx.parquet 快照文件中去。
 8. `hive元数据同步`：hive 的元素数据同步这个步骤需要配置非必需操作，主要是对于hive 和presto 等查询引擎，需要依赖hive 元数据才能进行查询，所以hive元数据同步就是构造外表提供查询。
@@ -17,7 +17,7 @@
 
 ![](./img/upsert执行流程1.jpg)
 
-* 对于Hudi 每次修改都是会在文件级别重新写入数据快照。查询的时候就会根据最后一次快照元数据加载每个分区小于等于当前的元数据的parquet文件。Hudi事务的原理就是通过元数据mvcc多版本控制写入新的快照文件，在每个时间阶段根据最近的元数据查找快照文件。因为是重写数据所以同一时间只能保证一个事务去重写parquet 文件。不过当前Hudi版本加入了并发写机制，原理是Zookeeper分布锁控制或者HMS提供锁的方式， 会保证同一个文件的修改只有一个事务会写入成功。
+* 对于Hudi 每次修改都是会在文件级别重新写入数据快照。查询的时候就会根据最后一次快照元数据加载每个分区小于等于当前的元数据的parquet文件。Hudi事务的原理就是通过元数据mvcc多版本控制写入新的快照文件，在每个时间阶段根据最近的元数据查找快照文件。因为是重写数据所以同一时间只能保证一个事务去重写parquet 文件。不过当前Hudi版本加入了并发写机制(OCC)，原理是`Zookeeper分布锁控制或者HMS提供锁的方式`， 会保证同一个文件的修改只有一个事务会写入成功。
 
 ## 开始提交&数据回滚
 
@@ -27,7 +27,7 @@
 
 ## 构造HoodieRecord Rdd对象
 
-* `HoodieRecord Rdd`对象的构造先通过map算子提取df中的scehma和数据，构造avro的GenericRecords Rdd，然后Hudi会使用map算子封装为`HoodieRecord Rdd`。对于`HoodieRecord Rdd`主要由`currentLocation`,`newLocation`,`hoodieKey`,`data`组成。HoodileRecord数据结构是为后续数据去重和数据合并时提供基础。
+* `HoodieRecord Rdd`对象的构造先通过map算子提取`df中的scehma和数据`，构造avro的GenericRecords Rdd，然后Hudi会使用map算子封装为`HoodieRecord Rdd`。对于`HoodieRecord Rdd`主要由`currentLocation`,`newLocation`,`hoodieKey`,`data`组成。HoodileRecord数据结构是为后续数据去重和数据合并时提供基础。
 
 ![](./img/Hoodie对象生产过程.jpg)
 
@@ -43,7 +43,7 @@
 ![](./img/数据去重.jpg)
 
 * 在Spark client调用upsert 操作是Hudi会创建HoodieTable对象，并且调用upsert 方法。对于HooideTable 的实现分别有COW和MOR两种模式的实现。但是在数据去重阶段和索引查找阶段的操作都是一样的。调用`HoodieTable#upsert`方法底层的实现都是`SparkWriteHelper`。
-* 在去重操作中，会先使用map 算子提取HoodieRecord中的HoodieatestAvroPayload的实现是保留时间戳最大的记录。**这里要注意如果我们配置的是全局类型的索引，map 中的key 值是 HoodieKey 对象中的recordKey。**因为全局索引是需要保证所有分区中的主键都是唯一的，避免不同分区数据重复。当然如果是非分区表，没有必要使用全局索引。
+* 在去重操作中，会先使用map 算子提取`HoodieRecord中的HoodieatestAvroPayload的实现是保留时间戳最大的记录`。**这里要注意如果我们配置的是全局类型的索引，map 中的key 值是 HoodieKey 对象中的recordKey。**因为全局索引是需要保证所有分区中的主键都是唯一的，避免不同分区数据重复。当然如果是非分区表，没有必要使用全局索引。
 
 ## 数据位置信息索引查找
 
@@ -180,10 +180,10 @@ hoodie.commits.archival.batch  默认10 ：每多少个元数据写入一次到a
 
 ### 数据清理
 
-* 元数据清理后parquet文件也需要清理，在Hudi中有专门的spark任务去清理文件。因为是通过spark 任务去清理文件也有对应XXX.clean.request、xxx.clean.infight、xxx.clean元数据来标识任务的每个任务阶段。数据清理步骤如下：
+* 元数据清理后parquet文件也需要清理，在Hudi中有专门的spark任务去清理文件。因为是通过spark任务去清理文件也有对应XXX.clean.request、xxx.clean.infight、xxx.clean元数据来标识任务的每个任务阶段。数据清理步骤如下：
   * 构造baseCleanPanActionExecutor 执行器，并调用requestClean方法获取元数据生成清理计划对象HoodieCleanPlan。判断HoodieCleanPlan对象满足触发条件会向元数据写入xxx.request 标识，表示可以开始清理计划。
-  * 生成执行计划后调用baseCleanPanActionExecutor 的继承类clean方法完成执行spark任务前的准备操作，然后向hdfs 写入xxx.clean.inflight对象准备执行spark任务。
-  * spark 任务获取HoodieCleanPlan中所有分区序列化成为Rdd并调用flatMap迭代每个分区的文件。然后在mapPartitions算子中调用deleteFilesFunc方法删除每一个分区的过期的文件。最后reduceBykey汇总删除文件的结果构造成HoodieCleanStat对象，将结果元数据写入xxx.clean中完成数据清理。
+  * 生成执行计划后调用baseCleanPanActionExecutor 的继承类clean方法完成执行spark任务前的准备操作，然后向hdfs写入xxx.clean.inflight对象准备执行spark任务。
+  * spark任务获取HoodieCleanPlan中所有分区序列化成为Rdd并调用flatMap迭代每个分区的文件。然后在mapPartitions算子中调用deleteFilesFunc方法删除每一个分区的过期的文件。最后reduceBykey汇总删除文件的结果构造成HoodieCleanStat对象，将结果元数据写入xxx.clean中完成数据清理。
 
 ```
 hoodie.clean.automatic  默认true :是否开启自动数据清理，如果关闭upsert 不会执行清理任务。
@@ -237,7 +237,7 @@ hoodie.write.commit.callback.kafka.retries  默认值值3：配置kafka 失败�
 
 # Clustering架构
 
-* Hudi通过其写入客户端API提供了不同的操作，如insert/upsert/bulk_insert来将数据写入Hudi表。为了能够在文件大小和摄取速度之间进行权衡，Hudi提供了一个`hoodie.parquet.small.file.limit`配置来设置最小文件大小。用户可以将该配置设置为`0`以强制新数据写入新的文件组，或设置为更高的值以确保新数据被"填充"到现有小的文件组中，直到达到指定大小为止，但其会增加摄取延迟。
+* Hudi通过其写入客户端API提供了不同的操作，如`insert/upsert/bulk_insert`来将数据写入Hudi表。为了能够在文件大小和摄取速度之间进行权衡，Hudi提供了一个`hoodie.parquet.small.file.limit`配置来设置最小文件大小。用户可以将该配置设置为`0`以强制新数据写入新的文件组，或设置为更高的值以确保新数据被"填充"到现有小的文件组中，直到达到指定大小为止，但其会增加摄取延迟。
 
 * 为能够支持快速摄取的同时不影响查询性能，我们引入了Clustering服务来重写数据以优化Hudi数据湖文件的布局。
 
