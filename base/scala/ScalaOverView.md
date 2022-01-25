@@ -52,8 +52,8 @@ Range(start,end,step)
 
 #### "=="
 
-* scala重的"=="不管什么类型都是针对值的比较，eq()比较引用
-* java"=="比较引用地址，equals比较直但是对于一些没有重写Object的equals方法的对象，底层使用的是"=="，需要重写equals方法。
+* scala中的"=="不管什么类型都是针对值的比较，eq()比较引用
+* java"=="比较引用地址，equals比较值但是对于一些没有重写Object的equals方法的对象，底层使用的是"=="，需要重写equals方法。
 
 #### 访问修饰符
 
@@ -106,7 +106,7 @@ class Animal(val name: String, val gender: String) {
 ### 单例对象
 
 ```scala
-“class Marker(val color: String) {
+class Marker(val color: String) {
   println("Creating " + this)
 
   override def toString() : String = "marker color " + color
