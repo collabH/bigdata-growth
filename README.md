@@ -6,7 +6,7 @@
 
 [![Stargazers over time](https://starchart.cc/collabH/repository.svg)](#)
 
-[gitter](https://gitter.im/collabH-repository/community)
+[join gitter](https://gitter.im/collabH-repository/community)
 
 ## 概述
 
