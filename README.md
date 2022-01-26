@@ -6,7 +6,6 @@
 
 [![Stargazers over time](https://starchart.cc/collabH/repository.svg)](#)
 
-[join gitter](https://gitter.im/collabH-repository/community)
 
 ## 概述
 
@@ -382,3 +381,9 @@
 ## mac
 
 * [iterm2](mac/iterm2)
+
+
+
+# 贡献方式
+
+* 欢迎通过[Gitter](https://gitter.im/collabH-repository/community)参与贡献
