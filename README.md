@@ -349,14 +349,23 @@
 
 * [ApacheCalciteOverView](bigdata/tools/sqltree/calcite/CalciteOverView.md)
 
-## 数据仓库
+## 数据仓库建设
 
-* [数据建模](datawarehouse/DataModeler.md)
-* [数据仓库建模](datawarehouse/数据仓库建模.xmind)
-* [数据仓库](datawarehouse/数据仓库实战.md)
-* [基于Flink的实时数仓建设](datawarehouse/基于Flink的实时数仓建设.md)
-* [自研数据中台设计](datawarehouse/数据中台设计/数据中台设计.md)
-* [Kudu数据冷备](datawarehouse/数据冷备/Kudu数据冷备方案.md)
+### 理论
+
+* [数据建模](datawarehouse/理论/DataModeler.md)
+* [数据仓库建模](datawarehouse/理论/数据仓库建模.xmind)
+* [数据仓库](datawarehouse/理论/数据仓库实战.md)
+
+### 数据中台设计
+
+* [数据中台设计](datawarehouse/数据中台模块设计/数据中台设计.md)
+* [thoth自研元数据平台设计](datawarehouse/数据中台模块设计/thoth自研元数据平台设计.md)
+
+### 方案实践
+
+* [Kudu数据冷备](datawarehouse/方案实践/Kudu数据冷备方案.md)
+* [基于Flink的实时数仓建设](datawarehouse/方案实践/基于Flink的实时数仓建设.md)
 
 ### 读书笔记
 
