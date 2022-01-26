@@ -6,6 +6,7 @@
 
 [![Stargazers over time](https://starchart.cc/collabH/repository.svg)](#)
 
+
 ## 概述
 
 * 个人学习知识库涉及到数据仓库建模、实时计算、大数据、Java、算法等。
@@ -389,3 +390,9 @@
 ## mac
 
 * [iterm2](mac/iterm2)
+
+
+
+# 贡献方式
+
+* 欢迎通过[Gitter](https://gitter.im/collabH-repository/community)参与贡献
