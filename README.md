@@ -396,3 +396,7 @@
 # 贡献方式
 
 * 欢迎通过[Gitter](https://gitter.im/collabH-repository/community)参与贡献
+
+# 技术分享
+
+![](./img/公众号.jpeg)
