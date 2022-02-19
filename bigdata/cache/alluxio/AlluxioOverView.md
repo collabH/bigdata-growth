@@ -50,7 +50,7 @@ $ alluxio fs ls /
 -rw-r--r--  xiamuguizhi    staff                    27040       PERSISTED 01-05-2022 23:33:15:361 100% /LICENSE
 ```
 
-**默认情况：**alluxio使用的本地系统为底层文件系统(UFS)，默认路径为`./underFSStorage`,端口`19999`查看alluxio文件目录
+**默认情况：** alluxio使用的本地系统为底层文件系统(UFS)，默认路径为`./underFSStorage`,端口`19999`查看alluxio文件目录
 
 * 挂在hdfs上的数据到alluxio中
 
@@ -62,11 +62,7 @@ alluxio fs mount --readonly alluxio://localhost:19998/mnt/hdfs hdfs://hadoop:802
 
 * 使用Alluxio加速数据访问,如果ls文件状态下显示100%则代表文件已经完全加载至`alluxio`则可以利用`alluxio`来加速读取。
 
-# 核心功能
 
-## 缓存
-
-* 
 # 核心功能
 
 ## 缓存
