@@ -23,7 +23,7 @@
 1. 语法解析：Antlr 定义 SQL 的语法规则，完成 SQL 词法，语法解析，将 SQL 转化为抽象 语法树 AST Tree；
 2. 语义解析：遍历 AST Tree，抽象出查询的基本组成单元 QueryBlock；
 3. 生成逻辑执行计划：遍历 QueryBlock，翻译为执行操作树 OperatorTree；
-4. 优化逻辑执行计划：逻辑层优化器进行 OperatorTree 变换，合并不必要的 ReduceSinkOperator，减少 shuffle 数据量；
+4. 优化逻辑执行计划：逻辑层优化器进行 OperatorTree 变换，合并不必要的 `ReduceSinkOperator，减少 shuffle 数据量`；
 5. 生成物理执行计划：遍历 OperatorTree，翻译为 MapReduce 任务；
 6. 优化物理执行计划：物理层优化器进行 MapReduce 任务的变换，生成最终的执行计划。
 
@@ -269,7 +269,7 @@ hdfs dfs -put tez-0.9.2/ /tez
 
 # Hive的运行机制 
 
-![图片](./img/hive运行机制.jpg)
+<img src="./img/hive运行机制.jpg" alt="图片" style="zoom:200%;" />
 
 # Hive和数据库比较 
 
