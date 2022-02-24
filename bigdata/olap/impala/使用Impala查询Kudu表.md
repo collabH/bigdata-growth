@@ -65,10 +65,10 @@ id bigint  PRIMARY KEY
 * 新插入的数据根据指定的hash键将数据并行的分发到多个tablet severs的tablest上，分割散列值会给查询带来额外的开销，其中使用基于范围谓词的查询可能必须读取tablet server以检索所有相关值。
 
 ```sql
-crate table table_name(id bigint primary key)partition by hash(id) partitions 50 stored as kudu
+create table table_name(id bigint primary key)partition by hash(id) partitions 50 stored as kudu
 ```
 
-* 对于大型表，分区个数最好是tablet server的10倍。
+* 对于大型表，分区个数最好是`tablet server`的10倍。
 
 ## Range分区
 
@@ -80,7 +80,7 @@ create table table_name(id bigint primary key)partition by hash(id)partitions 50
 range(partition 1 <= values<20,partition 20<=values<30,partition value=50)stored as kudu
   
 # 非连续的range分区
-  partition by range(year) (partiiton 2006<=values<= 2019,partition 2024<=values<=2050)
+  partition by range(year) (partition 2006<=values<= 2019,partition 2024<=values<=2050)
   
 # 修改分区
 alter table test add partition 30<values< 50;
