@@ -55,7 +55,7 @@
 
 ![Kudu Architecture](https://kudu.apache.org/docs/images/kudu-architecture-2.png)
 
-![](./img/Kudu架构.jpg)
+<img src="./img/Kudu架构.jpg" style="zoom:200%;" />
 
 * 与HDFS和Hbase相似，Kudu使用单个的Master节点，用来管理集群的元数据，并且使用任意数量的Tablet Server(类似于Hbase的RegionServer角色)节点来存储实际数据。可以部署HA Master来提高容错能力。
 
@@ -87,7 +87,7 @@
 
 * 相当于HDFS的DataNode和Hbase的RegionServer的混合体，tablet server的作用是执行所有与数据相关的操作：存储、访问、编码、压缩、compaction和复制。
 * tablet server存储向kudu client提供tablet服务。对于给定的tablet，一个tablet server充当其leader，其他副本作为这个tablet的follower。只有leader能够提供写请求，leader和follower可以提供读服务。一个tablet server可以服务多个tablet，一个tablet可以由多个tablet server提供服务。
-* Kudu最多支持300个tablet server，但是为了最高的稳定性，比建议tablet server超过100个
+* Kudu最多支持300个tablet server，但是为了最高的稳定性，不建议tablet server超过100个
 * 建议每个tablet server最多包含2000个tablet（包含副本）
 * 建议每个table在每个tablet server上最多包含60个tablet（包含副本）
 * 建议每个tablet server最多在磁盘上存储8 TB的数据。服务器上所有磁盘的容量之和可以超过8 TB，并且可以和HDFS共享。但是，我们建议Kudu的数据不要超过8TB。
@@ -146,7 +146,7 @@
 
 ### 热点
 
-* 当大部分的读写操作都落到同一个服务器上时，就会产生所谓的热点问题，如果想达到数据完美的分布，让所有读写请求均匀的分配在集群的所有节点上。
+* 当大部分的读写操作都落到同一个tablet server上时，就会产生所谓的热点问题，如果想达到数据完美的分布，让所有读写请求均匀的分配在集群的所有节点上。
 
 #### 设计表考虑的问题
 
@@ -316,7 +316,7 @@ http://＜your-host＞:8050
 ```shell
 # 参数含义
 d = 120TB //以Parquet格式存储的数据集大小
-k = 8TB //预计每个table服务器的最大磁盘容量
+k = 8TB //预计每个tablet server的最大磁盘容量
 p = 25% //预留的额外开销比例
 r = 3 //table复制因子
 
@@ -345,11 +345,11 @@ t=20个table server
 ### 3-2-3策略
 
 * 第二种策略：会先立即剔除失败的副本，然后添加新的副本。然而，对于那种定期下线然后重新上线的系统，这样做会造成节点重新上线后要经过很长一段时间才能重新成为集群的成员。
-* 其中的一个tablet服务器经历的故障是不可恢复的；否则，Kudu将在新的主机上创建新的tablet副本，如果失败的tablet服务器恢复，也不会造成任何损害，这时候新创建的副本将被取消。
+* 其中的一个tablet server经历的故障是不可恢复的；否则，Kudu将在新的主机上创建新的tablet副本，如果失败的tablet服务器恢复，也不会造成任何损害，这时候新创建的副本将被取消。
 
 #### 存在的问题
 
-* 失败的tablet服务器的所有tablet都会被立即剔除，导致系统花大力气才能让新的副本上线。
+* 失败的tablet server的所有tablet都会被立即剔除，导致系统花大力气才能让新的副本上线。
 
 ## 数据存储部署
 
@@ -444,7 +444,7 @@ sudu systemctl start kudu-server
 
 ### 避免耗尽磁盘空间
 
-```
+```shell
 --fs_data_dirs_reserved_bytes
 --fs_wal_dir_reserved_bytes
 
@@ -456,7 +456,7 @@ sudu systemctl start kudu-server
 * Tablet server可以容忍磁盘故障，但是如果WAL和tablet元数据的磁盘发生故障，则tablet服务器会挂掉。
 * tablet的数据会被分开存储在各个tablet server的多个磁盘上，默认为3个磁盘，这样可以保证tablet server的可靠性。
 
-```
+```shell
 # 控制特定tablet副本的目标数据目录数
 --fs_target_data_dirs_per_tablet
 ```
@@ -475,7 +475,7 @@ spark-sql --packages org.apache.kudu:kudu-spark2_2.11:1.10.0
 
 * 引入依赖
 
-```
+```shell
 kudu-spark2_scala.version
 kudu-client
 ```
