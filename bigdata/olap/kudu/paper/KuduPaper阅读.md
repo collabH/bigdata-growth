@@ -2,7 +2,7 @@
 
 ## Kudu的特点
 
-![img](https://pic2.zhimg.com/80/v2-bb7f77cd4fabae4cd312d8fdeb67ab65_1440w.jpg)
+ ![img](https://pic2.zhimg.com/80/v2-bb7f77cd4fabae4cd312d8fdeb67ab65_1440w.jpg)
 
 ## 解决的问题
 

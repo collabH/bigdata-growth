@@ -10,8 +10,8 @@
 
 * 每个Kudu节点都需要指定目录标志。通过`--fs_wal_dir`配置指定`write-ahead log`存储的位置
 * 通过`--fs_metadata_dir`配置每个tablet存储元数据的位置，建议将这些目录放在高性能高带宽和低延迟的驱动器上，例如SSD。如果`--fs_metadata_dir`没有被指定，元数据将会被`--fs_wal_dir`目录下。为了防止因为WAL或元数据的丢失导致Kudu节点无法使用，可以配置相关的镜像，但是镜像会增加Kudu的写入的延迟。
-* 通过`--fs_data_dirs`配置写入数据块的位置.这是一个以逗号分隔的目录列表。如果指定多个值，数据将跨目录显示。 如果没有设定将会存储在`--fs_wal_dir`目录下
-* `--fs_data_dirs`一点设置需要通过工具来修改它
+* 通过`--fs_data_dirs`配置写入数据块的位置这是一个以逗号分隔的目录列表。如果指定多个值，数据将跨目录显示。 如果没有设定将会存储在`--fs_wal_dir`目录下
+* `--fs_data_dirs`可以直接修改配置
 * `--fs_metadata_dir`和`--fs_wal_dir`可以修改，但是需要将原本的目录迁移。
 
 ## 配置Kudu Master
@@ -26,13 +26,13 @@ kudu-master --help
 
 ### kudu master支持的配置
 
-| Flag                 | Valid Options | Default     | Description                                                  |
-| :------------------- | :------------ | :---------- | :----------------------------------------------------------- |
-| `--master_addresses` | string        | `localhost` | Comma-separated list of all the RPC addresses for Master consensus-configuration. If not specified, assumes a standalone Master. |
-| `--fs_data_dirs`     | string        |             | List of directories where the Master will place its data blocks. |
-| `--fs_metadata_dir`  | string        |             | The directory where the Master will place its tablet metadata. |
-| `--fs_wal_dir`       | string        |             | The directory where the Master will place its write-ahead logs. |
-| `--log_dir`          | string        | `/tmp`      | The directory to store Master log files.                     |
+| Flag                 | Valid Options | Default     | Description                          |
+| :------------------- | :------------ | :---------- | :----------------------------------- |
+| `--master_addresses` | string        | `localhost` | 全部master的rpc地址                  |
+| `--fs_data_dirs`     | string        |             | master服务器放置数据块的目录列表。   |
+| `--fs_metadata_dir`  | string        |             | master服务器放置元数据块的目录列表。 |
+| `--fs_wal_dir`       | string        |             | master服务器放置wal文件的目录列表。  |
+| `--log_dir`          | string        | `/tmp`      | master服务器存储日志的目录           |
 
 ## 配置tablet server
 
@@ -60,10 +60,10 @@ kudu-tserver --help
 
 * Kudu允许为每个表设置某些配置。要配置Kudu表的行为，可以在创建表时设置这些配置，或者通过Kudu API或Kudu命令行工具修改它们。
 
-| Configuration                   | Valid Options | Default | Description                                                  |
-| :------------------------------ | :------------ | :------ | :----------------------------------------------------------- |
-| kudu.table.history_max_age_sec  | integer       |         | Number of seconds to retain history for tablets in this table. |
-| kudu.table.maintenance_priority | integer       | 0       | Priority level of a table for maintenance.                   |
+| Configuration                   | Valid Options | Default | Description                        |
+| :------------------------------ | :------------ | :------ | :--------------------------------- |
+| kudu.table.history_max_age_sec  | integer       |         | 该表中为tablet保留历史记录的秒数。 |
+| kudu.table.maintenance_priority | integer       | 0       | 表维护的优先级。                   |
 
 # 配置Hive Metastore
 
@@ -122,7 +122,7 @@ kudu-tserver --help
 --hive_metastore_sasl_enabled=<value of the Hive Metastore's hive.metastore.sasl.enabled configuration>
 ```
 * 修改kudu master/tsserver配置
-```
+```properties
 hive_metastore_uris=hive metastore uri
 ```
 
