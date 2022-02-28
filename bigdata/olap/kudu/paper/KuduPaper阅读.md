@@ -24,7 +24,7 @@
 
 * 写操作需要通过客户端进行，包括 Java/Python/C++
 * 写操作必须指明主键
-* 支持 bulk 操作以降低批量处理网络开销
+* 支持 bulk 操作以降低批量处理网络开销，按照数量或者时间批量写数据
 * 不支持跨行的事务
 
 ## **Read operations**
@@ -103,7 +103,7 @@ Kudu 虽说有多个 Master，但是仅有 Leader 可以处理客户端请求 (�
 
 1. 刷写开始时，立即启用一个新的 MemRowSets，用于接收用户写入
 2. 旧的 MemRowSets 依然可以被读取数据
-3. 期间对 旧的 MemRowSets 的操作，同样会被追加到刷写后的 DiskRowSets
+3. 期间对旧的 MemRowSets 的操作，同样会被追加到刷写后的 DiskRowSets
 
 ## MemRowSet实现
 
@@ -146,7 +146,7 @@ MemRowSet 并不是以列式存储在内存中, 而是正常的 行式存储, �
 
 ## Delta Flushes
 
-* Delta Stores 在内存中的形式为 DeltaMemStore，也会定期刷写到磁盘成为 DeltaFile。这部分流程和之前的 MemRowSets 刷写 DiskRowSets 非常相似。
+* Delta Stores 在内存中的形式为 `DeltaMemStore`，也会定期刷写到磁盘成为 `DeltaFile`。这部分流程和之前的 MemRowSets 刷写 DiskRowSets 非常相似。
 
 ## INSERT path
 
@@ -155,7 +155,7 @@ MemRowSet 并不是以列式存储在内存中, 而是正常的 行式存储, �
 * 数据从 MemRowSets 落地到 DiskRowSets, 多个 DiskRowSets 的数据并非是全局有序的。意味着要确定待插入的 Primary key 是否已经存在，需要遍历所有的 DiskRowSets。因为一个 Tablet 可能有成百上千的 DiskRowSets，所以要求这个速度应该尽量的快。
 * 因此，上文提到的 Primary key Bloom Filter 便派上了用场。需要注意的是 Bloom Filter 只能确保 Primary key 不存在，但是不能保证 Primary key 一定存在。因此 Bloom Filter 实际上相当于一个剪枝(Purning)的作用。
 * Primary key Bloom Filter 会以 LRU Cache 在内存中，Kudu 会尽量保证 Bloom Filter 会一直存放在内存中。
-* 此外，就像Parquet/ORC一样，DiskRowSet 存储了 Primary key 的最大值/最小值，并且这些范围值使用 interval tree去组织起来，这样可以在针对 Primary key 的查询时做进一步的剪枝。并且interval tree可以作为 compaction 时选取特定几个 DiskRowSet 的依据。
+* 此外，就像Parquet/ORC一样，DiskRowSet 存储了 Primary key 的`最大值/最小值`，并且这些范围值使用 interval tree去组织起来，这样可以在针对 Primary key 的查询时做进一步的剪枝。并且interval tree可以作为 compaction 时选取特定几个 DiskRowSet 的依据。
 * 对于不能被剪枝的 DiskRowSet，需要使用 Primary key (B-Tree) 去判断是非已经存在。这当然是很慢的，考虑到局部性原理，所以 Kudu 会缓存被访问过的 Primary key page。
 
 ## Read Path
@@ -163,7 +163,7 @@ MemRowSet 并不是以列式存储在内存中, 而是正常的 行式存储, �
 * Kudu 数据读取，在内存中的数据结构，和 DiskRowSet 相似为列式结构，这有助于提高读取效率。
 * 同 Parquet/ORC 一样，Kudu 支持谓词下推。Kudu 会首先检查是否与 Primary key 相关的谓词，如果有，就可以对缩小所需要扫描的行范围。最终 Primary key range => row-offset range 然后进行下一步查询。
 * 然后 Kudu 对每一列进行扫描 (当然仅获取projection所需的字段)，并且进行必要的解码。
-* 最好，需要查询 Delta Store 去看对这些行是否有额外的更新，对照当前的 MVCC 快照版本，选取更改项并应用于加载到内存中的数据。因为 Delta Store 是以 row-offset 作为主键，所以这个过程会更快 (相比于 Primary key)，这就是为什么插入时要费那么多功夫去获取 row-offset，可以理解为 Kudu 在 Insert/Read 的性能平衡中更倾向于优化 Read 性能。
+* 最后，需要查询 Delta Store 去看对这些行是否有额外的更新，对照当前的 MVCC 快照版本，选取更改项并应用于加载到内存中的数据。因为 Delta Store 是以 row-offset 作为主键，所以这个过程会更快 (相比于 Primary key)，这就是为什么插入时要费那么多功夫去获取 row-offset，可以理解为 Kudu 在 Insert/Read 的性能平衡中更倾向于优化 Read 性能。
 * 最后 Kudu tablet server 响应 PRC 请求，对于 Scan 来说，肯定需要多次 PRC 请求，服务端会记录当前的 scaner 状态，客户端需要请求同一个 tablet server 来快速获取后续的数据。
 
 ## **Delta Compaction**
