@@ -5,7 +5,7 @@
 ![Ecosystem](https://d39kqat1wpn1o5.cloudfront.net/app/uploads/2021/07/alluxio-overview-r071521.png)
 
 * **内存速度 I/O**：Alluxio 能够用作分布式共享缓存服务，这样与 Alluxio 通信的计算应用程序可以透明地缓存频繁访问的数据（尤其是从远程位置），以提供内存级 I/O 吞吐率。此外，Alluxio的层次化存储机制能够充分利用内存、固态硬盘或者磁盘，降低具有弹性扩张特性的数据驱动型应用的成本开销。
-* **简化云存储和对象存储接入**：与传统文件系统相比，云存储系统和对象存储系统使用不同的语义，这些语义对性能的影响也不同于传统文件系统。在云存储和对象存储系统上进行常见的文件系统操作（如列出目录和重命名）通常会导致显著的性能开销。当访问云存储中的数据时，应用程序没有节点级数据本地性或跨应用程序缓存。将 Alluxio 与云存储或对象存储一起部署可以缓解这些问题，因为这样将从 Alluxio 中检索读取数据，而不是从底层云存储或对象存储中检索读取。
+* **简化云存储和对象存储接入**：与传统文件系统相比，云存储系统和对象存储系统使用不同的语义，这些语义对性能的影响也不同于传统文件系统。在云存储和对象存储系统上进行常见的文件系统操作（如列出目录和重命名）通常会导致显著的性能开销。当访问云存储中的数据时，应用程序没有节点级数据本地性或跨应用程序缓存。`将 Alluxio 与云存储或对象存储一起部署`可以缓解这些问题，因为这样将从 Alluxio 中检索读取数据，而不是从底层云存储或对象存储中检索读取。
 * **简化数据管理**：Alluxio 提供对多数据源的单点访问。除了连接不同类型的数据源之外，Alluxio 还允许用户同时连接同一存储系统的不同版本，如多个版本的 HDFS，并且无需复杂的系统配置和管理。
 * **应用程序部署简易**：Alluxio 管理应用程序和文件或对象存储之间的通信，将应用程序的数据访问请求转换为底层存储接口的请求。Alluxio 与 Hadoop 生态系统兼容，现有的数据分析应用程序，如 Spark 和 MapReduce 程序，无需更改任何代码就能在 Alluxio 上运行。
 
@@ -75,7 +75,7 @@ alluxio fs mount --readonly alluxio://localhost:19998/mnt/hdfs hdfs://hadoop:802
     * alluxio作为一个分布式缓存来管理Alluxio workers本地存储，包括内存。这个在用户应用程序与各种底层存储之间的快速数据层带来的是显著提高的I / O性能。
     * Alluxio存储主要用于存储热数据，暂态数据，而不是长期持久数据存储。
     * 每个Alluxio节点要管理的存储量和类型由用户配置决定。
-    * 即使数据当前不在Alluxio存储中，通过Alluxio连接的UFS中的文件仍然 对Alluxio客户可见。当客户端尝试读取仅可从UFS获得的文件时数据将被复制到Alluxio存储中（这里体现在alluxio文件目录下的进度条）
+    * 即使数据当前不在Alluxio存储中，通过Alluxio连接的UFS中的文件仍然对Alluxio客户可见。当客户端尝试读取仅可从UFS获得的文件时数据将被复制到Alluxio存储中（这里体现在alluxio文件目录下的进度条）
 
 ![](img/alluxio存储图.png)
 
@@ -114,7 +114,7 @@ alluxio.worker.tieredstore.level0.dirs.quota=16GB,100GB,100GB
 
 ##### 读取数据
 
-* 如果数据已经存在于Alluxio中则客户端将简单地从已存储的数据块读取数据，如果将Alluxio配置为多层，则不一定是从顶层读取数据块，因为数据可能已经透明地挪动到更低的存储层。用`ReadType.CACHE_PROMOTE`读取数据将在从worker读取数据前尝试首先将数据块挪到 顶层存储。也可以将其用作为一种数据管理策略 明确地将`热数据`移动到更高层存储读取。
+* 如果数据已经存在于Alluxio中则客户端将简单地从已存储的数据块读取数据，如果将Alluxio配置为多层，则不一定是从顶层读取数据块，因为数据可能已经透明地挪动到更低的存储层。用`ReadType.CACHE_PROMOTE`读取数据将在从worker读取数据前尝试首先将数据块挪到顶层存储。也可以将其用作为一种数据管理策略明确地将`热数据`移动到更高层存储读取。
 
 ##### 配置分层存储
 
@@ -261,7 +261,7 @@ alluxio fs getCapacityBytes
 
 #### UFS命名空间
 
-* 每个已挂载的基础文件系统 在Alluxio命名空间中有自己的命名空间； 称为UFS命名空间。
+* 每个已挂载的基础文件系统在Alluxio命名空间中有自己的命名空间； 称为UFS命名空间。
 
 ### 透明命名机制
 
@@ -314,15 +314,6 @@ alluxio fs getSyncPathList
 ```
 
 ## Catalog
-
-### 系统架构
-
-```
-Query Engine     Metadata service                   Under meta service
-+--------+       +--------------------------+       +----------------+
-| Presto | <---> | Alluxio Catalog Service  | <---> | Hive Metastore |
-+--------+       +--------------------------+       +----------------+
-```
 
 ### 系统架构
 
@@ -388,7 +379,7 @@ alluxio table sync <database name>
 #### demo
 
 ```shell
-# 数据转换之前需要先`attach`一个数据，不如将Hive的默认数据库添加至Alluxio
+# 数据转换之前需要先`attach`一个数据，比如将Hive的默认数据库添加至Alluxio
 alluxio table attachdb hive thrift://localhost:9083 default
 # 将default库下的test表转换为最多100个文件
 alluxio table transform default test

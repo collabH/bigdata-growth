@@ -5,8 +5,7 @@
 
 ```shell
 spark-submit \
---conf 'spark.driver.extraJavaOptions=-Dalluxio.user.file.writetype.default=CACHE_THROUGH' \
---conf 'spark.executor.extraJavaOptions=-Dalluxio.user.file.writetype.default=CACHE_THROUGH' \
+--conf 'spark.driver.extraJavaOptions=-Dalluxio.user.file.writetype.default=CACHE_THROUGH'
 ```
 
 * Hadoop Mr作业通过`-Dkey=value`方式

@@ -47,7 +47,7 @@ env.java.opts: -Dalluxio.user.file.writetype.default=CACHE_THROUGH
 * 下载`alluxio-version-client.jar`包
 * 修改`spark-defualt.conf`配置，单个spark任务通过--conf方式设置driver和executor对应参数
 
-```
+```properties
 spark.driver.extraClassPath   /<PATH_TO_ALLUXIO>/client/alluxio-2.8.0-SNAPSHOT-client.jar
 spark.executor.extraClassPath /<PATH_TO_ALLUXIO>/client/alluxio-2.8.0-SNAPSHOT-client.jar
 支持alluxio ha配置
