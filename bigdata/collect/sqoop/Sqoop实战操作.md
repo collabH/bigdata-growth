@@ -10,7 +10,7 @@ sqoop import --connect <jdbc-uri> \
 --append \
 # 导入parquet文件格式
 --as-parquetfile \
-# 导入那些列
+# 导入哪些列
 --columns <col,col,col...> \
 --compression-codec <codec> \
 # 导入前是否删除目录
@@ -229,7 +229,7 @@ esac
 
 * 如Sqoop在导出到Mysql时，使用4个Map任务，过程中有2个任务失败，那此时MySQL中存储了另外两个Map任务导入的数据，如果此时重跑会有数据不一致问题
   * 使用--staging-table先导出到一个临时表，全部成功后才会放入最终的表
-  * 使用--clear-staging-table会先情况staging的临时表，再写入临时表。
+  * 使用--clear-staging-table会先清空staging的临时表，再写入临时表。
 
 ## java.security.AccessControlException: access denied ("javax.management.MBeanTrustPermission" "register")
 
