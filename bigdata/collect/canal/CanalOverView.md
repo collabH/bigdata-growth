@@ -19,7 +19,7 @@
 1. 尝试启动
    * 每个Canal Server在启动某个Canal instance的时候都会首先向Zookeeper进行一次尝试启动判断。向Zookeeper创建一个相同的临时节点，哪个Canal Server创建成功了，就让哪个Canal Server启动。
 2. 启动instance
-   * 假设最终IP地址为10.21.144.51的Canal Server成功创建了该节点，那么它就会将自己的机器信息写入到该节点中去:"{"active":true,"address":"10.20.144.51:11111","cid":1}",并同时启动instance。其他Canal Server由于没有成功创建节点，会讲自己的状态设置为Standby，同时对"/otter/canal/destinations/example/running"节点注册Watcher监听，以监听该节点变化情况。
+   * 假设最终IP地址为10.21.144.51的Canal Server成功创建了该节点，那么它就会将自己的机器信息写入到该节点中去:"{"active":true,"address":"10.20.144.51:11111","cid":1}",并同时启动instance。其他Canal Server由于没有成功创建节点，会将自己的状态设置为Standby，同时对"/otter/canal/destinations/example/running"节点注册Watcher监听，以监听该节点变化情况。
 3. 主备切换
    * Canal Server运行时期突然宕机的话会自动进行主备切换，基于Zookeeper临时节点的特点，客户端断开链接会自动删除临时节点，StandBy状态的Canal Server会收到Watcher的通知然后创建临时节点成为新的Active节点。
 
@@ -36,7 +36,7 @@
 ### 数据消费位点记录
 
 * Canal Client存在重启或其他变化，为了避免数据消费的重复性和顺序错乱，Canal必须对数据消费的位点进行实时记录。数据消费成功后，Canal Server会在Zookeeper中记录下当前最后一次消费成功的Binary Log位点，一旦发生Client重启，只需要从这个最后一个位点继续进行消费即可。
-* 具体是在Zookeeper的"/otter/canal/destinations/example/1001/cursor"节点记录下客户端消费的详细位点新鲜。
+* 具体是在Zookeeper的"/otter/canal/destinations/example/1001/cursor"节点记录下客户端消费的详细位点信息。
 
 ```json
 {
@@ -141,7 +141,7 @@ vi logs/example/example.log
 
 ## 整体类图
 
-![img](https://camo.githubusercontent.com/a9b2f3b6a6a6b08d315ca1d50edf54da825b88b1/687474703a2f2f646c2e69746579652e636f6d2f75706c6f61642f6174746163686d656e742f303038322f353139322f35306635326161322d643838362d333366322d613661362d3639343631316438363962612e6a7067)
+![img](img/canal类图.jpeg)
 
 * CanalLifeCycle:所有canal模块的生命周期接口
 * CanalInstance: 组合 parser,sink,store 三个子模块，三个子模块的生命周期统一受 CanalInstance 管理
@@ -177,7 +177,7 @@ vi logs/example/example.log
 
 ![](./img/EventSink类图.jpg)
 
-- 常见的 sink 业务有 1:n 和 n:1 形式，目前 GroupEventSink 主要是解决 n:1 的归并类业务##
+- 常见的 sink 业务有 1:n 和 n:1 形式，目前 GroupEventSink 主要是解决 n:1 的归并类业务
 
 ## 应用扩展
 
