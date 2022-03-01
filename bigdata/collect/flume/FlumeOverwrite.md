@@ -17,7 +17,7 @@
 
 * 使用Flume需要`运行Flume代理`，Flume代理是由`持续运行的source`、`sink`以及`channel`(用于连接source和sink)构成的Java进程
 * Flume的`sourcgite产生事件`，并将其`传输给channel`，`channel存储这些事件直至转发给sink`。
-* 可以把source-channel-sink的组合视为基本的Flume构件。
+* 可以把`source-channel-sink`的组合视为基本的Flume组件。
 
 ## 基础架构
 
@@ -28,7 +28,7 @@
 
 ### Souce
 
-* `Souce`复制接收数据到FLume Agent的组件。SOuce组件支持处理多种类型多种格式的日志数据，包括`avro`、thrift、`exec`、`jms`、spooling directory、`netcat`、sequence generator、syslog、http、legacy。
+* `Souce`负责接收数据到Flume Agent的组件。Souce组件支持处理多种类型多种格式的日志数据，包括`avro`、thrift、`exec`、`jms`、spooling directory、`netcat`、sequence generator、syslog、http、legacy。
 
 ### Sink
 
@@ -109,7 +109,7 @@ a1.sinks.k1.channel = c1
 flume-ng agent -n a1 -c $FLUME_HOME/conf -f netcat-flume-logger.conf -Dflume.root.logger=INFO,console
 ```
 
-* -n: 指定运行的agent名称
+* -n: 指定运行的agent名称，要和配置里的前缀一致
 * -c:指定flume配置文件目录
 * -f:运行的Job
 
@@ -226,6 +226,28 @@ flume-ng agent -n a1 -c $FLUME_HOME/conf -f file-flume-hdfs.conf
 * 使用Spooling Directory Source
 
 ```properties
+a1.channels = ch-1
+a1.sources = src-1
+
+a1.sources.src-1.type = spooldir
+a1.sources.src-1.channels = ch-1
+a1.sources.src-1.spoolDir = /var/log/apache/flumeSpool
+a1.sources.src-1.fileHeader = true
+```
+
+* 启动脚本
+
+```shell
+flume-ng agent -n a1 -c $FLUME_HOME/conf -f dir-flume-hdfs.conf
+```
+
+### 实时监控目录下多个追加文件
+
+* 无法使用Exec source因为Exec无法保证数据不丢失，Spooldir Source能够保证数据不丢失，且能够实现断点续传，存在延迟，不能实时监控；Taildir Source支持断点续传，也可以保证数据不丢失并且低延迟支持实时监控。
+
+#### Taildir Source配置
+
+```properties
 a1.sources = s1
 a1.sinks = k1
 a1.channels = c1
@@ -250,17 +272,7 @@ a1.sources.s1.channels = c1
 a1.sinks.k1.channel = c1
 ```
 
-* 启动脚本
 
-```shell
-flume-ng agent -n a1 -c $FLUME_HOME/conf -f dir-flume-hdfs.conf
-```
-
-### 实时监控目录下多个追加文件
-
-* 无法使用Exec source因为Exec无法保证数据不丢失，Spooldir Source能够保证数据不丢失，且能够实现断点续传，存在延迟，不能实时监控；Taildir Source支持断点续传，也可以保证数据不丢失并且低延迟支持实时监控。
-
-#### Taildir Source配置
 
 # 高级特性
 

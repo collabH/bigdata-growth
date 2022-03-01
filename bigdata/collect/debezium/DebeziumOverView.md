@@ -85,7 +85,7 @@ docker run -it --rm --name schema-registry \
 * 默认debezium提供的topic的名字为:`debeziumname.database.tablename`
 * 对于PG的分区表关闭添加唯一键行为:`key.enforce.uniqueness=false` 
 
-### re route配置
+### reroute配置
 
 ```properties
 transforms=Reroute
@@ -105,9 +105,9 @@ transforms.Reroute.topic.replacement=$1customers_all_shards
 
 ### 满足唯一键
 
-* 一个debezium变更事件的key使用的是表的列作为表的主键，对于分库的表来说可能debezium的key是重复的。为了满足每个相同的key发送到相同的topic，topic路由转换插入一个字段`__dbz__physicalTableIdentifier`来保证，其默认为目标topic名称。
+* 一个debezium变更事件的key使用的是表的列作为表的主键，对于分库的表来说可能debezium的key是重复的。为了满足每个相同的key发送到相同的partition，topic路由转换插入一个字段`__dbz__physicalTableIdentifier`来保证，其默认为目标topic名称。
 * `transforms.Reroute.key.field.name=shard_id`设置其他唯一key名称。
-* 如果表包含全局唯一键，并且不需要更改键结构，则可以设置`key. enforcement.uniqueness`选项为false
+* 如果表包含全局唯一键，并且不需要更改键结构，则可以设置`key.enforcement.uniqueness`选项为false
 
 ## 新记录状态提取
 
@@ -177,14 +177,14 @@ transforms.unwrap.add.fields=table,lsn
 
 ## 自定义Topic自动创建
 
-* topic动态为offsets，connector status，config storge和history topics创建内部topics。目标topics为了捕获逼表将会动态创建一个默认的配置当kafka brokers的配置`auto.create.topics.enable`设置为`true`时
+* topic动态为offsets，connector status，config storge和history topics创建内部topics。目标topics为了捕获表将会动态创建一个默认的配置当kafka brokers的配置`auto.create.topics.enable`设置为`true`时
 * 发送`POST`请求的请求体配置
 
 ### 配置Kafka Connect
 
 ```properties
 # 开启动态topic创建
-topic.creation.enable = true
+auto.topic.creation.enable = true
 ```
 
 #### 默认group配置
@@ -267,7 +267,7 @@ topic.creation.enable = true
 
 ## MySQL Connector
 
-* 由于通常将MySQL设置为在指定的时间段后清除二进制日志，因此MySQL连接器会对每个数据库执行初始的一致快照。 MySQL连接器从创建快照的位置读取binlog。
+* 由于通常将MySQL设置为在指定的时间段后清除binlog，因此MySQL连接器会对每个数据库执行初始的一致快照。 MySQL连接器从创建快照的位置读取binlog。
 * 当连接器崩溃或正常停止后重新启动时，连接器从特定位置(即从特定时间点)开始读取binlog。连接器通过读取数据库`历史Kafka topic`并`解析所有DDL语句`，重新构建了此时存在的表结构，直到binlog中连接器开始的位置。
 * database的history topic仅提供给connector使用，connnctor可以选择性的生成schema变更事件对于不同的topic提供给应用程序使用。
 
@@ -707,7 +707,7 @@ topic.creation.enable = true
 
 #### 墓碑event
 
-* 当一行被删除时，delete事件值仍然在日志压缩中工作，因为Kafka可以删除所有具有相同键的早期消息。然而，Kafka删除所有具有相同密钥的消息，消息值必须为空。为了实现这一点，Debezium s MySQL连接器发出delete事件后，连接器发出一个特殊的tombstone事件，该事件具有相同的键，但为空值。
+* 当一行被删除时，delete事件值仍然在日志压缩中工作，因为Kafka可以删除所有具有相同键的早期消息。然而，Kafka删除所有具有相同密钥的消息，消息值必须为空。为了实现这一点，Debezium  MySQL连接器发出delete事件后，连接器发出一个特殊的tombstone事件，该事件具有相同的键，但为空值。
 
 ## 映射数据类型
 
@@ -813,14 +813,14 @@ show global variables like '%GTID%';
 
 ### 设置会话超时时间
 
-```
+```properties
 interactive_timeout=<duration-in-seconds>
 wait_timeout= <duration-in-seconds>
 ```
 
 ### 开启查询log event
 
-```sql
+```properties
 binlog_rows_query_log_events=ON
 ```
 
