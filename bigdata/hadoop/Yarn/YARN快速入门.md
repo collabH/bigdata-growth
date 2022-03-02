@@ -42,9 +42,9 @@
 
 >YARN的基本思想是将资源管理和作业调度/监视的功能拆分为单独的守护进程，因此需要一个全局的 ResourceManager (RM)和每个应用程序的ApplicationMaster(AM)，应用程序可以是单个作业也可以是一组作业。 
 
-![图片](../img/yarn架构.jpg)
+<img src="../img/yarn架构.jpg" alt="图片" style="zoom:200%;" />
 
-![图片](../img/yarn架构1.jpg)
+<img src="../img/yarn架构1.jpg" alt="图片" style="zoom:200%;" />
 
 ### ResourceManger 
 
@@ -85,13 +85,13 @@
 
 ## Yarn工作机制
 
-![Yarn工作机制](../../spark/源码分析/img/Yarn工作机制.jpg)
+![Yarn工作机制](../../engine/spark/源码分析/img/Yarn工作机制.jpg)
 
 ## 作业提交过程
 
-![Yarn工作机制](../../spark/源码分析/img/作业提交流程.jpg)
+![Yarn工作机制](../../engine/spark/源码分析/img/作业提交流程.jpg)
 
-![图片](../img/yarn启动流程.jpg)
+<img src="../img/yarn启动流程.jpg" alt="图片" style="zoom:200%;" />
 
 ### 源码解析流程
 
@@ -122,7 +122,7 @@ AM决定如何构造MapReudce作业的各个任务，如果作业很小就选择
 ```
 map任务必须在reduce的排序节点能够启动前完成，当5%的map任务已经完成时，reduce任务的请求才会发出。
 reduce任务能够在集群中任意位置运行，但是map任务的请求有着数据本地化局限，这是YARN所关注的，在理想情况下，任务是数据本地化的，意味着任务的分片驻留在同一个节点上运行。可选的情况下，任务可能是机架本地化的，即和分片同一个机架而非同一个节点上。有一任务既不是数据本地化也不是机架本地化，它们会从别的机架，而不是运行所在的机架上获取自己的数据。
-默认情况下每个map和reduce任务都分配到1024MB的内存和一个虚拟的内核，这些只可以在每个作业的基础上进行配置，分配通过4个属性来设置 mapreduce.map.memory.mb、mapreduce.reduce.memory.mb、mapreduce.map.cpu.vcores和mapredu ce.reduce.cpu.vcoresp.memory.mb
+默认情况下每个map和reduce任务都分配到1024MB的内存和一个虚拟的内核，这些只可以在每个作业的基础上进行配置，分配通过4个属性来设置 mapreduce.map.memory.mb、mapreduce.reduce.memory.mb、mapreduce.map.cpu.vcores和mapreduce.reduce.cpu.vcoresp.memory.mb
 ```
 
 ### 任务的执行
@@ -143,7 +143,7 @@ YarnChild在指定的JVM中运行，因此用户定义的map或reduce函数中�
 
 # 作业运行失败
 
->实际情况中，用户代码错误问题，进程崩溃，机器过着，使用Hadoop的好处之一就是它可以处理此类故障并让你能够成功完成作业。我们需要考虑如下组件的失败：job、am、nm和rm
+>实际情况中，用户代码错误问题，进程崩溃，机器过载，使用Hadoop的好处之一就是它可以处理此类故障并让你能够成功完成作业。我们需要考虑如下组件的失败：job、am、nm和rm
 
 ## 任务运行失败
 
@@ -214,19 +214,19 @@ Mapreduce客户端向AM轮询进度报告，但是如果它的AM运行失败，�
 
 * 按照达到时间排序，先到先服务
 
-![FIFO调度器](../../spark/源码分析/img/FIFO调度器.jpg)
+![FIFO调度器](../../engine/spark/源码分析/img/FIFO调度器.jpg)
 
 ## 容量调度器
 
 * 支持并发运行Job
 
-![容量调度器](../../spark/源码分析/img/容量调度器.jpg)
+![容量调度器](../../engine/spark/源码分析/img/容量调度器.jpg)
 
 ## FAIR调度器
 
 * 按照缺额排序，缺额大者优先。
 
-![FAIR调度器](../../spark/源码分析/img/FAIR调度器.jpg)
+![FAIR调度器](../../engine/spark/源码分析/img/FAIR调度器.jpg)
 
 # 任务的执行
 
@@ -255,7 +255,7 @@ Mapreduce客户端向AM轮询进度报告，但是如果它的AM运行失败，�
 
 #### 推测执行算法原理
 
-![推测执行](../../spark/源码分析/img/推测运行算法原理.jpg)
+![推测执行](../../engine/spark/源码分析/img/推测运行算法原理.jpg)
 
 ## 关于OutputCommitters
 
@@ -340,17 +340,17 @@ etc/hadoop/yarn-site.xml
 ## ResourceManager配置 
 
 |**参数** |**值** |**说明** |
-|:----|:----|:----|:----|
-|yarn.resourcemanager.address |ResourceManager host:port 用于客户端任务提交. |如果设置host:port ，将覆盖yarn.resourcemanager.hostname. <br>host:port主机名。 |
-|yarn.resourcemanager.scheduler.address |ResourceManager host:port 用于应用管理者向调度程序获取资源。 |如果设置host:port ，将覆盖yarn.resourcemanager.hostname主机名 |
-|yarn.resourcemanager.resource-tracker.address |ResourceManager host:port 用于NodeManagers. |如果设置 *host:port* ，将覆盖yarn.resourcemanager.hostname的主机名设置。 |
-|yarn.resourcemanager.admin.address |ResourceManager host:port 用于管理命令。 |如果设置 *host:port* ，将覆盖yarn.resourcemanager.hostname主机名的设置 |
-|yarn.resourcemanager.webapp.address |ResourceManager web-ui host:port. |如果设置 *host:port* ，将覆盖yarn.resourcemanager.hostname主机名的设置 |
-|yarn.resourcemanager.hostname |ResourceManager host. |可设置为代替所有yarn.resourcemanager* address 资源的主机单一主机名。其结果默认端口为ResourceManager组件。 |
-|yarn.resourcemanager.scheduler.class |ResourceManager 调度类. |Capacity调度 (推荐), Fair调度 (也推荐),或Fifo调度.使用完全限定类名,如 org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler. |
-|yarn.scheduler.minimum-allocation-mb |在 Resource Manager上为每个请求的容器分配的最小内存. |In MBs |
+|:----|:----|:----|
+|yarn.resourcemanager.address |ResourceManager host:port 用于客户端任务提交. |如果设置host:port ，将覆盖yarn.resourcemanager.hostname.host:port主机名。 |
+|yarn.resourcemanager.scheduler.address |ResourceManager host:port 用于应用管理者向调度程序获取资源。 |如果设置host:port ，将覆盖yarn.resourcemanager.hostname主机名 |
+|yarn.resourcemanager.resource-tracker.address |ResourceManager host:port 用于NodeManagers. |如果设置 *host:port* ，将覆盖yarn.resourcemanager.hostname的主机名设置。 |
+|yarn.resourcemanager.admin.address |ResourceManager host:port 用于管理命令。 |如果设置 *host:port* ，将覆盖yarn.resourcemanager.hostname主机名的设置 |
+|yarn.resourcemanager.webapp.address |ResourceManager web-ui host:port. |如果设置 *host:port* ，将覆盖yarn.resourcemanager.hostname主机名的设置 |
+|yarn.resourcemanager.hostname |ResourceManager host. |可设置为代替所有yarn.resourcemanager* address 资源的主机单一主机名。其结果默认端口为ResourceManager组件。 |
+|yarn.resourcemanager.scheduler.class |ResourceManager 调度类. |Capacity调度 (推荐), Fair调度 (也推荐),或Fifo调度.使用完全限定类名,如 org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler. |
+|yarn.scheduler.minimum-allocation-mb |在 Resource Manager上为每个请求的容器分配的最小内存. |In MBs |
 |yarn.scheduler.maximum-allocation-mb |在Resource Manager上为每个请求的容器分配的最大内存 |In MBs |
-|yarn.resourcemanager.nodes.include-path / yarn.resourcemanager.nodes.exclude-path |允许/摒弃的nodeManagers列表 |如果必要，可使用这些文件来控制允许的NodeManagers列表 |
+|yarn.resourcemanager.nodes.include-path / yarn.resourcemanager.nodes.exclude-path |允许/摒弃的nodeManagers列表 |如果必要，可使用这些文件来控制允许的NodeManagers列表 |
 
 ## NodeManager配置 
 
@@ -368,9 +368,10 @@ etc/hadoop/yarn-site.xml
 
 # MapReduce作业提交至YARN运行 
 
-```
+```shell
 # 包地址 
 /home/hadoop/hadoop-2.6.0-cdh5.7.0/hadoop-mapreduce-examples-2.6.0-cdh5.7.0.jar 
 # 运行mapreduce作业至yarn 
 hadoop jar jarname pi 2 3 
 ```
+
