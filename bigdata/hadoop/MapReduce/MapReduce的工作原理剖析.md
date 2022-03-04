@@ -1,8 +1,8 @@
 # MapReduce详细工作流程
 
-![map阶段](../../spark/源码分析/img/MRMap阶段流程.jpg)
+![map阶段](../../engine/spark/源码分析/img/MRMap阶段流程.jpg)
 
-![MRReduce阶段](../../spark/源码分析/img/MRReduce阶段.jpg)
+![MRReduce阶段](../../engine/spark/源码分析/img/MRReduce阶段.jpg)
 
 ## MapTask工作机制
 

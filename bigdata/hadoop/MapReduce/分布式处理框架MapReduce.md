@@ -16,7 +16,7 @@
 
 **实际为分治算法**
 
-![](../img/分治算法.jpg)
+<img src="../img/分治算法.jpg" style="zoom:200%;" />
 
 >输入文件可以拆分为多个快，通常这个块于HDFS的blocksize对应，然后一个Map处理一个块处理完的结果存在本地，再经过Shuffle网络传输把相同的key写入到一个reduce中，最终写到文件系统。
 ## MapReduce编程模型执行流程
@@ -65,7 +65,7 @@ MapReduce框架仅对<key,value>键值对运行，该框架将作业的输入视
 针对上述wordCount，key是偏移量，value是一行的数据
 ```
 # MapReduce多节点流程图
-![](../img/mr流程图.jpg)
+<img src="../img/mr流程图.jpg" style="zoom:200%;" />
 
 ![](../img/mr流程图1.jpg)
 ## 核心概念
@@ -107,7 +107,7 @@ TextInputFormat:处理文本格式数据
   * 输出结果写到HDFS(或者其他存储引擎)
 ## MapReduce2.x架构图
 
-![图片](../img/mr2.x架构.jpg)
+<img src="../img/mr2.x架构.jpg" alt="图片" style="zoom:200%;" />
 
 **参考YARN流程图**
 
@@ -244,10 +244,12 @@ job.addArchiveToClassPath(new Path("hdfs://hadoop:8020/hello/commons-lang3-3.9.j
 ```
 ## 运行MapReduce任务命令
 
-```
+```shell
 yarn jar hadoop-study-1.0-SNAPSHOT.jar com.reasearch.hadoop.mapreduce.parititioner.PartitionerApp /banner.txt /banner
 ```
 # Combiner
+
+
 
 * 本地reducer
 * 减少Map task输出的数据量以及数据网络传输量
