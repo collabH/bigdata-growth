@@ -179,8 +179,6 @@ public int run(String[] args) throws Exception {
 }
 ```
 
-
-
 #### 部分排序
 
 * 根据默认的Hash分区设置对应的reduce任务数，这样就可以根据键来分区排序。
