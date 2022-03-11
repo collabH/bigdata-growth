@@ -4,8 +4,6 @@
 
 ![img](https://images2018.cnblogs.com/blog/666745/201807/666745-20180726155027971-1664616298.png)
 
-## 
-
 ## 安装
 
 ### Kafka-Eagle环境准备
