@@ -111,7 +111,7 @@
 
 * 服务器1启动，此时只有它一台服务器启动了，它发出去的报文没有任何响应，所以它的选举状态一直是LOOKING状态。
 * 服务器2启动，它与最开始启动的服务器1进行通信，互相交换自己的选举结果，由于两者都没有历史数据，所以id值较大的服务器2胜出，`但是由于没有达到超过半数以上的因此还需要等待其他服务器`。
-* 服务器3启动后，服务器1、2都将票投给myid最大的服务器索引服务器3成为Leader，后续来的服务器都是Follower节点。
+* 服务器3启动后，服务器1、2都将票投给`myid最大`的服务器索引服务器3成为Leader，后续来的服务器都是Follower节点。
 
 ## 节点类型
 
@@ -179,13 +179,13 @@
 
 * Zookeeper提供的一种分布式数据的发布/订阅功能，Zookeeper客户端会向服务端注册一个Watcher监听，当服务端的一些指定事件触发了这个Watcher，就会向指定客户端发送一个事件通知来实现分布式的通知功能。
 
-![](../canal/img/Watcher机制.jpg)
+![](../collect/canal/img/Watcher机制.jpg)
 
 * Zookeeper的Watcher机制主要包含客户端线程、客户端WatchManager和Zookeeper服务器。当Zookeeper服务器端触发Watcher事件后，会向客户端发送通知，客户端现场从WatchManager中取出对应的Watcher对象来执行回调逻辑。
 
 ### Watcher通知状态与数据类型
 
-![](../canal/img/Watcher通知状态.jpg)
+![](../collect/canal/img/Watcher通知状态.jpg)
 
 ### 工作机制
 
