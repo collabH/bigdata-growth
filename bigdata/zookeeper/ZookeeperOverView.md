@@ -603,3 +603,18 @@ public class ZKDatabase {
 
 ![](./img/数据同步流程.jpg)
 
+# ZAB协议
+
+## 概念
+
+* Zookeeper实现了原子多播协议**Zab（Zookeeper Atomic Broadcast）**来实现数据的一致性传输。Zab协议源于Paxos的思想，但和Paxos是完全不同的协议。
+* zab协议中有三种副本状态，每个副本都会处于三种状态之一：
+  * **Leader** 一个集群同一时间只会有一个Leader，它会发起并维护与各Follower及Observer间的心跳。所有的**写事务**必须要通过Leader完成再由Leader将写操作广播给其它服务器。
+  * **Follower** 一个集群可能同时存在多个Follower，它会响应Leader的心跳。Follower可**直接处理并返回客户端的读事务**，同时会将写事务转发给Leader处理，并且负责在Leader处理写请求时对请求进行投票。
+  * **Observer** 角色与Follower类似，但是**无投票权**。（类似**Paxos中Learner的角色**）
+  * zab服务器具有以下状态信息：
+    * history：一个在磁盘proposals accepted的日志
+    * lastZxid：最后一个eproposal在history的zxid
+    * accptedEpoch：NEWEPOCH包 accepted的毫秒值
+    * currentEpoch：NEWLEADER包accpeted的毫秒值
+* zxid：zk写事务的事务id，用于标识一次更新操作的proposal id。为了保证顺序性，该zxid必须**单调递增**。ZooKeeper使用一个64位的数来表示，高32位是Leader的**epoch**，从1开始，每次选出新的Leader，epoch加1。低32位为该epoch内的序号，每次epoch变化，都将低32位的序号重置。这样保证了zxid的**全局递增性**。
