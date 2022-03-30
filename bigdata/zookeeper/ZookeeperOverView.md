@@ -335,6 +335,24 @@
 
 ## Leader选举的实现细节
 
+```java
+  /*
+         * We return true if one of the following three cases hold:
+         * 1- New epoch is higher
+         * 2- New epoch is the same as current epoch, but new zxid is higher
+         * 3- New epoch is the same as current epoch, new zxid is the same
+         *  as current zxid, but server id is higher.
+         */
+
+        return ((newEpoch > curEpoch)
+                || ((newEpoch == curEpoch)
+                    && ((newZxid > curZxid)
+                        || ((newZxid == curZxid)
+                            && (newId > curId)))));
+```
+
+
+
 ### 服务器状态
 
 * LOOKING:寻找Leader状态，当前服务器处于该状态时，它会认为集群中没有Leader，因此需要进入Leader选举流程。
@@ -617,4 +635,62 @@ public class ZKDatabase {
     * lastZxid：最后一个eproposal在history的zxid
     * accptedEpoch：NEWEPOCH包 accepted的毫秒值
     * currentEpoch：NEWLEADER包accpeted的毫秒值
-* zxid：zk写事务的事务id，用于标识一次更新操作的proposal id。为了保证顺序性，该zxid必须**单调递增**。ZooKeeper使用一个64位的数来表示，高32位是Leader的**epoch**，从1开始，每次选出新的Leader，epoch加1。低32位为该epoch内的序号，每次epoch变化，都将低32位的序号重置。这样保证了zxid的**全局递增性**。
+* **zxid：**zk写事务的事务id，用于标识一次更新操作的proposal id。为了保证顺序性，该zxid必须**单调递增**。ZooKeeper使用一个64位的数来表示，高32位是Leader的**epoch**，从1开始，每次选出新的Leader，epoch加1。低32位为该epoch内的序号，每次epoch变化，都将低32位的序号重置。这样保证了zxid的**全局递增性**。
+* **ZAB状态**Zookeeper还给ZAB定义的4中状态
+
+```java
+public enum ZabState {
+  // 选举
+        ELECTION,
+  // 连接上leader，响应leader心跳，并且检测leader的角色是否更改，通过此步骤之后选举出的leader才能执行真正职务；
+        DISCOVERY,
+  // 整个集群都确认leader之后，将会把leader的数据同步到各个节点，保证整个集群的数据一致性；
+        SYNCHRONIZATION,
+  // 广播投票信息
+        BROADCAST
+    }
+```
+
+## 选举流程分析
+
+### Leader选举
+
+![](img/leader选举流程1.jpg)
+
+- 所有节点第一票先选举自己当leader，将投票信息广播出去；
+- 从队列中接受投票信息；
+- 按照规则判断是否需要更改投票信息，将更改后的投票信息再次广播出去；
+- 判断是否有超过一半的投票选举同一个节点，如果是选举结束根据投票结果设置自己的服务状态，选举结束，否则继续进入投票流程。
+
+### 广播
+
+**zab在广播状态中保证以下特征:**
+
+- **可靠传递:** 如果消息m由一台服务器传递，那么它最终将由所有服务器传递。
+- **全局有序:** 如果一个消息a在消息b之前被一台服务器交付，那么所有服务器都交付了a和b，并且a先于b。
+- **因果有序:** 如果消息a在因果上先于消息b并且二者都被交付，那么a必须排在b之前。
+
+![](img/选举流程.jpg)
+
+1. Leader收到客户端的写请求，生成一个事务（Proposal），其中包含了zxid；
+2. Leader开始广播该事务，需要注意的是所有节点的通讯都是由一个FIFO的队列维护的；
+3. Follower接受到事务之后，将事务写入本地磁盘，写入成功之后返回Leader一个ACK；
+4. Leader收到过半的ACK之后，开始提交本事务，并广播事务提交信息
+5. 从节点开始提交本事务。
+
+#### 有序性保障
+
+1. 服务之前用TCP协议进行通讯，保证在网络传输中的有序性；
+2. 节点之前都维护了一个FIFO的队列，保证全局有序性；
+3. 通过全局递增的zxid保证因果有序性。
+
+#### 状态流转
+
+<img src="img/状态流转.jpg" style="zoom:200%;" />
+
+- 服务在启动或者和leader失联之后服务状态转为LOOKING；
+- 如果leader不存在选举leader，如果存在直接连接leader，此时zab协议状态为ELECTION；
+- 如果有超过半数的投票选择同一台server，则leader选举结束，被选举为leader的server服务状态为LEADING，其他server服务状态为FOLLOWING/OBSERVING；
+- 所有server连接上leader，此时zab协议状态为DISCOVERY；
+- leader同步数据给learner，使各个从节点数据和leader保持一致，此时zab协议状态为SYNCHRONIZATION；
+- 同步超过一半的server之后，集群对外提供服务，此时zab状态为BROADCAST。
