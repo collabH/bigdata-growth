@@ -662,7 +662,7 @@ public enum ZabState {
 - 按照规则判断是否需要更改投票信息，将更改后的投票信息再次广播出去；
 - 判断是否有超过一半的投票选举同一个节点，如果是选举结束根据投票结果设置自己的服务状态，选举结束，否则继续进入投票流程。
 
-### 广播
+### 消息广播模式
 
 **zab在广播状态中保证以下特征:**
 
@@ -673,7 +673,7 @@ public enum ZabState {
 ![](img/选举流程.jpg)
 
 1. Leader收到客户端的写请求，生成一个事务（Proposal），其中包含了zxid；
-2. Leader开始广播该事务，需要注意的是所有节点的通讯都是由一个FIFO的队列维护的；
+2. Leader开始广播该事务，需要注意的是所有节点的通讯都是由一个**FIFO**的队列维护的；
 3. Follower接受到事务之后，将事务写入本地磁盘，写入成功之后返回Leader一个ACK；
 4. Leader收到过半的ACK之后，开始提交本事务，并广播事务提交信息
 5. 从节点开始提交本事务。
@@ -694,3 +694,11 @@ public enum ZabState {
 - 所有server连接上leader，此时zab协议状态为DISCOVERY；
 - leader同步数据给learner，使各个从节点数据和leader保持一致，此时zab协议状态为SYNCHRONIZATION；
 - 同步超过一半的server之后，集群对外提供服务，此时zab状态为BROADCAST。
+
+### 崩溃恢复模式
+
+第一步：选取当前取出最大的ZXID，代表当前的事件是最新的。
+
+第二步：新leader把这个事件proposal提交给其他的follower节点
+
+第三步：follower节点会根据leader的消息进行回退或者是数据同步操作。最终目的要保证集群中所有节点的数据副本保持一致。
