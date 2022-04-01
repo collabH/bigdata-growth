@@ -43,11 +43,11 @@ preAllocSize=65536
 minSessionTimeout=2
 # 默认为20
 maxSessionTimeout=20
-# 默认为60 从Socket层面限制单个客户端与单台服务器之间的并发连接数，即以IP地址的力度来进行连接数的限制。如果设置为0即对连接数不做任何限制
+# 默认为60 从Socket层面限制单个客户端与单台服务器之间的并发连接数，即以IP地址的粒度来进行连接数的限制。如果设置为0即对连接数不做任何限制
 maxClientCnxns=60
 # 默认1048575字节，单个数据节点(ZNode)上可以存储的最大数据量大小。
 jute.maxbuffer=1048575
-# sever.id=host:port:port 第一个port指定Follower服务器与Leader进行运行时通信和数据同步的短裤，第二个端口用于Leader选举过程中的投票通信
+# sever.id=host:port:port 第一个port指定Follower服务器与Leader进行运行时通信和数据同步的端口，第二个端口用于Leader选举过程中的投票通信
 server.1=localhost:2888:3888
 server.2=localhost:2889:3889
 server.3=localhost:2890:3890
@@ -73,8 +73,7 @@ electionAlg
 tickTime=2000
 dataDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_data2
 # 事务日志存储目录
-dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper
-_tx_data2
+dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_tx_data2
 clientPort=2183
 initLimit=20
 syncLimit=5
@@ -89,8 +88,7 @@ server.3=localhost:2890:3890
 tickTime=2000
 dataDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_data3
 # 事务日志存储目录
-dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper
-_tx_data3
+dataLogDir=/Users/babywang/Documents/reserch/middleware/zk/zkCluster/zookeeper_tx_data3
 clientPort=2184
 initLimit=20
 syncLimit=5
@@ -120,12 +118,12 @@ zkCli.sh -server ip:port
 
 ## create 
 
-```
+```shell
 create [-s] [-e] [-c] [-t ttl] path [data] [acl] 
 ```
 
 * 创建顺序节点 
-```
+```shell
 create -s /name huangsm 
 ```
 * 创建临时节点 
@@ -247,35 +245,35 @@ addauth scheme auth
 
 
 * 第一种的world 
-```
+```shell
 setAcl /name/abc world:anyone:crwa 
 设置创建、读、写、设置权限 
 ```
 
 * 第二种auth 
-```
-auth:user:pwd:cdrwa 
+```shell
+setAcl /name/abc auth:user:pwd:cdrwa 
 user和pwd都代表第一个注册的用户和密码 
 ```
 * 第三种digest 
-```
-digest:user:BASE64(SHA1(pwd)):cdrwa 
+```shell
+setAcl /name/abc digest:user:BASE64(SHA1(pwd)):cdrwa 
 //登录用户 
 addauth digest user:pwd 
 ```
 
 * 第四种ip 
-```
-ip:127.0.0.1:cdrwa 
+```shell
+setAcl /name/abc ip:127.0.0.1:cdrwa 
 ```
 
 * 第五种super 
-```
+```shell
 Super 
 1 修改zkServer.sh增加super管理员 
 2 重启zkServer 
 ```
-![图片](./img/super权限.jpg)
+<img src="./img/super权限.jpg" alt="图片" style="zoom:150%;" />
 
 
 1. zk四字命令Four letter worlds 
