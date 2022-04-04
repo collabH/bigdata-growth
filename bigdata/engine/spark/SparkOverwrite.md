@@ -13,7 +13,7 @@
 
 #### 执行策略
 
-* MapReduce在数据Shuffle之间需要在Map阶段需要进行分区快排并且在merge阶段时也需要对map输出阶段的各个文件进行归并排序，在shuffle拷贝文件也需要通过归并排序进行合并，此时就导致Shuffle十分消耗性能。
+* MapReduce在数据Shuffle之间需要在Map阶段需要进行分区`快排`并且在merge阶段时也需要对map输出阶段的`各个文件进行归并排序`，在shuffle拷贝文件也需要通过归并排序进行合并，此时就导致Shuffle十分消耗性能。
 * Spark提供Bypass机制和不同模式numMapsForShuffle机制，会根据stage属性和配置决定shuffle过程是否需要排序，并且中间结果可以直接缓存在内存中。
 
 #### 任务调度开销
@@ -49,7 +49,7 @@
 * Worker:从节点，负责控制计算节点，启动Executor或Driver，在yarn模式中为NM
 * Executor:在计算节点执行任务的组件。
 * SparkContext:应用的上下文，控制应用的生命周期。
-* RDD:弹性分布式数据集，Spark的基本计算单元，一组RDD可形成有向五环图。
+* RDD:弹性分布式数据集，Spark的基本计算单元，一组RDD可形成有向无环图。
 * DAG Scheduler:根据应用构建基于Stage的DAG，并将Stage提交给Task Schduler
 * Task Scheduler :将Task分发给Executor执行
 * SparkEnv: 线程级别上下文，存储运行时重要组件
@@ -64,7 +64,7 @@
 * 用户在Client提交应用
 * Master找到worker启动Driver
 * Driver向RM或Master申请资源，并将应用转换为RDD Graph
-* DAG Scheduler将RDD Graph转化为Stage的有向五环图提交给Task Scheduler
+* DAG Scheduler将RDD Graph转化为Stage的有向无环图提交给Task Scheduler
 * Task Scheduler提交Task给Executor执行。
 
 ## Spark部署
@@ -233,8 +233,6 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk1.8.0_221.jdk/Contents/Hom
   </property>
 ```
 
-
-
 * 创建目录
 
 ```shell
@@ -295,7 +293,7 @@ worker3
 
 ### 简介
 
-* RDD是一个容错的、并行的数据结构，可以让用户显式地出将数据存储到磁盘或内存中，并控制数据的分区。RDD是Spark的核心，通过RDD的`依赖关系形成Spark的调度顺序`。
+* RDD是一个容错的、并行的数据结构，可以让用户显式地将数据存储到磁盘或内存中，并控制数据的分区。RDD是Spark的核心，通过RDD的`依赖关系形成Spark的调度顺序`。
 * 一个 RDD 由一个或者多个分区（Partitions）组成。对于 RDD 来说，每个分区会被一个计算任务所处理，用户可以在创建 RDD 时指定其分区个数，如果没有指定，则默认采用程序所分配到的 CPU 的核心数；
 * RDD 拥有一个用于计算分区的函数 compute；
 * RDD 会保存彼此间的依赖关系，RDD 的每次转换都会生成一个新的依赖关系，这种 RDD 之间的依赖关系就像流水线一样。在部分分区数据丢失后，可以通过这种依赖关系重新计算丢失的分区数据，而不是对 RDD 的所有分区进行重新计算；
@@ -314,7 +312,7 @@ worker3
 
 #### RDD容错性
 
-* 常用容错方式为日志记录和数据复制，这种方式都比较昂贵。
+* 常用容错方式为日志记录和数据复制，这两种方式都比较昂贵。
 * RDD因为本身是不变的数据集，天然支持容错，RDD之间可以通过lineage产生依赖，RDD能够记住它的DAG图，当worker执行失败时，直接通过操作图获得之前执行的操作，重新计算。
 
 #### RDD高效性
@@ -355,7 +353,7 @@ worker3
 
 * Task: RDD中的一个分区对应一个Task，Task是单个分区的最小处理流程单元。
 * TaskSet:一组关联的，但相互之间没有Shuffle依赖关系的Task集合。
-* Stage:一个TaskSet对应的调度阶段，每个Job会根据RDD的宽依赖关系被切分成很多Stage，每个Stage都包含一个TaskSet。
+* Stage:一个TaskSet对应的调度阶段，每个Job会根据RDD的`宽依赖`关系被切分成很多Stage，每个Stage都包含一个`TaskSet`。
 * Job:由Action算子触发生成的由一个或多个Stage组成的计算作业。
 * Application:用户编写的Spark的应用程序，由一个或多个Job组成。提交到Spark之后，Spark为Application分配资源，将程序转换并执行。
 * DAGScheduler:根据Job构建基于Stage的DAG，并提交Stage给TaskScheduler。

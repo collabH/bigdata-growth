@@ -23,7 +23,7 @@
 
 deploy-mode 有 `cluster` 和 `client` 两个可选参数，默认为 `client`。这里以 Spark On Yarn 模式对两者进行说明 ：
 
-- 在 cluster 模式下，Spark Drvier 在应用程序的 Master 进程内运行，该进程由群集上的 YARN 管理，提交作业的客户端可以在启动应用程序后关闭；
+- 在 cluster 模式下，Spark Drvier 在应用程序的 Master(Yarn的SparkApplicationMaster) 进程内运行，该进程由群集上的 YARN 管理，提交作业的客户端可以在启动应用程序后关闭；
 - 在 client 模式下，Spark Drvier 在提交作业的客户端进程中运行，Master 进程仅用于从 YARN 请求资源。
 
 ## master-url
@@ -120,10 +120,6 @@ spark-submit \
 100
 ```
 
-
-
-
-
 # YARN概述
 
 * Hadoop的资源协调者(Yet Another Resource Negotiator,YARN)是一个通用的资源管理系统，能够为上层应用提供统一的资源管理和资源调度。YARN的引入为集群在`利用率、资源统一管理和数据共享`带来巨大好处。
@@ -156,7 +152,7 @@ spark-submit \
 
 ## 前提条件
 
-* 确保HADOOP_CONF_DIR或YARN_CONF_DIR(在spark-env.sh中配置)指向Hadoop集群的相关配置。
+* 确保`HADOOP_CONF_DIR或YARN_CONF_DIR`(在spark-env.sh中配置)指向Hadoop集群的相关配置。
 
 ## Spark在YARN的运行模式
 
@@ -240,7 +236,7 @@ spark.jar 10
 
 * 如果log application开启(yarn.log-aggregation-enable)，`container log`会复制到`HDFS`中，然后在本地删除。这些log可以通过yarn logs -applicationId查看。也可以在HDFS shell或API查看container log文件，这些log文件目录通过以下参数指定
 
-```shell
+```properties
 yarn.nodemanger.remote-app-log-dir
 yarn.nodemanager.remote-app-log-dir-suffix
 ```
