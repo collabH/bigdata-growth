@@ -406,7 +406,7 @@ class AppendOnlyMap[K, V](initialCapacity: Int = 64)
   // Treat the null key differently so we can use nulls in "data" to represent empty items.
   // 是否存在null值
   private var haveNullValue = false
-  // 控制
+  // 空值
   private var nullValue: V = null.asInstanceOf[V]
 
   // Triggered by destructiveSortedIterator; the underlying data array may no longer be used
@@ -427,7 +427,7 @@ def apply(key: K): V = {
     if (k.eq(null)) {
       return nullValue
     }
-    // 相当于key的hashcode&cap-1 === k.hashcode % cap
+    // 相当于key的hashcode&cap-1 === k.hashcode % cap rehash 寻址hash
     var pos = rehash(k.hashCode) & mask
     var i = 1
     while (true) {
@@ -441,7 +441,7 @@ def apply(key: K): V = {
       } else if (curKey.eq(null)) {
         return null.asInstanceOf[V]
       } else {
-        val delta = i
+        val delta = i // 依次向后移动
         // pos往后移动
         pos = (pos + delta) & mask
         i += 1
@@ -928,8 +928,6 @@ def insertAll(records: Iterator[Product2[K, V]]): Unit = {
     }
   }
 ```
-
-
 
 ### maybeSpillCollection
 
@@ -1461,7 +1459,7 @@ override def getWriter[K, V](
 ### 满足的条件
 
 * ShuffleDependency的mapSideCombine属性为false（即不允许在map端合并）。
-* ShuffleDependency的分区数大于spark.shuffle.sort.bypassMergeThreshold属性（默认为200）指定的绕开合并和排序的阈值。
+* ShuffleDependency的分区数大于`spark.shuffle.sort.bypassMergeThreshold`属性（默认为200）指定的绕开合并和排序的阈值。
 * ShuffleDependency不支持序列化。
 * 指定了聚合函数。
 
@@ -1472,7 +1470,7 @@ override def getWriter[K, V](
 ### 满足的条件
 
 * ShuffleDependency的mapSideCombine属性为false（即不允许在map端合并）。
-* ShuffleDependency的分区数大于spark.shuffle.sort.bypassMergeThreshold属性（默认为200）指定的绕开合并的阈值。
+* ShuffleDependency的分区数大于`spark.shuffle.sort.bypassMergeThreshold`属性（默认为200）指定的绕开合并的阈值。
 * ShuffleDependency不支持序列化。
 * 没有指定聚合函数。
 
@@ -1487,7 +1485,7 @@ override def getWriter[K, V](
 ### 满足的条件
 
 * ShuffleDependency的mapSideCombine属性为false（即不允许在map端合并）。
-* ShuffleDependency的分区数小于等于spark.shuffle.sort.bypassMergeThreshold属性（默认为200）指定的绕开合并的阈值。
+* ShuffleDependency的分区数小于等于`spark.shuffle.sort.bypassMergeThreshold`属性（默认为200）指定的绕开合并的阈值。
 * 没有指定聚合函数。
 
 ![](./img/map端临时Shuffle文件的合并与reduce端聚合.jpg)
