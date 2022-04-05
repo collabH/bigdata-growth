@@ -45,7 +45,7 @@ val conf=new SparkConf()
 
 ### Kryo序列化
 
-* Spark也支持Kryo序列化对象，Kryo速度快，产结果也更为紧凑。`Kryo并不支持所有类型，为了获得更好的性能，开发者需要提前注册程序中使用的类`。
+* Spark也支持Kryo序列化对象，Kryo速度快，产出结果也更为紧凑。`Kryo并不支持所有类型，为了获得更好的性能，开发者需要提前注册程序中使用的类`。
 
 #### 设置Kryo序列化
 
@@ -63,11 +63,11 @@ val conf=new SparkConf()
       .registerKryoClasses(Array(classOf[MyClass], classOf[MyClass2]))
 ```
 
-* 序列化对象过大时可以使用·spark.kryoserializer.buffer.mb·的值，该属性的默认值时32，但是该属性需要足够大，以便能偶容纳需要序列化的最大对象。
+* 序列化对象过大时可以使用`spark.kryoserializer.buffer.mb`的值，该属性的默认值时32，但是该属性需要足够大，以便能偶容纳需要序列化的最大对象。
 
 ## 内存优化
 
-* 对象站用的内存
+* 对象占用的内存
 * 访问对象的消耗
 * 垃圾回收占用的内存开销
 
@@ -75,7 +75,7 @@ val conf=new SparkConf()
 java对象的访问速度虽然快，但是占用的空间通常比内部的属性数据大2～5倍，属于空间换时间的策略。
 
 1.Java对象包含一个“对象头部（object header），该头部大约占16字节，包含了指向对象对应的类的指针等信息。”
-2. Java String在实际的字符串数据之外，还需要大约40字节的额外开销（因为String将字符串保存在Char数组利，还需要保存类似长度等的其他数据）；同时，因为Unicode编码，一个字符占2个字节，一个长度10的字符串需要占60个字节。
+2.Java String在实际的字符串数据之外，还需要大约40字节的额外开销（因为String将字符串保存在Char数组里，还需要保存类似长度等的其他数据）；同时，因为Unicode编码，一个字符占2个字节，一个长度10的字符串需要占60个字节。
 3. 通用的集合类，如HashMap、LinkedList都采用了链表数据结构，对每个条目(entry)都进行了包装(wrapper)。每个条目有对象头，还有下一个条目的指针。
 4. 基本类型的集合通常保存为对应的类，一些包装类，内部有一些CachePool等对象。
 ```
@@ -120,8 +120,6 @@ java对象的访问速度虽然快，但是占用的空间通常比内部的属�
 ```properties
 spark.yarn.driver.memoryOverhead
 ```
-
-
 
 ## 数据本地化
 

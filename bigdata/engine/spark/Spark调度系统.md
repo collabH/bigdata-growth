@@ -361,7 +361,7 @@ def defaultPartitioner(rdd: RDD[_], others: RDD[_]*): Partitioner = {
 
     // If the existing max partitioner is an eligible one, or its partitions number is larger
     // than the default number of partitions, use the existing partitioner.
-    // 如果存在最大分区器，并且是合格的分区程序，或者默认分区数量小雨最大分区器的分区数，则返回最大分区的分区器，否则默认为Hash分区器，并且分区个数为"spark.default.parallelism"
+    // 如果存在最大分区器，并且是合格的分区程序，或者默认分区数量小于最大分区器的分区数，则返回最大分区的分区器，否则默认为Hash分区器，并且分区个数为"spark.default.parallelism"
     if (hasMaxPartitioner.nonEmpty && (isEligiblePartitioner(hasMaxPartitioner.get, rdds) ||
         defaultNumPartitions < hasMaxPartitioner.get.getNumPartitions)) {
       hasMaxPartitioner.get.partitioner.get
@@ -380,6 +380,7 @@ class HashPartitioner(partitions: Int) extends Partitioner {
   def numPartitions: Int = partitions
 
   def getPartition(key: Any): Int = key match {
+    // null过多可能会导致数据倾斜
     case null => 0
       // 获取key的hashcode和分区数的非负数取余为分区数
     case _ => Utils.nonNegativeMod(key.hashCode, numPartitions)
@@ -563,7 +564,7 @@ private[scheduler] abstract class Stage(
  * @param rdd RDD that this stage runs on: for a shuffle map stage, it's the RDD we run map tasks
  *   on, while for a result stage, it's the target RDD that we ran an action on
  * @param func  即对RDD的分区进行计算的函数。
- * @param partitions 由RDD的哥哥分区的索引组成的数组
+ * @param partitions 由RDD的各个分区的索引组成的数组
  * @param parents List of stages that this stage depends on (through shuffle dependencies). stage依赖
  * @param firstJobId ID of the first job this stage was part of, for FIFO scheduling. 第一个job的id作为这个stage的一部分
  * @param callSite Location in the user program associated with this stage: either where the target
@@ -1390,8 +1391,6 @@ def createShuffleMapStage(shuffleDep: ShuffleDependency[_, _, _], jobId: Int): S
     stage
   }
 ```
-
-
 
 #### getShuffleDependencies
 
