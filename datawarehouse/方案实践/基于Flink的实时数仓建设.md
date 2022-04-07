@@ -13,15 +13,15 @@
 
 ### Lambda架构
 
-![img](./img/Lambda架构.jpg)
+![img](../img/Lambda架构.jpg)
 
 ### Kappa架构
 
-![](./img/Kappa架构.jpg)
+![](../img/Kappa架构.jpg)
 
 ### 实时OLAP架构
 
-![](./img/实时OLAP架构.jpg)
+![](../img/实时OLAP架构.jpg)
 
 # 流式Join
 
@@ -62,11 +62,11 @@
 
 * 适用于changelog流，存储各个时态数据的变化
 
-![](./img/Temporaltable.jpg)
+![](../img/Temporaltable.jpg)
 
 ### 维度表join方案对比
 
-![](./img/维度表join方案对比.jpg)
+![](../img/维度表join方案对比.jpg)
 
 ## 双流Join
 
@@ -97,7 +97,7 @@ WHERE
 
 * 将两个流中有相同key和处在相同window的元素做join
 
-![](./img/windowjoin.jpg)
+![](../img/windowjoin.jpg)
 
 # 实时数仓问题解决
 
