@@ -414,6 +414,8 @@ private def currentTaskAttemptId: TaskAttemptId = {
 
 ### downgradeLock
 
+* 锁降级，写锁变成读锁
+
 ```scala
 def downgradeLock(blockId: BlockId): Unit = synchronized {
     logTrace(s"Task $currentTaskAttemptId downgrading write lock for $blockId")
@@ -545,7 +547,7 @@ private[spark] class DiskBlockManager(conf: SparkConf,
   }
 ```
 
-![本地目录](/Users/babywang/Documents/reserch/dev/workspace/repository/bigdata/spark/img/spark存储block本地目录结构.jpg)
+![本地目录](./img/spark存储block本地目录结构.jpg)
 
 ## DiskBlockManager相关方法
 
@@ -618,9 +620,9 @@ def getAllFiles(): Seq[File] = {
 
 ```scala
  def createTempLocalBlock(): (TempLocalBlockId, File) = {
-    // 创建中间零食结果本地BlockId
+    // 创建中间临时结果本地BlockId
     var blockId = new TempLocalBlockId(UUID.randomUUID())
-    // 如果存在则在生产
+    // 如果存在则在生成
     while (getFile(blockId).exists()) {
       blockId = new TempLocalBlockId(UUID.randomUUID())
     }
@@ -1003,7 +1005,7 @@ private[spark] abstract class MemoryManager(
 
 ![MemoryManager内存模型](./img/MemoryManager内存模型.jpg)
 
-* 毫不相干的onHeapStorageMemoryPool和onHeapExecutionMemory-Pool合在了一起，将堆内存作为一个整体看待。而且onHeapStorageMemoryPool与onHeap-ExecutionMemoryPool之间，offHeapStorageMemoryPool与offHeapExecutionMemoryPool之间的实线也调整为虚线，表示它们之间都是“软”边界。存储方或计算方的空闲空间（即memoryFree表示的区域）都可以借给`另一方使用`。
+* 毫不相干的`onHeapStorageMemoryPool`和`onHeapExecutionMemory-Pool`合在了一起，将堆内存作为一个整体看待。而且onHeapStorageMemoryPool与onHeap-ExecutionMemoryPool之间，offHeapStorageMemoryPool与offHeapExecutionMemoryPool之间的实线也调整为虚线，表示它们之间都是“软”边界。存储方或计算方的空闲空间（即memoryFree表示的区域）都可以借给`另一方使用`。
 
 ### UnifiedMemoryManager
 
