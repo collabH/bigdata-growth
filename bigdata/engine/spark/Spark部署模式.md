@@ -63,7 +63,7 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
     addExecutor(executorAdded.executorId)
   }
   def addExecutor(executorId: String): Option[Future[Boolean]] = {
-    // 发送ExecutorRegistered消息
+    // 发送ExecutorRegistered消息 都是通过akka方式
     Option(self).map(_.ask[Boolean](ExecutorRegistered(executorId)))
   }
 
@@ -175,7 +175,7 @@ private[spark] class Executor(
 
   // Create our ClassLoader
   // do this after SparkEnv creation so can access the SecurityManager
-  //Task需要的类加载器。
+  // Task需要的类加载器。
   private val urlClassLoader = createClassLoader()
   // spark-shell/spark-sql使用的类加载器
   private val replClassLoader = addReplClassLoaderIfNeeded(urlClassLoader)
@@ -407,7 +407,7 @@ private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderEle
   private def start() {
     logInfo("Starting ZooKeeper LeaderElection agent")
     zk = SparkCuratorUtil.newClient(conf)
-    // 创建leader所
+    // 创建leader锁
     leaderLatch = new LeaderLatch(zk, WORKING_DIR)
     // 添加监听器
     leaderLatch.addListener(this)
