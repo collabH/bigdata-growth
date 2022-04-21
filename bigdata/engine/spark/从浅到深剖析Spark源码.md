@@ -1128,8 +1128,6 @@ def broadcast[T: ClassTag](value: T): Broadcast[T] = {
 
 # SparkEnv
 
-
-
 ## SparkEnv概述
 
 ### SparkEnv组件
@@ -1477,7 +1475,7 @@ private def readBroadcastBlock(): T = Utils.tryOrIOException {
         setConf(SparkEnv.get.conf)
         // 获取当前blockManager
         val blockManager = SparkEnv.get.blockManager
-        // 首先从本地获取广播对象，即通过BlockManager putSingle写入存储体系的广播多谢。
+        // 首先从本地获取广播对象，即通过BlockManager putSingle写入存储体系的广播。
         blockManager.getLocalValues(broadcastId) match {
           case Some(blockResult) =>
             if (blockResult.data.hasNext) {
