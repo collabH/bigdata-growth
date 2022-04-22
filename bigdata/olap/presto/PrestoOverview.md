@@ -64,7 +64,7 @@
 
 ### operator
 
-* 一个operator代表一个split的操作，，例如过滤、加权、转换等，一个operator依次读取一个split中的数据，将operator所代表的计算和操作作用于split的数据上，并产生输出。
+* 一个operator代表一个split的操作，例如过滤、加权、转换等，一个operator依次读取一个split中的数据，将operator所代表的计算和操作作用于split的数据上，并产生输出。
 * 每个operator均会以page为最小处理单位分别读取输入数据和产生输出数据。
 
 ### split
