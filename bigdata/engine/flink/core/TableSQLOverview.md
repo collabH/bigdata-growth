@@ -120,7 +120,7 @@ table.executeInsert()
 
 #### 优化器
 
-* Blink没有使用Calcite的优化器，而是通过规则组合和Calcite优化器的组合，分为为流和批实现了自定义的优化器。
+* Blink没有使用Calcite的优化器，而是通过规则组合和Calcite优化器的组合，分为流和批实现了自定义的优化器。
 
 ![](../books/Flink内核原理与实现/img/Blink优化器.jpg)
 

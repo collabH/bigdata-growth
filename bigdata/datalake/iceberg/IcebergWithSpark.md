@@ -324,7 +324,7 @@ ALTER TABLE prod.db.sample DROP PARTITION FIELD truncate(data, 4)
 ALTER TABLE prod.db.sample DROP PARTITION FIELD years(ts)
 ALTER TABLE prod.db.sample DROP PARTITION FIELD shard
 ```
-* 删除分区是个元数据操作不会改变已经存在的数据，新插入的数据讲会写入新分区，但是存在的数据将会保留在老的分区布局里。
+* 删除分区是个元数据操作不会改变已经存在的数据，新插入的数据将会写入新分区，但是存在的数据将会保留在老的分区布局里。
 
 ### ALTER TABLE ... WRITE ORDERED BY
 * iceberg表能够配置排序的方式使用动态的排序数据写入到表里在一些引擎里，例如MERGE INTO在Spark里将会使用表排序

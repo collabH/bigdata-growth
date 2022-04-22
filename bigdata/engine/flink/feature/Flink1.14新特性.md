@@ -184,6 +184,6 @@ cp ./examples/streaming/TopSpeedWindowing.jar lib/
 - **不支持部分故障恢复**: 部分故障恢复意味着调度器可以只重启失败 Job 其中某一部分（在 Flink 的内部结构中被称之为 Region）而不是重启整个 Job。这个限制只会影响那些独立并行（Embarrassingly Parallel）Job的恢复时长，默认的调度器可以重启失败的部分，然而 Adaptive 将需要重启整个 Job。
 - **与 Flink Web UI 的集成受限**: Adaptive 调度器会在 Job 的生命周期中改变它的并行度。Web UI 上只显示 Job 当前的并行度。
 - **Job 的指标受限**: 除了 `numRestarts` 外，`Job` 作用域下所有的 [可用性](https://nightlies.apache.org/flink/flink-docs-release-1.14/zh/docs/ops/metrics/#availability) 和 [Checkpoint](https://nightlies.apache.org/flink/flink-docs-release-1.14/zh/docs/ops/metrics/#checkpointing) 指标都不准确。
-- **空闲 Slot**: 如果 Slot 共享组的最大并行度不相等，提供给 Adaptive 调度器所使用的的 Slot 可能不会被使用。
+- **空闲 Slot**: 如果 Slot 共享组的最大并行度不相等，提供给 Adaptive 调度器所使用的 Slot 可能不会被使用。
 - 扩缩容事件会触发 Job 和 Task 重启，Task 重试的次数也会增加。
 

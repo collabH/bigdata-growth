@@ -156,7 +156,7 @@ WHERE event_time BETWEEN '2018-12-01 10:00:00' AND '2018-12-01 12:00:00'
 #### iceberg的隐藏分区
 
 * iceberg通过采用列值和可选地转换它来产生分区值。 iceberg负责将Event_time转换为Event_date，并跟踪关系。
-* 表分区被配置使用这些关系，如logs表讲按照date(event_time)和level来分区
+* 表分区被配置使用这些关系，如logs表将按照date(event_time)和level来分区
 * 因为Iceberg不需要用户维护的分区列，所以它可以隐藏分区。分区值每次都正确生成，并且在可能的情况下总是用于加快查询速度。生产者和消费者甚至看不到event_date。
 * 最重要的是，查询不再依赖于表的物理布局。通过物理和逻辑的分离，Iceberg表可以随着数据量的变化而演变分区方案。不需要进行昂贵的迁移就可以修复配置错误的表。
 

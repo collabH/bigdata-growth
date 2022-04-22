@@ -217,7 +217,7 @@ spark.rpc.netty.dispatcher.numThreads
 * TransportContext:传输上下文，包含用于创建传输服务端(TransportServer)和传输客户端工厂(TransportClientFactory)的上下文信息，并支持使用Transport-ChannelHandler设置Netty提供SocketChannel的Pipeline的实现。
 * TransportConf:传输上下文的配置
 * RpcHandler:对调用传输客户端(TransportClient)的sendRPC方法发送的消息进行处理的程序。
-* MessageEncoder:在讲消息放入管道前，先对消息内容进行编码，防止管道另一端读取时丢包和解析错误。
+* MessageEncoder:在将消息放入管道前，先对消息内容进行编码，防止管道另一端读取时丢包和解析错误。
 * MessageDecoder:对从管道中读取的ByteBuffer进行解析，防止丢包和解析错误。
 * TransportFrameDecoder:对从管道读取的ByteBuffer按照数据帧进行解析。
 * RpcResponseCallback:RpcHandler对请求的消息处理完毕进行回调的接口。

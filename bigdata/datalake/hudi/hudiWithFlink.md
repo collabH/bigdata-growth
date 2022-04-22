@@ -1958,7 +1958,7 @@ public List<WriteStatus> compact(HoodieCompactionHandler compactionHandler,
 
 ### CompactionCommitSink
 
-* 检查和提交compaction action，每次接收到一个compaction commit event之后，它会加载并且校验这个compaction计划，如果全部的compaction操作已经结果，讲会尝试提交这些compaction action。
+* 检查和提交compaction action，每次接收到一个compaction commit event之后，它会加载并且校验这个compaction计划，如果全部的compaction操作已经结果，将会尝试提交这些compaction action。
 * 这个函数继承了CleanFunction的清理能力，这是必要的，因为SQL API不允许在一个表接收器提供程序中包含多个sink。
 
 ```java
