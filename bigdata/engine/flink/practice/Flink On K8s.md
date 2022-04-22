@@ -179,7 +179,7 @@ export HADOOP_CONF_DIR=/opt/hadoop-conf/conf
 -Dkubernetes.rest-service.exposed.type=NodePort  \
 -Dkubernetes.config.file=/home/hdfs/kubeconf/kube.conf \
 -Denv.java.opts="-DHADOOP_USER_NAME=hdfs" \
-# 指定对应的pod-template陪孩子
+# 指定对应的pod-template配置文件
 -Dkubernetes.pod-template-file=/home/hdfs/flink-pod.yaml \
 -Dkubernetes.taskmanager.cpu=1 \
 -Djobmanager.memory.process.size=1024m \
