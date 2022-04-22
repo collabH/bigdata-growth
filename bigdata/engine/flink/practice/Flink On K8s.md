@@ -46,7 +46,7 @@ RUN cp $FLINK_HOME/job/job-streaming/lib/* $FLINK_HOME/lib
 * 加载hadoop配置文件
 
 ```shell
-export HADOOP_CONF_DIR=/opt/cdp-jars/hadoop-conf/conf
+export HADOOP_CONF_DIR=/opt/hadoop-conf/conf
 ```
 
 * 编写job启动命令
@@ -104,7 +104,7 @@ kubectl exec -it flink-app-5cd656df8-lcvp7 bash -n flink-test
 apiVersion: v1
 kind: Pod
 metadata:
-  name: flink-cdp-job-template
+  name: flink-job-template
 spec:
   initContainers:
     - name: artifacts-fetcher
@@ -114,7 +114,7 @@ spec:
       # 这里写核心任务jar包处理逻辑，可以将配置、任务jar、任务依赖的lib都放入flinkHome下
       args: [ "$jarUrl;"]
       volumeMounts:
-        - mountPath: /opt/flink/cdp-job
+        - mountPath: /opt/flink/job
           name: flink-usr-home
         - mountPath: /opt/flink/lib/extr-lib
           name: flink-usr-extr-lib
@@ -137,7 +137,7 @@ spec:
         limits:
           ephemeral-storage: 2048Mi
       volumeMounts:
-        - mountPath: /opt/flink/cdp-job
+        - mountPath: /opt/flink/job
           name: flink-usr-home
         - mountPath: /opt/flink/lib/extr-lib
           name: flink-usr-extr-lib
@@ -165,7 +165,7 @@ spec:
 
 ```shell
 # 加载hadoop配置
-export HADOOP_CONF_DIR=/opt/cdp-jars/hadoop-conf/conf
+export HADOOP_CONF_DIR=/opt/hadoop-conf/conf
 # 启动任务
 /home/hdfs/flink-1.14.0/bin/flink run-application \
 -t kubernetes-application \
@@ -277,9 +277,7 @@ function getJobInfo() {
   flink_list_result=$(echo "$flink_list_result" | sed -n '/------------------ Running\/Restarting Jobs -------------------/{n;p}')
 
   # 从结果中获取 job_id 和 job_name
-  # echo "Search result : $flink_list_result"
   job_id=$(echo "$flink_list_result" | awk -F ' ' '{print $4}')
-#   job_name=$(echo "$flink_list_result" | awk -F ' ' '{out=""; for(i=6;i<=NF-1;i++){out=out$i}; print out}')
 
   # 如果检索失败，则终止脚本
 
@@ -290,7 +288,7 @@ function getJobInfo() {
 function stopAppWithSp() {
     clusterId=${aliasNames[$1]}$executeEnv
      if [[ -z $clusterId ]]; then
-      echo -e "[ERROR] CDP Flink任务clusterId不能为空!\n" > $log_file
+      echo -e "[ERROR] Flink任务clusterId不能为空!\n" > $log_file
       exit 1
      fi
      # 获取真实的jm host
