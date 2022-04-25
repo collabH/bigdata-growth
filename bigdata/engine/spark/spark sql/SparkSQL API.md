@@ -253,7 +253,7 @@ empDF.select(countDistinct("deptno")).show()
 * 通常在使用大型数据集时，你可能关注的只是近似值而不是准确值，这时可以使用 approx_count_distinct 函数，并可以使用第二个参数指定最大允许误差。
 
 ```scala
-empDF.select(approx_count_distinct ("ename",0.1)).show()
+empDF.select(approx_count_distinct("ename",0.1)).show()
 ```
 
 ###  first & last
