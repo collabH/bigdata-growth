@@ -28,3 +28,28 @@
 * `spark.sql.adaptive.skewJoin.enabled`当和`spark.sql.adaptive.enabled`同时为true时，spark会通过分裂(必要时复制)倾斜分区来动态处理sort-merge join的倾斜分区。
 * `spark.sql.adaptive.skewJoin.skewedPartitionFactor`，如果一个分区的大小大于这个因子乘以分区中值大小，并且大于`spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`，则认为该分区是倾斜的。
 * `spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`,如果分区的字节大小大于这个阈值，并且大于spark.sql.adaptive.skewJoin.skewedPartitionFactor乘以分区大小中值，则认为分区是倾斜的。理想情况下，这个配置应该设置比`spark.sql.adaptive.advisoryPartitionSizeInBytes`大。
+
+# RBO(Rule-base Optimization)
+
+* 在将`Resolved Logical`转换为`Optimized Resolved Logical`时会基于Rule进行优化。
+  * 每个优化以 Rule 的形式存在，每条 Rule 都是对 Analyzed Plan 的等价转换
+  * RBO 设计良好，易于扩展，新的规则可以非常方便地嵌入进 Optimizer
+  * RBO 目前已经足够好，但仍然需要更多规则来 cover 更多的场景
+  * 优化思路主要是减少参与计算的数据量以及计算本身的代价
+
+## PushDownPredicate
+
+* 算子下推优化，如果俩个表进行join可以先进行filter后再去进行join，这个优化输入LogicalPlan的优化，从逻辑上保证了将Filter下推后由于参与Join的数据量变少而提高性能。
+* 在物理层面，Filter 下推后，对于支持 Filter 下推的 Storage，并不需要将表的全量数据扫描出来再过滤，而是直接只扫描符合 Filter 条件的数据，从而在物理层面极大减少了扫描表的开销，提高了执行速度。
+
+## ConstantFolding
+
+* 如果Project包含对于常量的计算比如`select 100+20 from xx`类似操作，如果记录过多就会进行多次操作，可以通过`ConstantFolding`进行常量合并，从而减少不必要的计算，提高执行速度。
+
+## ColumnPruning
+
+* Filter 与 Join 操作会保留两边所有字段，然后在 Project 操作中筛选出需要的特定列。`ColumnPruning`规则能将 Project 下推，在扫描表时就只筛选出满足后续操作的最小字段集，则能大大减少 Filter 与 Project 操作的中间结果集数据量，从而极大提高执行速度。从物理层面在Project下推后，对于列式存储，扫描表时就只扫描需要的列减少IO消耗。
+
+# CBO(Cost-Based Optimizer)
+
+* 基于代价优化考虑了数据本身的特点（如大小、分布）以及操作算子的特点（中间结果集的分布及大小）及代价，从而更好的选择执行代价最小的物理执行计划，即 SparkPlan(物理执行计划)。

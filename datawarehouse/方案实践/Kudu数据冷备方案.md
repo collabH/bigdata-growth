@@ -8,7 +8,7 @@
 
 ## 核心流程图
 
-![](./冷备主流程图.jpg)
+![](../img/冷备主流程图.jpg)
 
 ## 核心代码
 
@@ -341,5 +341,5 @@ create view ods_event_tmp_v as
 explain SELECT * FROM ods_event_tmp_v where tenant_id='26615263' and  dt='20210701'
 ```
 
-![](./冷备视图执行计划.jpg)
+![](../img/冷备视图执行计划.jpg)
 

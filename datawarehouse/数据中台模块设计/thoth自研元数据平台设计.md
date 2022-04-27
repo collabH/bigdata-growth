@@ -9,7 +9,7 @@
 
 ### DataSource
 
-![数据源元数据表设计](./img/thoth数据源元数据表设计.jpg)
+![数据源元数据表设计](../img/thoth数据源元数据表设计.jpg)
 
 ## MetaData Collector
 

@@ -9,6 +9,7 @@
 ## 概述
 
 * 个人学习知识库涉及到数据仓库建模、实时计算、大数据、Java、算法等。
+* [在线文档](https://repository-1.gitbook.io/bigdata-growth/)
 
 ## RoadMap
 
@@ -221,6 +222,7 @@
 * [SparkSQLAPI](bigdata/engine/spark/spark%20sql/Spark%20SQL%20API.xmind)
 * [SparkSQL](bigdata/engine/spark/spark%20sql/Spark%20SQL.xmind)
 * [SparkSQL API](bigdata/engine/spark/spark%20sql/SparkSQL%20API.md)
+* [SparkSQL优化分析](bigdata/engine/spark/spark%20sql/SparkSQL优化分析.md)
 
 ##### Spark Practice
 
