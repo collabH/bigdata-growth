@@ -1,42 +1,37 @@
 # Hbase 过滤器详解
 
-<nav>
-<a href="#一HBase过滤器简介">一、HBase过滤器简介</a><br/>
-<a href="#二过滤器基础">二、过滤器基础</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#21--Filter接口和FilterBase抽象类">2.1  Filter接口和FilterBase抽象类</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#22-过滤器分类">2.2 过滤器分类</a><br/>
-<a href="#三比较过滤器">三、比较过滤器</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#31-比较运算符">3.1 比较运算符</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#32-比较器">3.2 比较器</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#33-比较过滤器种类">3.3 比较过滤器种类</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#34-DependentColumnFilter">3.4 DependentColumnFilter </a><br/>
-<a href="#四专用过滤器">四、专用过滤器</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#41-单列列值过滤器-SingleColumnValueFilter">4.1 单列列值过滤器 (SingleColumnValueFilter)</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#42-单列列值排除器-SingleColumnValueExcludeFilter">4.2 单列列值排除器 (SingleColumnValueExcludeFilter) </a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#43-行键前缀过滤器-PrefixFilter">4.3 行键前缀过滤器 (PrefixFilter)</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#44-列名前缀过滤器-ColumnPrefixFilter">4.4 列名前缀过滤器 (ColumnPrefixFilter)</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#45-分页过滤器-PageFilter">4.5 分页过滤器 (PageFilter)</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#46-时间戳过滤器-TimestampsFilter">4.6 时间戳过滤器 (TimestampsFilter)</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#47-首次行键过滤器-FirstKeyOnlyFilter">4.7 首次行键过滤器 (FirstKeyOnlyFilter)</a><br/>
-<a href="#五包装过滤器">五、包装过滤器</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#51-SkipFilter过滤器">5.1 SkipFilter过滤器</a><br/>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="#52-WhileMatchFilter过滤器">5.2 WhileMatchFilter过滤器</a><br/>
-<a href="#六FilterList">六、FilterList</a><br/>
-</nav>
-
+[一、HBase过滤器简介](Hbase过滤器.md#一HBase过滤器简介)\
+[二、过滤器基础](Hbase过滤器.md#二过滤器基础)\
+&#x20;       [2.1 Filter接口和FilterBase抽象类](Hbase过滤器.md#21--Filter接口和FilterBase抽象类)\
+&#x20;       [2.2 过滤器分类](Hbase过滤器.md#22-过滤器分类)\
+[三、比较过滤器](Hbase过滤器.md#三比较过滤器)\
+&#x20;       [3.1 比较运算符](Hbase过滤器.md#31-比较运算符)\
+&#x20;       [3.2 比较器](Hbase过滤器.md#32-比较器)\
+&#x20;       [3.3 比较过滤器种类](Hbase过滤器.md#33-比较过滤器种类)\
+&#x20;       [3.4 DependentColumnFilter](Hbase过滤器.md#34-DependentColumnFilter)\
+[四、专用过滤器](Hbase过滤器.md#四专用过滤器)\
+&#x20;       [4.1 单列列值过滤器 (SingleColumnValueFilter)](Hbase过滤器.md#41-单列列值过滤器-SingleColumnValueFilter)\
+&#x20;       [4.2 单列列值排除器 (SingleColumnValueExcludeFilter)](Hbase过滤器.md#42-单列列值排除器-SingleColumnValueExcludeFilter)\
+&#x20;       [4.3 行键前缀过滤器 (PrefixFilter)](Hbase过滤器.md#43-行键前缀过滤器-PrefixFilter)\
+&#x20;       [4.4 列名前缀过滤器 (ColumnPrefixFilter)](Hbase过滤器.md#44-列名前缀过滤器-ColumnPrefixFilter)\
+&#x20;       [4.5 分页过滤器 (PageFilter)](Hbase过滤器.md#45-分页过滤器-PageFilter)\
+&#x20;       [4.6 时间戳过滤器 (TimestampsFilter)](Hbase过滤器.md#46-时间戳过滤器-TimestampsFilter)\
+&#x20;       [4.7 首次行键过滤器 (FirstKeyOnlyFilter)](Hbase过滤器.md#47-首次行键过滤器-FirstKeyOnlyFilter)\
+[五、包装过滤器](Hbase过滤器.md#五包装过滤器)\
+&#x20;       [5.1 SkipFilter过滤器](Hbase过滤器.md#51-SkipFilter过滤器)\
+&#x20;       [5.2 WhileMatchFilter过滤器](Hbase过滤器.md#52-WhileMatchFilter过滤器)\
+[六、FilterList](Hbase过滤器.md#六FilterList)\
 
 
 ## 一、HBase过滤器简介
 
 Hbase 提供了种类丰富的过滤器（filter）来提高数据处理的效率，用户可以通过内置或自定义的过滤器来对数据进行过滤，所有的过滤器都在服务端生效，即谓词下推（predicate push down）。这样可以保证过滤掉的数据不会被传送到客户端，从而减轻网络传输和客户端处理的压力。
 
-<div align="center"> <img  src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-fliter.png"/> </div>
-
-
+![](https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-fliter.png)
 
 ## 二、过滤器基础
 
-### 2.1  Filter接口和FilterBase抽象类
+### 2.1 Filter接口和FilterBase抽象类
 
 Filter 接口中定义了过滤器的基本方法，FilterBase 抽象类实现了 Filter 接口。所有内置的过滤器则直接或者间接继承自 FilterBase 抽象类。用户只需要将定义好的过滤器通过 `setFilter` 方法传递给 `Scan` 或 `put` 的实例即可。
 
@@ -62,17 +57,15 @@ setFilter(Filter filter)
   }
 ```
 
-FilterBase 的所有子类过滤器如下：<div align="center"> <img  src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-filterbase-subclass.png"/> </div>
+FilterBase 的所有子类过滤器如下：
+
+![](https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-filterbase-subclass.png)
 
 > 说明：上图基于当前时间点（2019.4）最新的 Hbase-2.1.4 ，下文所有说明均基于此版本。
-
-
 
 ### 2.2 过滤器分类
 
 HBase 内置过滤器可以分为三类：分别是比较过滤器，专用过滤器和包装过滤器。分别在下面的三个小节中做详细的介绍。
-
-
 
 ## 三、比较过滤器
 
@@ -87,13 +80,13 @@ HBase 内置过滤器可以分为三类：分别是比较过滤器，专用过�
 
 ### 3.1 比较运算符
 
-- LESS (<)
-- LESS_OR_EQUAL (<=)
-- EQUAL (=)
-- NOT_EQUAL (!=)
-- GREATER_OR_EQUAL (>=)
-- GREATER (>)
-- NO_OP (排除所有符合条件的值)
+* LESS (<)
+* LESS\_OR\_EQUAL (<=)
+* EQUAL (=)
+* NOT\_EQUAL (!=)
+* GREATER\_OR\_EQUAL (>=)
+* GREATER (>)
+* NO\_OP (排除所有符合条件的值)
 
 比较运算符均定义在枚举类 `CompareOperator` 中
 
@@ -111,39 +104,38 @@ public enum CompareOperator {
 ```
 
 > 注意：在 1.x 版本的 HBase 中，比较运算符定义在 `CompareFilter.CompareOp` 枚举类中，但在 2.0 之后这个类就被标识为 @deprecated ，并会在 3.0 移除。所以 2.0 之后版本的 HBase 需要使用 `CompareOperator` 这个枚举类。
->
 
 ### 3.2 比较器
 
 所有比较器均继承自 `ByteArrayComparable` 抽象类，常用的有以下几种：
 
-<div align="center"> <img  src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-bytearraycomparable.png"/> </div>
+![](https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-bytearraycomparable.png)
 
-- **BinaryComparator**  : 使用 `Bytes.compareTo(byte []，byte [])` 按字典序比较指定的字节数组。
-- **BinaryPrefixComparator** : 按字典序与指定的字节数组进行比较，但只比较到这个字节数组的长度。
-- **RegexStringComparator** :  使用给定的正则表达式与指定的字节数组进行比较。仅支持 `EQUAL` 和 `NOT_EQUAL` 操作。
-- **SubStringComparator** : 测试给定的子字符串是否出现在指定的字节数组中，比较不区分大小写。仅支持 `EQUAL` 和 `NOT_EQUAL` 操作。
-- **NullComparator** ：判断给定的值是否为空。
-- **BitComparator** ：按位进行比较。
+* **BinaryComparator** : 使用 `Bytes.compareTo(byte []，byte [])` 按字典序比较指定的字节数组。
+* **BinaryPrefixComparator** : 按字典序与指定的字节数组进行比较，但只比较到这个字节数组的长度。
+* **RegexStringComparator** : 使用给定的正则表达式与指定的字节数组进行比较。仅支持 `EQUAL` 和 `NOT_EQUAL` 操作。
+* **SubStringComparator** : 测试给定的子字符串是否出现在指定的字节数组中，比较不区分大小写。仅支持 `EQUAL` 和 `NOT_EQUAL` 操作。
+* **NullComparator** ：判断给定的值是否为空。
+* **BitComparator** ：按位进行比较。
 
 `BinaryPrefixComparator` 和 `BinaryComparator` 的区别不是很好理解，这里举例说明一下：
 
 在进行 `EQUAL` 的比较时，如果比较器传入的是 `abcd` 的字节数组，但是待比较数据是 `abcdefgh`：
 
-+ 如果使用的是 `BinaryPrefixComparator` 比较器，则比较以 `abcd` 字节数组的长度为准，即 `efgh` 不会参与比较，这时候认为 `abcd` 与 `abcdefgh` 是满足 `EQUAL` 条件的；
-+ 如果使用的是 `BinaryComparator` 比较器，则认为其是不相等的。
+* 如果使用的是 `BinaryPrefixComparator` 比较器，则比较以 `abcd` 字节数组的长度为准，即 `efgh` 不会参与比较，这时候认为 `abcd` 与 `abcdefgh` 是满足 `EQUAL` 条件的；
+* 如果使用的是 `BinaryComparator` 比较器，则认为其是不相等的。
 
 ### 3.3 比较过滤器种类
 
 比较过滤器共有五个（Hbase 1.x 版本和 2.x 版本相同），见下图：
 
-<div align="center"> <img  src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-compareFilter.png"/> </div>
+![](https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/hbase-compareFilter.png)
 
-+ **RowFilter** ：基于行键来过滤数据；
-+ **FamilyFilterr** ：基于列族来过滤数据；
-+ **QualifierFilterr** ：基于列限定符（列名）来过滤数据；
-+ **ValueFilterr** ：基于单元格 (cell) 的值来过滤数据；
-+ **DependentColumnFilter** ：指定一个参考列来过滤其他列的过滤器，过滤的原则是基于参考列的时间戳来进行筛选 。
+* **RowFilter** ：基于行键来过滤数据；
+* **FamilyFilterr** ：基于列族来过滤数据；
+* **QualifierFilterr** ：基于列限定符（列名）来过滤数据；
+* **ValueFilterr** ：基于单元格 (cell) 的值来过滤数据；
+* **DependentColumnFilter** ：指定一个参考列来过滤其他列的过滤器，过滤的原则是基于参考列的时间戳来进行筛选 。
 
 前四种过滤器的使用方法相同，均只要传递比较运算符和运算器实例即可构建，然后通过 `setFilter` 方法传递给 `scan`：
 
@@ -165,11 +157,11 @@ DependentColumnFilter(final byte [] family, final byte[] qualifier,
                                final ByteArrayComparable valueComparator)
 ```
 
-+ **family**  ：列族
-+ **qualifier** ：列限定符（列名）
-+ **dropDependentColumn** ：决定参考列是否被包含在返回结果内，为 true 时表示参考列被返回，为 false 时表示被丢弃
-+ **op** ：比较运算符
-+ **valueComparator** ：比较器
+* **family** ：列族
+* **qualifier** ：列限定符（列名）
+* **dropDependentColumn** ：决定参考列是否被包含在返回结果内，为 true 时表示参考列被返回，为 false 时表示被丢弃
+* **op** ：比较运算符
+* **valueComparator** ：比较器
 
 这里举例进行说明：
 
@@ -182,13 +174,9 @@ DependentColumnFilter dependentColumnFilter = new DependentColumnFilter(
     new BinaryPrefixComparator(Bytes.toBytes("xiaolan")));
 ```
 
-+ 首先会去查找 `student:name` 中值以 `xiaolan` 开头的所有数据获得 ` 参考数据集 `，这一步等同于 valueFilter 过滤器；
-
-+ 其次再用参考数据集中所有数据的时间戳去检索其他列，获得时间戳相同的其他列的数据作为 ` 结果数据集 `，这一步等同于时间戳过滤器；
-
-+ 最后如果 `dropDependentColumn` 为 true，则返回 ` 参考数据集 `+` 结果数据集 `，若为 false，则抛弃参考数据集，只返回 ` 结果数据集 `。
-
-
+* 首先会去查找 `student:name` 中值以 `xiaolan` 开头的所有数据获得 `参考数据集`，这一步等同于 valueFilter 过滤器；
+* 其次再用参考数据集中所有数据的时间戳去检索其他列，获得时间戳相同的其他列的数据作为 `结果数据集`，这一步等同于时间戳过滤器；
+* 最后如果 `dropDependentColumn` 为 true，则返回 `参考数据集`+`结果数据集`，若为 false，则抛弃参考数据集，只返回 `结果数据集`。
 
 ## 四、专用过滤器
 
@@ -198,8 +186,8 @@ DependentColumnFilter dependentColumnFilter = new DependentColumnFilter(
 
 基于某列（参考列）的值决定某行数据是否被过滤。其实例有以下方法：
 
-+ **setFilterIfMissing(boolean filterIfMissing)** ：默认值为 false，即如果该行数据不包含参考列，其依然被包含在最后的结果中；设置为 true 时，则不包含；
-+ **setLatestVersionOnly(boolean latestVersionOnly)** ：默认为 true，即只检索参考列的最新版本数据；设置为 false，则检索所有版本数据。
+* **setFilterIfMissing(boolean filterIfMissing)** ：默认值为 false，即如果该行数据不包含参考列，其依然被包含在最后的结果中；设置为 true 时，则不包含；
+* **setLatestVersionOnly(boolean latestVersionOnly)** ：默认为 true，即只检索参考列的最新版本数据；设置为 false，则检索所有版本数据。
 
 ```shell
 SingleColumnValueFilter singleColumnValueFilter = new SingleColumnValueFilter(
@@ -248,7 +236,7 @@ public PageFilter(final long pageSize) {
 
 客户端进行分页查询，需要传递 `startRow`(起始 RowKey)，知道起始 `startRow` 后，就可以返回对应的 pageSize 行数据。这里唯一的问题就是，对于第一次查询，显然 `startRow` 就是表格的第一行数据，但是之后第二次、第三次查询我们并不知道 `startRow`，只能知道上一次查询的最后一条数据的 RowKey（简单称之为 `lastRow`）。
 
-我们不能将 `lastRow` 作为新一次查询的 `startRow` 传入，因为 scan 的查询区间是[startRow，endRow) ，即前开后闭区间，这样 `startRow` 在新的查询也会被返回，这条数据就重复了。
+我们不能将 `lastRow` 作为新一次查询的 `startRow` 传入，因为 scan 的查询区间是\[startRow，endRow) ，即前开后闭区间，这样 `startRow` 在新的查询也会被返回，这条数据就重复了。
 
 同时在不使用第三方数据库存储 RowKey 的情况下，我们是无法通过知道 `lastRow` 的下一个 RowKey 的，因为 RowKey 的设计可能是连续的也有可能是不连续的。
 
@@ -293,9 +281,7 @@ while (true) {
 System.out.println("total rows: " + totalRows);
 ```
 
->需要注意的是在多台 Regin Services 上执行分页过滤的时候，由于并行执行的过滤器不能共享它们的状态和边界，所以有可能每个过滤器都会在完成扫描前获取了 PageCount 行的结果，这种情况下会返回比分页条数更多的数据，分页过滤器就有失效的可能。
-
-
+> 需要注意的是在多台 Regin Services 上执行分页过滤的时候，由于并行执行的过滤器不能共享它们的状态和边界，所以有可能每个过滤器都会在完成扫描前获取了 PageCount 行的结果，这种情况下会返回比分页条数更多的数据，分页过滤器就有失效的可能。
 
 ### 4.6 时间戳过滤器 (TimestampsFilter)
 
@@ -330,8 +316,6 @@ Filter filter1 = new ValueFilter(CompareOperator.NOT_EQUAL,
 // 使用 SkipFilter 进行包装
 Filter filter2 = new SkipFilter(filter1);
 ```
-
-
 
 ### 5.2 WhileMatchFilter过滤器
 
@@ -402,8 +386,8 @@ public FilterList(final Filter... filters)
 
 多个过滤器组合的结果由 `operator` 参数定义 ，其可选参数定义在 `Operator` 枚举类中。只有 `MUST_PASS_ALL` 和 `MUST_PASS_ONE` 两个可选的值：
 
-+ **MUST_PASS_ALL** ：相当于 AND，必须所有的过滤器都通过才认为通过；
-+ **MUST_PASS_ONE** ：相当于 OR，只有要一个过滤器通过则认为通过。
+* **MUST\_PASS\_ALL** ：相当于 AND，必须所有的过滤器都通过才认为通过；
+* **MUST\_PASS\_ONE** ：相当于 OR，只有要一个过滤器通过则认为通过。
 
 ```java
 @InterfaceAudience.Public

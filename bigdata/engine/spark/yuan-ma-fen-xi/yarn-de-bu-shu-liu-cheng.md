@@ -1,4 +1,6 @@
-# SparkSubmit
+# yarn的部署流程
+
+## SparkSubmit
 
 ```
 -- main 启动进程
@@ -18,7 +20,7 @@
 	  -- mainMethod.invoke(null, args)
 ```
 
-# Client
+## Client
 
 ```
 --main 主方法
@@ -38,7 +40,7 @@
 			-- yarnClient.submitApplication(appContext) //提交指令
 ```
 
-# ApplicationMaster
+## ApplicationMaster
 
 ```
 --main
@@ -68,10 +70,10 @@
 		--runExecutorLauncher
 ```
 
-# CoarseGrainedExecutorBackend
+## CoarseGrainedExecutorBackend
 
 * 生命周期
-  * constructor -> onStart -> receive* -> onStop
+  * constructor -> onStart -> receive\* -> onStop
 
 ```
 -- main
@@ -84,44 +86,34 @@
   	     --new Executor
 ```
 
-# Yarn部署流程图
+## Yarn部署流程图
 
 * 根据上面源码流程跟进
 
-![yarn部署流程图](./img/sparkSubmit部署流程.jpg)
+![yarn部署流程图](../源码分析/img/sparkSubmit部署流程.jpg)
 
-* 通用流程
+*   通用流程
 
-  ![通用流程](./img/SparkSubmit通用流程.png)
+    <img src="../源码分析/img/SparkSubmit通用流程.png" alt="通用流程" data-size="original">
 
-  # Yarn模式运行机制
+    ## Yarn模式运行机制
 
-  ## Yarn Client模式
+    ### Yarn Client模式
 
-  ![yarn Client](./img/yarn Client模式.jpg)
+    !\[yarn Client]\(./img/yarn Client模式.jpg)
 
-  ## Yarn Cluster模式
+    ### Yarn Cluster模式
 
-  ![yarn Cluster](./img/yarn Cluster模式.jpg)
+    !\[yarn Cluster]\(./img/yarn Cluster模式.jpg)
 
-## Client和Cluster模式的区别
+### Client和Cluster模式的区别
 
 * Driver存储地址
-
   * Client:本地机器
   * Cluster:Yarn的Nodemanager的ApplicationMaster上
-
 * 流量激增问题
-
   * Client:因为Driver放在本地机器负责Spark调度，所以流量会激增
   * Cluster放在Yarn集群没有这类问题
-
 * 网络问题
-
   * Client:Driver放在本地，通常来说本地机器和Yarn机器不在一个机房，所以存在网络问题
-
   * Cluster:Driver和Yarn集群运行在同一个机房内
-
-    
-
-  
