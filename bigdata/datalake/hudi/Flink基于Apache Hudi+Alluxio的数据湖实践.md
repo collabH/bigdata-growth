@@ -1,16 +1,18 @@
 # Flink基于Apache Hudi+Alluxio的数据湖实践
 
+## Flink基于Apache Hudi+Alluxio的数据湖实践
+
 ```
 导读:伴随着lakehouse(datahouse+datalake)概念的兴起，数据湖框架近些年一直备受关注，Hudi作为少有的几个开源数据湖框架之一，不管是在社区还是业界也是备受追捧，特别的近期Hudi On Flink 0.10.0版本横空出世，基于Flink On Hudi的湖仓一体方案也在慢慢变得成熟而稳定，本文将会带来Hudi配合Flink与Alluxio搭建的近实时数据湖能力建设。
 ```
 
-# 概览
+## 概览
 
-## Apache Hudi
+### Apache Hudi
 
-* 这里简单的介绍一下Hudi与传统数据湖的对比以及Hudi的一些特性，详细可以查看[Hudi概述](https://github.com/collabH/repository/blob/master/bigdata/datalake/hudi/hudiOverview.md)或者[Hudi官网](https://hudi.apache.org/docs/overview/)
+* 这里简单的介绍一下Hudi与传统数据湖的对比以及Hudi的一些特性，详细可以查看[Hudi概述](hudiOverview.md)或者[Hudi官网](https://hudi.apache.org/docs/overview/)
 
-### 传统数据湖存在的问题
+#### 传统数据湖存在的问题
 
 * 传统数据湖方案通过Hive来完成T+1级别的数据仓库，海量数据存储在HDFS上，通过Hive的元数据管理及SQL化查询来完成数据分析。
 * 不支持事务，如果俩个有依赖的任务同时运行可能会导致下游的任务数据不准确，因此往往需要人为控制任务的调度周期，这也导致整体任务的`SLA`很难保证。
@@ -18,7 +20,7 @@
 * 无法及时应对业务表的变化，一般上游业务系统对数据的schema发生变更后会导致数据会发正常的写入Hive中。
 * 小批量数据处理成本偏高，增量ETL需要借助细粒度分区从而也会导致小文件问题。
 
-### Hudi提供的能力
+#### Hudi提供的能力
 
 * 快速upsert能力
   * 配合`可插拔的索引机制`可以实现upsert能力
@@ -28,39 +30,39 @@
   * 支持`Snapshot`数据隔离，保证数据读取完整性，实现读写并发能力
   * 数据commit，数据入湖秒级可见
 * 多种视图读取接口
-  - 支持实时快照数据读取方式
-  - 支持历史快照数据读取方式
-  - 支持当前增量和历史增量数据读取方式
-  - 支持快速数据探索分析
+  * 支持实时快照数据读取方式
+  * 支持历史快照数据读取方式
+  * 支持当前增量和历史增量数据读取方式
+  * 支持快速数据探索分析
 * 多版本
-  - 数据按照提交版本存储，保留历史操作记录，方便数据回溯
-  - 数据回退操作简单，速度快
-* 支持Merge On Read&Copy On Write表类型
+  * 数据按照提交版本存储，保留历史操作记录，方便数据回溯
+  * 数据回退操作简单，速度快
+* 支持Merge On Read\&Copy On Write表类型
   * Merge On Read:读取时进行base file和delta file的合并，适用于数据实时入湖场景，配合合理的compact配置可以达到秒级(写入+读取)能力
   * Copy On Write:写入时进行合并更新，会根据上一个base file和当前写入数据进行merge，最终的数据格式就等同于`parquet`文件格式的性能，用于替代传统数据湖分析场景的表类型。
 
-### Hudi的Query Type
+#### Hudi的Query Type
 
-- `Snapshot Queries`：查询查看给定提交或压缩操作时表的最新快照。对于**MergeOnRead**，它通过动态合并最新文件片的base文件和delte文件来公开接近实时的数据(几分钟)。对于**CopyOnWrite**，它提供了现有parquet表的临时替代品，同时提供了插入/删除和其他写功能。
-- `Incremental Queries`:由于给定的commit/compaction，查询只能看到写入表的新数据。这有效地提供了更改流来支持增量数据管道。
-- `Read Optimized Queries`:查询查看给定commit/compaction操作时的表的最新快照。仅公开最新文件片中的base/columnar文件，并保证与非hudi columnar表相比具有相同的columnar查询性能，只读取最近compaction的base file。
+* `Snapshot Queries`：查询查看给定提交或压缩操作时表的最新快照。对于**MergeOnRead**，它通过动态合并最新文件片的base文件和delte文件来公开接近实时的数据(几分钟)。对于**CopyOnWrite**，它提供了现有parquet表的临时替代品，同时提供了插入/删除和其他写功能。
+* `Incremental Queries`:由于给定的commit/compaction，查询只能看到写入表的新数据。这有效地提供了更改流来支持增量数据管道。
+* `Read Optimized Queries`:查询查看给定commit/compaction操作时的表的最新快照。仅公开最新文件片中的base/columnar文件，并保证与非hudi columnar表相比具有相同的columnar查询性能，只读取最近compaction的base file。
 
-## Alluxio
+### Alluxio
 
 ![Ecosystem](https://d39kqat1wpn1o5.cloudfront.net/app/uploads/2021/07/alluxio-overview-r071521.png)
 
 * Alluxio将存储分为俩个类别的方式来帮助统一跨各种平台用户数据的同时还有助于为用户提升总体I / O吞吐量。
-  - **UFS(底层文件系统，底层存储)**:表示不受Alluxio管理的空间，UFS存储可能来自外部文件系统，如HDFS或S3， 通常，UFS存储旨在相当长一段时间持久存储大量数据。
-  - Alluxio存储
-    - alluxio作为一个分布式缓存来管理Alluxio workers本地存储，包括内存。这个在用户应用程序与各种底层存储之间的快速数据层带来的是显著提高的I / O性能。
-    - Alluxio存储主要用于存储热数据，暂态数据，而不是长期持久数据存储。
-    - 每个Alluxio节点要管理的存储量和类型由用户配置决定。
-    - 即使数据当前不在Alluxio存储中，通过Alluxio连接的UFS中的文件仍然 对Alluxio客户可见。当客户端尝试读取仅可从UFS获得的文件时数据将被复制到Alluxio存储中（这里体现在alluxio文件目录下的进度条）
+  * **UFS(底层文件系统，底层存储)**:表示不受Alluxio管理的空间，UFS存储可能来自外部文件系统，如HDFS或S3， 通常，UFS存储旨在相当长一段时间持久存储大量数据。
+  * Alluxio存储
+    * alluxio作为一个分布式缓存来管理Alluxio workers本地存储，包括内存。这个在用户应用程序与各种底层存储之间的快速数据层带来的是显著提高的I / O性能。
+    * Alluxio存储主要用于存储热数据，暂态数据，而不是长期持久数据存储。
+    * 每个Alluxio节点要管理的存储量和类型由用户配置决定。
+    * 即使数据当前不在Alluxio存储中，通过Alluxio连接的UFS中的文件仍然 对Alluxio客户可见。当客户端尝试读取仅可从UFS获得的文件时数据将被复制到Alluxio存储中（这里体现在alluxio文件目录下的进度条）
 * Alluxio存储通过将数据`存储在计算节点内存`中来提高性能。Alluxio存储中的数据可以被`复制来形成"热"数据`，更易于I/O并行操作和使用。
 * Alluxio中的`数据副本独立于UFS中可能已存在的副本`。 Alluxio存储中的数据副本数是由集群活动动态决定的。 由于Alluxio依赖底层文件存储来存储大部分数据， Alluxio不需要`保存未使用的数据副本`。
 * Alluxio还支持让系统存储软件可感知的分层存储，使类似L1/L2 CPU缓存一样的数据存储优化成为可能。
 
-## Flink 
+### Flink
 
 * Apache Flink 是一个分布式大数据处理引擎，可对有限数据流和无限数据流进行有状态或无状态的计算，能够部署在各种集群环境，对各种规模大小的数据进行快速计算。
 * 有状态的计算，状态容错性依赖于checkpoint机制做状态持久化存储。
@@ -68,15 +70,15 @@
 * exactly-once语义，状态一致性保证
 * 低延迟，每秒处理数百万个事件，毫秒级别延迟。
 
-### 为什么选择Flink
+#### 为什么选择Flink
 
 * 随着流批一体的概念逐渐成熟，Flink的流批一体建设也在1.13至1.14版本相对成熟，虽然Spark On Hudi会相对稳定，但是Flink On Hudi在流批一体的大环境下将会是未来湖仓一体的重要技术选型，因此本文讲解Flink在Hudi中的实践与应用。
 
-# 环境准备
+## 环境准备
 
-## Hudi整合Flink
+### Hudi整合Flink
 
-### 引入依赖
+#### 引入依赖
 
 ```xml
 <project xmlns="http://maven.apache.org/POM/4.0.0"
@@ -352,7 +354,7 @@
 </project>
 ```
 
-### 搭建基础类
+#### 搭建基础类
 
 * Flink配置类
 
@@ -470,9 +472,9 @@ public class CommonQueryDriver {
 
 [详细代码库](https://github.com/collabH/flink-learn/tree/master/flink-hudi/src/main/java/dev/flink/hudi)
 
-## Alluxio整合Flink
+### Alluxio整合Flink
 
-### Alluxio启动
+#### Alluxio启动
 
 ```shell
 # 挂载RAMFS文件系统
@@ -489,7 +491,7 @@ alluxio runTests
 alluxio-stop.sh local
 ```
 
-#### web ui验证
+**web ui验证**
 
 * master web ui
 
@@ -499,11 +501,11 @@ alluxio-stop.sh local
 
 ![](img/alluxioWrokerUi.jpg)
 
-### 配置
+#### 配置
 
-#### Flink集群运行方式
+**Flink集群运行方式**
 
-- 修改hadoop的`core-site.xml`配置，增加alluxio文件系统实现
+* 修改hadoop的`core-site.xml`配置，增加alluxio文件系统实现
 
 ```xml
 <property>
@@ -512,7 +514,7 @@ alluxio-stop.sh local
 </property>
 ```
 
-- 修改`flink-conf.yaml`配置
+* 修改`flink-conf.yaml`配置
 
 ```properties
 fs.hdfs.hadoopconf: core-site.xml配置路径
@@ -520,27 +522,26 @@ fs.hdfs.hadoopconf: core-site.xml配置路径
 env.java.opts: -Dalluxio.user.file.writetype.default=CACHE_THROUGH
 ```
 
-* 添加alluxio客户端jar包的三种方式
+*   添加alluxio客户端jar包的三种方式
 
-  * 将`/<PATH_TO_ALLUXIO>/client/alluxio-2.7.3-client.jar`文件放在Flink的`lib`目录下（对于本地模式以及独立集群模式）。
-  * 将`/<PATH_TO_ALLUXIO>/client/alluxio-2.7.3-client.jar`文件放在布置在Yarn中的Flink下的`ship`目录下。
-  * 在`HADOOP_CLASSPATH`环境变量中指定该jar文件的路径（要保证该路径对集群中的所有节点都有效）。例如：
+    * 将`/<PATH_TO_ALLUXIO>/client/alluxio-2.7.3-client.jar`文件放在Flink的`lib`目录下（对于本地模式以及独立集群模式）。
+    * 将`/<PATH_TO_ALLUXIO>/client/alluxio-2.7.3-client.jar`文件放在布置在Yarn中的Flink下的`ship`目录下。
+    * 在`HADOOP_CLASSPATH`环境变量中指定该jar文件的路径（要保证该路径对集群中的所有节点都有效）。例如：
 
-  ```shell
-  $ export HADOOP_CLASSPATH=/<PATH_TO_ALLUXIO>/client/alluxio-2.7.3-client.jar
-  ```
-
-* FLINK_HOME的lib目录详情
+    ```shell
+    $ export HADOOP_CLASSPATH=/<PATH_TO_ALLUXIO>/client/alluxio-2.7.3-client.jar
+    ```
+* FLINK\_HOME的lib目录详情
 
 ![](img/alluxio整合Flink.jpg)
 
-# 案例演示
+## 案例演示
 
-## 写入操作
+### 写入操作
 
-* 通过Flink配合Alluxio中间层加速将数据写入Hudi中，并通过alluxio master webUi观察数据是否写入成功,这里需要了解一下flink on hudi的写入策略，一批buffer数据上超过` FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`，或者是Flink开始做ck，则flush。如果一批数据写入成功，则StreamWriteOperatorCoordinator会标识写入成功。代码中的ck设置为30s，因此在数据流不满足`FlinkOptions#WRITE_TASK_MAX_SIZE`和`FlinkOptions#WRITE_BATCH_SIZE`的时候，每30s进行一次flush。
+* 通过Flink配合Alluxio中间层加速将数据写入Hudi中，并通过alluxio master webUi观察数据是否写入成功,这里需要了解一下flink on hudi的写入策略，一批buffer数据上超过 `FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`，或者是Flink开始做ck，则flush。如果一批数据写入成功，则StreamWriteOperatorCoordinator会标识写入成功。代码中的ck设置为30s，因此在数据流不满足`FlinkOptions#WRITE_TASK_MAX_SIZE`和`FlinkOptions#WRITE_BATCH_SIZE`的时候，每30s进行一次flush。
 
-### 核心代码
+#### 核心代码
 
 ```java
 /**
@@ -625,7 +626,7 @@ public class AlluxioOnHudiDriver {
 }
 ```
 
-### 效果
+#### 效果
 
 * 运行命令
 
@@ -650,7 +651,7 @@ flink run -Dtaskmanager.numberOfTaskSlots=16  -c dev.flink.hudi.driver.AlluxioOn
 
 ![](img/FlinkUi2.jpg)
 
-* 观察alluxio Master Ui&HDFS底层数据
+* 观察alluxio Master Ui\&HDFS底层数据
 
 ![](img/alluxioData1.jpg)
 
@@ -662,11 +663,11 @@ flink run -Dtaskmanager.numberOfTaskSlots=16  -c dev.flink.hudi.driver.AlluxioOn
 可以观察到通过kafka发送的数据已经成功写入到hudi的底层存储已经flink的中间数据加速层HDFS和Alluxio中
 ```
 
-## 读取操作
+### 读取操作
 
 * 通过Hudi On Flink提供的流式能力，根据`FlinkOptions.READ_STREAMING_CHECK_INTERVAL`配置，每3s进行一次数据增量拉取。
 
-###  核心代码
+#### 核心代码
 
 ```java
 /**
@@ -723,7 +724,7 @@ public class AlluxioHudiQueryDriver {
 }
 ```
 
-### 效果
+#### 效果
 
 * 运行命令
 
@@ -752,19 +753,19 @@ flink run -c dev.flink.hudi.driver.AlluxioHudiQueryDriver  ~/Desktop/flink-hudi-
 
 ![](img/hudiStreamingRead3.gif)
 
-# 总结
+## 总结
 
 * 通过案例的写入操作和读取操作可以看出来整体Flink整合Alluxio以及Hudi是相当便捷的，并且通过用户自定义的ck间隔配置或者buffer大小设置可以决定数据入湖的时间，通过流式读取的间隔配置可以决定数据拉取的频率，整体来说基于Flink建设企业级的lakehouse是一个相对成熟的方案。也是因为数据量的条件限制这里就没有对比alluxio带来的性能提升，感兴趣的朋友可以看下附录的文档参考，里面有介绍T3出行对于Alluxio的深入实践。
 
-# 附录
+## 附录
 
-## 资料参考
+### 资料参考
 
 * [Hudi从0到1学习材料](https://github.com/collabH/repository/tree/master/bigdata/datalake/hudi)
 * [Alluxio从0到1学习材料](https://github.com/collabH/repository/tree/master/bigdata/cache/alluxio)
 * [T3出行整合Alluxio生产实践](https://mp.weixin.qq.com/s/OdzM5uphMsVWGvNxJ36l9w)
 * [Hudi实践整合](https://github.com/leesf/hudi-resources)
 
-## 代码仓库
+### 代码仓库
 
 [FlinkWithHudi Alluxio](https://github.com/collabH/flink-learn/tree/master/flink-hudi/src/main/java/dev/flink/hudi)

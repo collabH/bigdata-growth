@@ -1,8 +1,10 @@
-# 心跳接收器HeartbeatReceiver
+# Spark部署模式
+
+## 心跳接收器HeartbeatReceiver
 
 * 运行在Driver上，用来接受各个Executor的心跳消息，对各个Executor的"状态"进行监控。
 
-## HeartbeatReceiver属性
+### HeartbeatReceiver属性
 
 ```scala
 private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
@@ -52,9 +54,9 @@ private[spark] class HeartbeatReceiver(sc: SparkContext, clock: Clock)
   private val killExecutorThread = ThreadUtils.newDaemonSingleThreadExecutor("kill-executor-thread")
 ```
 
-## 相关方法
+### 相关方法
 
-### 注册Executor
+#### 注册Executor
 
 ```scala
 	// 调用addExecutor(executorAdded.executorId)
@@ -72,7 +74,7 @@ executorLastSeen(executorId) = clock.getTimeMillis()
       context.reply(true)
 ```
 
-### 移除Executor
+#### 移除Executor
 
 ```scala
 // 发送ExecutorRemoved消息
@@ -85,9 +87,9 @@ def removeExecutor(executorId: String): Option[Future[Boolean]] = {
   context.reply(true)
 ```
 
-# Executor分析
+## Executor分析
 
-## 相关属性
+### 相关属性
 
 ```scala
 private[spark] class Executor(
@@ -256,7 +258,7 @@ private[spark] class Executor(
   private var heartbeatFailures = 0
 ```
 
-## Executor心跳报告
+### Executor心跳报告
 
 * 初始化Executor的过程中，Executor会调用自己的startDriverHeartbeater方法启动心跳报告的定时任务。
 
@@ -278,7 +280,7 @@ private def startDriverHeartbeater(): Unit = {
   }
 ```
 
-### 报告心跳
+#### 报告心跳
 
 ```scala
 private def reportHeartBeat(): Unit = {
@@ -319,7 +321,7 @@ private def reportHeartBeat(): Unit = {
   }
 ```
 
-## 运行Task
+### 运行Task
 
 ```scala
 def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit = {
@@ -332,13 +334,13 @@ def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit
   }
 ```
 
-# Local部署模型
+## Local部署模型
 
 * local模式只有Driver，没有Master和Worker，执行任务的Executor与Driver在同一个JVM进程内，local模式中使用的ExecutorBackend和SchedulerBackend的实现类都是LocalSchedulerBackend。
 
-![local模式启动过程](./img/Local模式启动过程.jpg)
+![local模式启动过程](https://github.com/collabH/repository/blob/master/bigdata/engine/spark/img/Local%E6%A8%A1%E5%BC%8F%E5%90%AF%E5%8A%A8%E8%BF%87%E7%A8%8B.jpg)
 
-![local模式下的任务提交与执行](./img/local模式下的任务提交与执行.jpg)
+![local模式下的任务提交与执行](img/local模式下的任务提交与执行.jpg)
 
 1. TaskSchedulerImpl的submitTasks方法在提交Task的最后会调用LocalSchedulerBackend的reviveOffers方法。
 2. LocalSchedulerBackend的reviveOffers方法只是向LocalEnd-point发送ReviveOffers消息。
@@ -348,7 +350,7 @@ def launchTask(context: ExecutorBackend, taskDescription: TaskDescription): Unit
 6. LocalSchedulerBackend的statusUpdate方法将向LocalEndpoint发送StatusUpdate消息。
 7. LocalEndpoint接收到StatusUpdate消息，将调用TaskSchedulerImpl的statusUpdate方法更新任务的状态。
 
-# 领导选举代理
+## 领导选举代理
 
 * 领导选举机制（Leader Election）可以保证集群虽然存在多个Master，但是`只有一个Master处于激活（Active）状态，其他的Master处于支持（Standby）状态`。当Active状态的Master出现故障时，会选举出一个Standby状态的Master作为新的Active状态的Master。由于`整个集群的Worker, Driver和Application的信息都已经通过持久化引擎持久化`，因此切换Master时只会影响新任务的提交，对于正在运行中的任务没有任何影响。
 
@@ -374,7 +376,7 @@ trait LeaderElectable {
 }
 ```
 
-## MonarchyLeaderAgent
+### MonarchyLeaderAgent
 
 ```scala
 private[spark] class MonarchyLeaderAgent(val masterInstance: LeaderElectable)
@@ -384,7 +386,7 @@ private[spark] class MonarchyLeaderAgent(val masterInstance: LeaderElectable)
 }
 ```
 
-## ZooKeeperLeaderElectionAgent
+### ZooKeeperLeaderElectionAgent
 
 ```scala
 private[master] class ZooKeeperLeaderElectionAgent(val masterInstance: LeaderElectable,

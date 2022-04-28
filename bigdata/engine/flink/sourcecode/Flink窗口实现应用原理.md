@@ -1,28 +1,30 @@
-# 概念
+# Flink窗口实现应用原理
 
-## 使用场景
+## 概念
+
+### 使用场景
 
 * 聚合统计相关，统计小时、天等级别的聚合数据
 * 记录合并操作
 * 双流join，通过interval join方式去join一个时间窗口类的记录
 
-## Window抽象概念
+### Window抽象概念
 
-![](../img/Window抽象概念.jpg)
+![](https://github.com/collabH/repository/blob/master/bigdata/engine/flink/img/Window%E6%8A%BD%E8%B1%A1%E6%A6%82%E5%BF%B5.jpg)
 
 * Timestampasasigner:指定记录中作为记录eventtime的字段
 * keyselector:选择记录中的列作为key的键
 * WindowAssigner:将记录划分一个个的窗口
 * State:存储的中间状态，状态可以调用增量集合函数，增量的方式计算状态
-* Trigger:  决定什么时候触发window的计算
+* Trigger: 决定什么时候触发window的计算
 * Evictor: 过滤不需要的记录
 * WindowFunction: 窗口计算记录然后输出
 
-## Window编程接口
+### Window编程接口
 
 ![](../img/Window编程接口.jpg)
 
-## Window Assigner
+### Window Assigner
 
 * 时间窗口
 * 记录窗口
@@ -30,21 +32,21 @@
 
 ![](../img/WindowAssigner.jpg)
 
-## Window Trigger
+### Window Trigger
 
 ![](../img/WindowTrigger.jpg)
 
-### 默认Triggers
+#### 默认Triggers
 
 * 对于Eventtime window asigners的triggers是EventTimeTrigger
 * GlobalWindow的是NeverTrigger
 
-### Fire and Purge
+#### Fire and Purge
 
-* 一旦触发器确定好一个窗口已经准备处理，它触发计算，它返回FIRE或者FIRE_AND_PURGE。这是窗口操作符发出当前窗口结果的信号。给定一个带有ProcessWindowFunction的窗口，所有元素都被传递给ProcessWindowFunction(可能在将它们传递给驱逐器之后)。使用ReduceFunction、AggregateFunction或FoldFunction的窗口只会发出它们急切地聚合的结果。
-* 当触发器触发时，它既可以触发也可以触发并清除。FIRE保留窗口的内容，而FIRE_AND_PURGE则删除其内容。默认情况下，预先实现的触发器只是在不清除窗口状态的情况下触发。
+* 一旦触发器确定好一个窗口已经准备处理，它触发计算，它返回FIRE或者FIRE\_AND\_PURGE。这是窗口操作符发出当前窗口结果的信号。给定一个带有ProcessWindowFunction的窗口，所有元素都被传递给ProcessWindowFunction(可能在将它们传递给驱逐器之后)。使用ReduceFunction、AggregateFunction或FoldFunction的窗口只会发出它们急切地聚合的结果。
+* 当触发器触发时，它既可以触发也可以触发并清除。FIRE保留窗口的内容，而FIRE\_AND\_PURGE则删除其内容。默认情况下，预先实现的触发器只是在不清除窗口状态的情况下触发。
 
-### DeltaTrigger
+#### DeltaTrigger
 
 * 计算当前窗口的记录和上次触发窗口计算的记录进行计算，如果超过指定的阈值则触发窗口
 
@@ -65,15 +67,15 @@
     }
 ```
 
-## Window Evictor
+### Window Evictor
 
-### 内置Evictor
+#### 内置Evictor
 
 * CountEvictor:窗口计算时，只保留最近N条element
 * TimeEvictor:窗口计算时，只保留最近N段时间范围的element
 * DeltaEvictor:窗口计算时，最新的一条element与其他element做delta计算，保留delta在threshold内的element
 
-### TimeEvictor
+#### TimeEvictor
 
 ```java
     public void timeEvictor() {
@@ -88,21 +90,21 @@
     }
 ```
 
-## WindowFunction
+### WindowFunction
 
-### AggregateFunction
+#### AggregateFunction
 
 * 高度抽象的增量聚合函数
 
-### ProcessWindowFunction
+#### ProcessWindowFunction
 
 * 低级别抽象的全量聚合函数
 
-### ReduceFunction
+#### ReduceFunction
 
 * 聚合函数，指定俩个元素如何去聚合并且输出相同类型的元素
 
-### FoldFunction
+#### FoldFunction
 
 * FoldFunction指定窗口的输入元素如何与输出类型的元素组合。对于添加到窗口的每个元素和当前输出值，将递增地调用FoldFunction。第一个元素与输出类型的预定义初始值组合在一起。
 
@@ -117,9 +119,9 @@ input
     });
 ```
 
-# 工作流程和实现机制
+## 工作流程和实现机制
 
-## WindowOperator工作流程
+### WindowOperator工作流程
 
 ```java
 public void processElement(StreamRecord<IN> element) throws Exception {
@@ -268,14 +270,14 @@ public void processElement(StreamRecord<IN> element) throws Exception {
 7. 清除window state
 8. 注册timer，到窗口结束时间清理window
 
-## Window State
+### Window State
 
-### ListState
+#### ListState
 
 * process()/evitor()
 * 全量状态计算
 
-### AggregatingState
+#### AggregatingState
 
 * Reduce()/aggregate()
 * 增量状态计算
@@ -295,7 +297,7 @@ public void add(IN value) throws IOException {
     }
 ```
 
-## Window Function
+### Window Function
 
 * 根据指定的`window function`，将window的记录放入prcoess中
 
@@ -307,9 +309,9 @@ private void emitWindowContents(W window, ACC contents) throws Exception {
 	}
 ```
 
-# 源码分析
+## 源码分析
 
-## timeWindow
+### timeWindow
 
 * timeWindow(Time size)指定滚动窗口的窗口大小
 
@@ -336,7 +338,7 @@ public WindowedStream<T, KEY, TimeWindow> timeWindow(Time size, Time slide) {
 	}
 ```
 
-## countWindow
+### countWindow
 
 ```java
 public WindowedStream<T, KEY, GlobalWindow> countWindow(long size) {
@@ -352,9 +354,9 @@ public WindowedStream<T, KEY, GlobalWindow> countWindow(long size, long slide) {
 	}
 ```
 
-## WindowStream
+### WindowStream
 
-### reduce
+#### reduce
 
 ```java
 public <R> SingleOutputStreamOperator<R> reduce(
@@ -421,11 +423,11 @@ public <R> SingleOutputStreamOperator<R> reduce(
 	}
 ```
 
-###EvictingWindowOperator
+\###EvictingWindowOperator
 
-### WindowOperator
+#### WindowOperator
 
-#### processElement
+**processElement**
 
 ```java
 public void processElement(StreamRecord<IN> element) throws Exception {
@@ -585,7 +587,7 @@ public void processElement(StreamRecord<IN> element) throws Exception {
 	}
 ```
 
-####  registerCleanupTimer注册的定时器
+**registerCleanupTimer注册的定时器**
 
 ```java
 public void onEventTime(InternalTimer<K, W> timer) throws Exception {
@@ -680,9 +682,9 @@ public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 	}
 ```
 
-### aggregate
+#### aggregate
 
-#### AggregateFunction
+**AggregateFunction**
 
 ```java
 public interface AggregateFunction<IN, ACC, OUT> extends Function, Serializable {
@@ -709,7 +711,7 @@ public interface AggregateFunction<IN, ACC, OUT> extends Function, Serializable 
 }
 ```
 
-#### aggregate方法
+**aggregate方法**
 
 ```java
 public <ACC, R> SingleOutputStreamOperator<R> aggregate(AggregateFunction<T, ACC, R> function) {
@@ -748,7 +750,7 @@ public <ACC, R> SingleOutputStreamOperator<R> aggregate(AggregateFunction<T, ACC
 	}
 ```
 
-### apply
+#### apply
 
 ```java
 private <R> SingleOutputStreamOperator<R> apply(InternalWindowFunction<Iterable<T>, R, K, W> function, TypeInformation<R> resultType, Function originalFunction) {
@@ -798,4 +800,3 @@ private <R> SingleOutputStreamOperator<R> apply(InternalWindowFunction<Iterable<
 		return input.transform(opName, resultType, operator);
 	}
 ```
-

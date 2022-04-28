@@ -1,10 +1,12 @@
-# 分布式部署
+# Zookeeper操作与部署
 
-## 集群规划
+## 分布式部署
+
+### 集群规划
 
 * hadoop1、hadoop2、hadoop3
 
-## 环境准备
+### 环境准备
 
 * 安装JDK环境
 * 下载Zookeeper安装包
@@ -19,9 +21,9 @@ server.2=localhost:2889:3889
 server.3=localhost:2890:3890
 ```
 
-## 配置
+### 配置
 
-### Hadoop1
+#### Hadoop1
 
 ```properties
 admin.serverPort=10001
@@ -67,7 +69,7 @@ cnxTimeout=5000
 electionAlg
 ```
 
-### Hadoop2
+#### Hadoop2
 
 ```properties
 tickTime=2000
@@ -82,7 +84,7 @@ server.2=localhost:2889:3889
 server.3=localhost:2890:3890
 ```
 
-### Hadoop3
+#### Hadoop3
 
 ```properties
 tickTime=2000
@@ -97,11 +99,11 @@ server.2=localhost:2889:3889
 server.3=localhost:2890:3890
 ```
 
-## 开启ZookeeperJMX
+### 开启ZookeeperJMX
 
 * ZK默认开启了JMX功能，但是只支持本地连接,修改bin目录下的zkServer.sh
 
-### 默认JMX配置
+#### 默认JMX配置
 
 ```properties
 -Dcom.sum.management.jmxremote.port=5000
@@ -109,33 +111,39 @@ server.3=localhost:2890:3890
 -Dcom.sum.management.jmxremote.authenticate=false
 ```
 
-# Shell操作
+## Shell操作
 
 ```shell
 # 链接客户端
 zkCli.sh -server ip:port
 ```
 
-## create 
+### create
 
 ```shell
 create [-s] [-e] [-c] [-t ttl] path [data] [acl] 
 ```
 
-* 创建顺序节点 
+* 创建顺序节点
+
 ```shell
 create -s /name huangsm 
 ```
-* 创建临时节点 
+
+* 创建临时节点
+
 ```
 create -e /name huangsm 
 当客户端断开连接后，心跳机制就会断开，然后临时节点就会自动删除 
 ```
-* 创建持久节点 
+
+* 创建持久节点
+
 ```
 create /name huangsm 
 ```
-**通过ephemeralOwner来判断是否是临时节点，如果ephemeralOwner不是0x0则为临时节点** 
+
+**通过ephemeralOwner来判断是否是临时节点，如果ephemeralOwner不是0x0则为临时节点**
 
 * 创建多级目录
 
@@ -143,33 +151,36 @@ create /name huangsm
 create /name/hsm hhh
 ```
 
-## set 
+### set
 
 ```
 set [-s] [-v version] path data 
 ```
+
 * 修改节点的值
 
 ```
 set /name "wbd"
 ```
 
-## delete 
+### delete
 
 ```shell
 delete [-v version] path 
 deleteall path 
 ```
-## watcher 
+
+### watcher
 
 ```shell
 get [-s] [-w] path 
 -w设置watcher  -s表示顺序节点 
 ```
 
-* 父节点 增删改操作触发 
-* 子节点 增删改操作触发 
-* 创建父节点触发：nodeCreated 
+* 父节点 增删改操作触发
+* 子节点 增删改操作触发
+* 创建父节点触发：nodeCreated
+
 ```shell
 stat -w /name  设置NodeCreated事件 
 create /name 123 
@@ -178,7 +189,8 @@ WatchedEvent state:SyncConnected type:NodeCreated path:/name
 Created /name 
 ```
 
-* 修改父节点触发：NodeDataChanged 
+* 修改父节点触发：NodeDataChanged
+
 ```shell
 设置修改事件 
 [zk: localhost:2181(CONNECTED) 39] get -w /name 
@@ -199,7 +211,8 @@ dataLength = 3
 numChildren = 0 
 ```
 
-* 删除父节点触发：NodeDelete 
+* 删除父节点触发：NodeDelete
+
 ```shell
 设置删除事件 
 [zk: localhost:2181(CONNECTED) 42] ls -w /name 
@@ -208,83 +221,96 @@ numChildren = 0
 WATCHER:: 
 WatchedEvent state:SyncConnected type:NodeDeleted path:/name 
 ```
-## ACL 
 
+### ACL
 
-* getAcl：获取某个节点的acl权限信息 
+* getAcl：获取某个节点的acl权限信息
+
 ```shell
 getAcl [-s] path 
 ```
-* setAcl：设置某个节点的acl权限信息 
+
+* setAcl：设置某个节点的acl权限信息
+
 ```shell
 setAcl [-s] [-v version] [-R] path acl 
 ```
 
-* addauth:输入认证授权信息，注册时输入明文密码（登录），但是在zk的系统里，密码是以加密的形式存在的 
+* addauth:输入认证授权信息，注册时输入明文密码（登录），但是在zk的系统里，密码是以加密的形式存在的
+
 ```shell
 addauth scheme auth 
 ```
-### acl的构成
 
-* zk的acl通过[scheme:id​ : id:permissions]来构成权限列表 
-    * scheme:代表采用的某种权限机制 
-        * world：world下只有一个id，即只有一个用户，也就是anyone，那么组合的写法就是world：anyone:[permissions] 
-        * auth:代表认证登录，需要需要注册用户权限就可以，形式为auth:user:password:[permissions] 
-        * digest:需要对密码加密才能访问,组合形式为：degest:username:BASE64(SHA1(password)):[permissions] 
-        * ip:设置为ip指定的ip地址，此时限制ip进行访问，比如ip:127.0.0.1:[permissions] 
-        * super:代表超级管理员,拥有所有的权限 
-    * id：代表允许访问的用户 
-    * permissions：权限组合字符串 
-        * 权限字符串缩写crdwa 
-            * CREATE:创建子节点 
-            * READ：获取节点/子节点 
-            * WRITE：设置节点数据 
-            * DELETE：删除子节点 
-            * ADMIN：设置权限 
-### 设置权限 
+#### acl的构成
 
+* zk的acl通过\[scheme:id​ : id:permissions]来构成权限列表
+  * scheme:代表采用的某种权限机制
+    * world：world下只有一个id，即只有一个用户，也就是anyone，那么组合的写法就是world：anyone:\[permissions]
+    * auth:代表认证登录，需要需要注册用户权限就可以，形式为auth:user:password:\[permissions]
+    * digest:需要对密码加密才能访问,组合形式为：degest:username:BASE64(SHA1(password)):\[permissions]
+    * ip:设置为ip指定的ip地址，此时限制ip进行访问，比如ip:127.0.0.1:\[permissions]
+    * super:代表超级管理员,拥有所有的权限
+  * id：代表允许访问的用户
+  * permissions：权限组合字符串
+    * 权限字符串缩写crdwa
+      * CREATE:创建子节点
+      * READ：获取节点/子节点
+      * WRITE：设置节点数据
+      * DELETE：删除子节点
+      * ADMIN：设置权限
 
-* 第一种的world 
+#### 设置权限
+
+* 第一种的world
+
 ```shell
 setAcl /name/abc world:anyone:crwa 
 设置创建、读、写、设置权限 
 ```
 
-* 第二种auth 
+* 第二种auth
+
 ```shell
 setAcl /name/abc auth:user:pwd:cdrwa 
 user和pwd都代表第一个注册的用户和密码 
 ```
-* 第三种digest 
+
+* 第三种digest
+
 ```shell
 setAcl /name/abc digest:user:BASE64(SHA1(pwd)):cdrwa 
 //登录用户 
 addauth digest user:pwd 
 ```
 
-* 第四种ip 
+* 第四种ip
+
 ```shell
 setAcl /name/abc ip:127.0.0.1:cdrwa 
 ```
 
-* 第五种super 
+* 第五种super
+
 ```shell
 Super 
 1 修改zkServer.sh增加super管理员 
 2 重启zkServer 
 ```
-<img src="./img/super权限.jpg" alt="图片" style="zoom:150%;" />
 
+![图片](img/super权限.jpg)
 
-1. zk四字命令Four letter worlds 
+1. zk四字命令Four letter worlds
+
 ```properties
 #添加四字命令白名单 
 4lw.commands.whitelist=* 
 ```
 
-* zk可以通过它自身提供的简写命令来和服务器进行交互 
-* 需要使用到nc命令，安装：yum install nc 
-* echo[command]|nc [ip][port] 
+* zk可以通过它自身提供的简写命令来和服务器进行交互
+* 需要使用到nc命令，安装：yum install nc
+* echo\[command]|nc \[ip]\[port]
+
 ```properties
 [stat] 查看zk的状态信息，以及是否mode 
 [ruok] 查看当前zkserver是否启动，返回imok 
@@ -296,9 +322,10 @@ Super
 [wchs] 展示watch的信息 
 [wchc]与[wchp] session与watch及path与watch信息 
 ```
-# 原生API使用
 
-## 创建连接
+## 原生API使用
+
+### 创建连接
 
 ```java
 public class ZookeeperConnection implements Watcher {
@@ -339,10 +366,9 @@ public class ZookeeperConnection implements Watcher {
     }
 }
 
-
 ```
 
-## 会话重连
+### 会话重连
 
 ```java
 public class ZkConnectionSessionWatcher implements Watcher {
@@ -372,7 +398,7 @@ public class ZkConnectionSessionWatcher implements Watcher {
 }
 ```
 
-## 节点增删改查
+### 节点增删改查
 
 ```java
 public class ZkNodeOperator implements Watcher {
@@ -488,10 +514,9 @@ public class ZkNodeOperator implements Watcher {
     }
 
 }
-
 ```
 
-### 节点查询和监听
+#### 节点查询和监听
 
 ```java
 public class QueryAndWatch{
@@ -556,7 +581,7 @@ public class QueryAndWatch{
     
 ```
 
-### 子节点查询和监听
+#### 子节点查询和监听
 
 ```java
 public class ZKGetChildrenList implements Watcher {
@@ -645,12 +670,11 @@ public class ZKGetChildrenList implements Watcher {
     }
 
 }
-
 ```
 
-# Curator
+## Curator
 
-## 创建会话
+### 创建会话
 
 ```java
 public static void createClient() {
@@ -662,7 +686,7 @@ public static void createClient() {
     }
 ```
 
-## 创建节点
+### 创建节点
 
 ```java
 public static void createNode() throws Exception {
@@ -675,7 +699,7 @@ public static void createNode() throws Exception {
     }
 ```
 
-## 删除节点
+### 删除节点
 
 ```java
  public static void deleteNode() throws Exception {
@@ -695,7 +719,7 @@ public static void createNode() throws Exception {
     }
 ```
 
-## 读取数据
+### 读取数据
 
 ```java
   public static void readNode() throws Exception {
@@ -711,7 +735,7 @@ public static void createNode() throws Exception {
     }
 ```
 
-## 修改数据
+### 修改数据
 
 ```java
  public static void updateNode() throws Exception {
@@ -723,9 +747,9 @@ public static void createNode() throws Exception {
     }
 ```
 
-## Watcher
+### Watcher
 
-### 添加节点监听器
+#### 添加节点监听器
 
 ```java
  public static void addWatcher() throws Exception {
@@ -755,7 +779,7 @@ public static void createNode() throws Exception {
     }
 ```
 
-### 添加子节点监听器
+#### 添加子节点监听器
 
 ```java
 public static void createChildrenNode() throws Exception {
@@ -799,7 +823,7 @@ public static void createChildrenNode() throws Exception {
     }
 ```
 
-## Master选举机制
+### Master选举机制
 
 ```java
 public class MasterLeaderSelector {
@@ -829,4 +853,3 @@ public class MasterLeaderSelector {
     }
 }
 ```
-

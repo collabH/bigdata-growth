@@ -1,11 +1,13 @@
+# hudiWithFlink
+
 * `Configuration`:`$FLINK_HOME/conf/flink-conf.yaml`修改相关配置
 * `Writing Data`:Flink支持[Bulk Insert](https://hudi.apache.org/docs/flink-quick-start-guide#bulk-insert), [Index Bootstrap](https://hudi.apache.org/docs/flink-quick-start-guide#index-bootstrap), [Changelog Mode](https://hudi.apache.org/docs/flink-quick-start-guide#changelog-mode), [Insert Mode](https://hudi.apache.org/docs/flink-quick-start-guide#insert-mode) 和 [Offline Compaction](https://hudi.apache.org/docs/flink-quick-start-guide#offline-compaction).
 * `Querying Data`:Flink支持[Hive Query](https://hudi.apache.org/docs/flink-quick-start-guide#hive-query), [Presto Query](https://hudi.apache.org/docs/flink-quick-start-guide#presto-query).
 * `Optimization`:对于写/读任务，提供了 [Memory Optimization](https://hudi.apache.org/docs/flink-quick-start-guide#memory-optimization)和 [Write Rate Limit](https://hudi.apache.org/docs/flink-quick-start-guide#write-rate-limit).
 
-# 快速开始
+## 快速开始
 
-## 设置
+### 设置
 
 * 下载1.11.2或1.12.2版本的flink
 * 启动Flink集群
@@ -21,7 +23,7 @@ bash start-cluster.sh
 bash sql-client.sh embedded -j ~/Downloads/hudi-flink-bundle_2.11-0.9.0.jar shell
 ```
 
-## Insert Data
+### Insert Data
 
 ```sql
 -- sets up the result mode to tableau to show the results directly in the CLI
@@ -53,7 +55,7 @@ INSERT INTO t1 VALUES
   ('id8','Han',56,TIMESTAMP '1970-01-01 00:00:08','par4');
 ```
 
-## Update data
+### Update data
 
 ```sql
 -- 主键相同为修改
@@ -61,7 +63,7 @@ insert into t1 values
   ('id1','Danny',27,TIMESTAMP '1970-01-01 00:00:01','par1');
 ```
 
-## Streaming Query
+### Streaming Query
 
 * 可以通过提交的时间戳去流式消费数据
 
@@ -87,86 +89,86 @@ WITH (
 select * from t1;
 ```
 
-# Table Option
+## Table Option
 
 * 通过Flink SQL WITH配置的表配置
 
-## Memory
+### Memory
 
-| Option Name              | Description                                                  | Default | Remarks                                                      |
-| ------------------------ | ------------------------------------------------------------ | ------- | ------------------------------------------------------------ |
-| `write.task.max.size`    | 写任务的最大内存(以MB为单位)，当达到阈值时，它刷新最大大小的数据桶以避免OOM。默认1024 mb | `1024D` | 为写缓冲区预留的内存为write.task.max.size - compact .max_memory。当写任务的总缓冲区达到阈值时，将刷新内存中最大的缓冲区 |
-| `write.batch.size`       | 为了提高写的效率，Flink写任务会根据写桶将数据缓存到缓冲区中，直到内存达到阈值。当达到阈值时，数据缓冲区将被清除。默认64 mb | `64D`   | 推荐使用默认值                                               |
-| `write.log_block.size`   | hudi的日志写入器接收到消息后不会立刻flush数据，写入器以LogBlock为单位将数据刷新到磁盘。在LogBlock达到阈值之前，记录将以序列化字节的形式在写入器中进行缓冲。默认128 mb | `128`   | 推荐使用默认值                                               |
-| `write.merge.max_memory` | 如果写入类型是`COPY_ON_WRITE`，Hudi将会合并增量数据和base文件数据。增量数据将会被缓存和溢写磁盘。这个阈值控制可使用的最大堆大小。默认100 mb | `100`   | 推荐使用默认值                                               |
-| `compaction.max_memory`  | 与write.merge.max内存相同，但在compact期间发生。默认100 mb   | `100`   | 如果是在线压缩，则可以在资源足够时打开它，例如设置为1024MB   |
+| Option Name              | Description                                                                                        | Default | Remarks                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------- |
+| `write.task.max.size`    | 写任务的最大内存(以MB为单位)，当达到阈值时，它刷新最大大小的数据桶以避免OOM。默认1024 mb                                                | `1024D` | 为写缓冲区预留的内存为write.task.max.size - compact .max\_memory。当写任务的总缓冲区达到阈值时，将刷新内存中最大的缓冲区 |
+| `write.batch.size`       | 为了提高写的效率，Flink写任务会根据写桶将数据缓存到缓冲区中，直到内存达到阈值。当达到阈值时，数据缓冲区将被清除。默认64 mb                                 | `64D`   | 推荐使用默认值                                                                           |
+| `write.log_block.size`   | hudi的日志写入器接收到消息后不会立刻flush数据，写入器以LogBlock为单位将数据刷新到磁盘。在LogBlock达到阈值之前，记录将以序列化字节的形式在写入器中进行缓冲。默认128 mb | `128`   | 推荐使用默认值                                                                           |
+| `write.merge.max_memory` | 如果写入类型是`COPY_ON_WRITE`，Hudi将会合并增量数据和base文件数据。增量数据将会被缓存和溢写磁盘。这个阈值控制可使用的最大堆大小。默认100 mb               | `100`   | 推荐使用默认值                                                                           |
+| `compaction.max_memory`  | 与write.merge.max内存相同，但在compact期间发生。默认100 mb                                                        | `100`   | 如果是在线压缩，则可以在资源足够时打开它，例如设置为1024MB                                                  |
 
-## Parallelism
+### Parallelism
 
-| Option Name                  | Description                                                  | Default                                                      | Remarks                                                      |
-| ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| `write.tasks`                | 写入器任务的并行度，每个写任务依次向1到N个桶写。默认的4      | `4`                                                          | 增加并行度对小文件的数量没有影响                             |
-| `write.bucket_assign.tasks`  | 桶分配操作符的并行性。无默认值，使用Flink parallelism.default | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 增加并行度也会增加桶的数量，从而增加小文件(小桶)的数量。     |
-| `write.index_boostrap.tasks` | index bootstrap的并行度，增加并行度可以提高bootstarp阶段的效率。因此，需要设置更多的检查点容错时间。默认使用Flink并行 | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 只有当index. bootstrap .enabled为true时才生效                |
-| `read.tasks`                 | Default `4`读操作的并行度(批和流)                            | `4`                                                          |                                                              |
-| `compaction.tasks`           | 实时compaction的并行度，默认为10                             | `10`                                                         | `Online compaction` 会占用写任务的资源，推荐使用offline compaction`](https://hudi.apache.org/docs/flink-quick-start-guide#offline-compaction) |
+| Option Name                  | Description                                                               | Default                                                                                   | Remarks                                                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `write.tasks`                | 写入器任务的并行度，每个写任务依次向1到N个桶写。默认的4                                             | `4`                                                                                       | 增加并行度对小文件的数量没有影响                                                                                                                  |
+| `write.bucket_assign.tasks`  | 桶分配操作符的并行性。无默认值，使用Flink parallelism.default                               | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 增加并行度也会增加桶的数量，从而增加小文件(小桶)的数量。                                                                                                     |
+| `write.index_boostrap.tasks` | index bootstrap的并行度，增加并行度可以提高bootstarp阶段的效率。因此，需要设置更多的检查点容错时间。默认使用Flink并行 | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 只有当index. bootstrap .enabled为true时才生效                                                                                             |
+| `read.tasks`                 | Default `4`读操作的并行度(批和流)                                                   | `4`                                                                                       |                                                                                                                                   |
+| `compaction.tasks`           | 实时compaction的并行度，默认为10                                                    | `10`                                                                                      | `Online compaction` 会占用写任务的资源，推荐使用offline compaction\`]\(https://hudi.apache.org/docs/flink-quick-start-guide#offline-compaction) |
 
-## Compaction
+### Compaction
 
 * 以下配置近支持实时compaction
 * 通过设置`compaction.async.enabled = false`关闭在线压缩，但我们仍然建议对写作业启用`compaction.schedule.enable`。然后，您可以通过脱机压缩来执行压缩计划。
 
-| Option Name                   | Description                                             | Default       | Remarks                                                      |
-| ----------------------------- | ------------------------------------------------------- | ------------- | ------------------------------------------------------------ |
-| `compaction.schedule.enabled` | 是否定期生成compaction计划                              | `true`        | 即使compaction.async.enabled = false，也建议打开它           |
-| `compaction.async.enabled`    | 异步压缩，MOR默认启用                                   | `true`        | 通过关闭此选项来关闭`online compaction`                      |
-| `compaction.trigger.strategy` | 触发compaction的策略                                    | `num_commits` | Options are `num_commits`: 当达到N个delta提交时触发压缩; `time_elapsed`: 当距离上次压缩时间> N秒时触发压缩; `num_and_time`: 当满足`NUM_COMMITS`和`TIME_ELAPSED`时，进行rigger压缩;`num_or_time`: 在满足`NUM_COMMITS`或`TIME_ELAPSED`时触发压缩。 |
-| `compaction.delta_commits`    | 触发压缩所需的最大delte提交，默认为5次提交              | `5`           | --                                                           |
-| `compaction.delta_seconds`    | 触发压缩所需的最大增量秒数，默认为1小时                 | `3600`        | --                                                           |
-| `compaction.max_memory`       | `compaction`溢出映射的最大内存(以MB为单位)，默认为100MB | `100`         | 如果您有足够的资源，建议调整到1024MB                         |
-| `compaction.target_io`        | 每次压缩的目标IO(读和写)，默认为5GB                     | `5120`        | `offline compaction` 的默认值是500GB                         |
+| Option Name                   | Description                            | Default       | Remarks                                                                                                                                                                                            |
+| ----------------------------- | -------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compaction.schedule.enabled` | 是否定期生成compaction计划                     | `true`        | 即使compaction.async.enabled = false，也建议打开它                                                                                                                                                          |
+| `compaction.async.enabled`    | 异步压缩，MOR默认启用                           | `true`        | 通过关闭此选项来关闭`online compaction`                                                                                                                                                                      |
+| `compaction.trigger.strategy` | 触发compaction的策略                        | `num_commits` | Options are `num_commits`: 当达到N个delta提交时触发压缩; `time_elapsed`: 当距离上次压缩时间> N秒时触发压缩; `num_and_time`: 当满足`NUM_COMMITS`和`TIME_ELAPSED`时，进行rigger压缩;`num_or_time`: 在满足`NUM_COMMITS`或`TIME_ELAPSED`时触发压缩。 |
+| `compaction.delta_commits`    | 触发压缩所需的最大delte提交，默认为5次提交               | `5`           | --                                                                                                                                                                                                 |
+| `compaction.delta_seconds`    | 触发压缩所需的最大增量秒数，默认为1小时                   | `3600`        | --                                                                                                                                                                                                 |
+| `compaction.max_memory`       | `compaction`溢出映射的最大内存(以MB为单位)，默认为100MB | `100`         | 如果您有足够的资源，建议调整到1024MB                                                                                                                                                                              |
+| `compaction.target_io`        | 每次压缩的目标IO(读和写)，默认为5GB                  | `5120`        | `offline compaction` 的默认值是500GB                                                                                                                                                                    |
 
-# Memory Optimization
+## Memory Optimization
 
-## MOR
+### MOR
 
 * 设置Flink状态后端为`RocksDB`(默认为`in memory`状态后端)
 * 如果有足够的内存，`compaction.max_memory`可以设置大于100MB建议调整至1024MB。
 * 注意taskManager分配给每个写任务的内存，确保每个写任务都能分配到所需的内存大小`write.task.max.size`。例如，taskManager有4GB内存运行两个streamWriteFunction，所以每个写任务可以分配2GB内存。请保留一些缓冲区，因为taskManager上的网络缓冲区和其他类型的任务(如bucketAssignFunction)也会占用内存。
 * 注意compaction的内存变化，`compaction.max_memory`控制在压缩任务读取日志时可以使用每个任务的最大内存。`compaction.tasks`控制压缩任务的并行性。
 
-## COW
+### COW
 
 * 设置Flink状态后端为`RocksDB`(默认为`in memory`状态后端)
 * 增大`write.task.max.size`和`write.merge.max_memory`(默认1024MB和100MB，调整为2014MB和1024MB)
 * 注意taskManager分配给每个写任务的内存，确保每个写任务都能分配到所需的内存大小`write.task.max.size`。例如，taskManager有4GB内存运行两个streamWriteFunction，所以每个写任务可以分配2GB内存。请保留一些缓冲区，因为taskManager上的网络缓冲区和其他类型的任务(如bucketAssignFunction)也会占用内存。
 
-# Bulk Insert
+## Bulk Insert
 
-* 用于快照数据导入。如果快照数据来自其他数据源，可以使用bulk_insert模式将快照数据快速导入到Hudi中。
-* Bulk_insert消除了序列化和数据合并。用户`无需重复数据删除`，因此需要`保证数据的唯一性`。
-* Bulk_insert在批处理执行模式下效率更高。默认情况下，批处理执行方式根据分区路径对输入记录进行排序，并将这些记录写入Hudi，避免了频繁切换文件句柄导致的写性能下降。有序写入一个分区中不会频繁写换对应的数据分区
-* bulk_insert的并行度由`write.tasks`指定。并行度会影响小文件的数量。从理论上讲，bulk_insert的并行性是bucket的数量(特别是，当每个bucket写到最大文件大小时，它将转到新的文件句柄。最后，文件的数量>=` write.bucket_assign.tasks`)。
+* 用于快照数据导入。如果快照数据来自其他数据源，可以使用bulk\_insert模式将快照数据快速导入到Hudi中。
+* Bulk\_insert消除了序列化和数据合并。用户`无需重复数据删除`，因此需要`保证数据的唯一性`。
+* Bulk\_insert在批处理执行模式下效率更高。默认情况下，批处理执行方式根据分区路径对输入记录进行排序，并将这些记录写入Hudi，避免了频繁切换文件句柄导致的写性能下降。有序写入一个分区中不会频繁写换对应的数据分区
+* bulk\_insert的并行度由`write.tasks`指定。并行度会影响小文件的数量。从理论上讲，bulk\_insert的并行性是bucket的数量(特别是，当每个bucket写到最大文件大小时，它将转到新的文件句柄。最后，文件的数量>= `write.bucket_assign.tasks`)。
 
-| Option Name                              | Required | Default  | Remarks                                                      |
-| ---------------------------------------- | -------- | -------- | ------------------------------------------------------------ |
-| `write.operation`                        | `true`   | `upsert` | Setting as `bulk_insert` to open this function               |
+| Option Name                              | Required | Default  | Remarks                                                                                                                                                    |
+| ---------------------------------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `write.operation`                        | `true`   | `upsert` | Setting as `bulk_insert` to open this function                                                                                                             |
 | `write.tasks`                            | `false`  | `4`      | The parallelism of `bulk_insert`, `the number of files` >= [`write.bucket_assign.tasks`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) |
-| `write.bulk_insert.shuffle_by_partition` | `false`  | `true`   | 写入前是否根据分区字段进行shuffle。启用此选项将减少小文件的数量，但可能存在数据倾斜的风险 |
-| `write.bulk_insert.sort_by_partition`    | `false`  | `true`   | 写入前是否根据分区字段对数据进行排序。启用此选项将在写任务写多个分区时减少小文件的数量 |
-| `write.sort.memory`                      | `false`  | `128`    | Available managed memory of sort operator. default `128` MB  |
+| `write.bulk_insert.shuffle_by_partition` | `false`  | `true`   | 写入前是否根据分区字段进行shuffle。启用此选项将减少小文件的数量，但可能存在数据倾斜的风险                                                                                                           |
+| `write.bulk_insert.sort_by_partition`    | `false`  | `true`   | 写入前是否根据分区字段对数据进行排序。启用此选项将在写任务写多个分区时减少小文件的数量                                                                                                                |
+| `write.sort.memory`                      | `false`  | `128`    | Available managed memory of sort operator. default `128` MB                                                                                                |
 
-# Index Bootstrap
+## Index Bootstrap
 
 * 用于`snapshot data`+`incremental data`导入的需求。如果`snapshot data`已经通过`bulk insert`插入到Hudi中。通过`Index Bootstrap`功能，用户可以实时插入`incremental data`，保证数据不重复，构造离线数据`indexState`
 * 可以在写入快照数据的同时增加资源以流模式写入，然后减少资源以写入增量数据(或打开速率限制函数)。
 
-| Option Name               | Required | Default | Remarks                                                      |
-| ------------------------- | -------- | ------- | ------------------------------------------------------------ |
+| Option Name               | Required | Default | Remarks                                              |
+| ------------------------- | -------- | ------- | ---------------------------------------------------- |
 | `index.bootstrap.enabled` | `true`   | `false` | 开启index.bootstrap.enabled时，Hudi表中的剩余记录将一次性加载到Flink状态 |
-| `index.partition.regex`   | `false`  | `*`     | 优化选择。设置正则表达式来过滤分区。默认情况下，所有分区都被加载到flink状态 |
+| `index.partition.regex`   | `false`  | `*`     | 优化选择。设置正则表达式来过滤分区。默认情况下，所有分区都被加载到flink状态             |
 
-## 使用方式
+### 使用方式
 
 1. `CREATE TABLE`创建一条与Hudi表对应的语句。注意这个`table.type`必须正确。
 2. 设置`index.bootstrao.enabled`为`true`开启index bootstrap。
@@ -175,36 +177,36 @@ select * from t1;
 5. 等待index boostrap完成，用户可以退出并保存保存点(或直接使用外部化检查点)。
 6. 重启job, 设置 `index.bootstrap.enable` 为 `false`.
 
-# Changelog Mode
+## Changelog Mode
 
 * Hudi可以保留消息的所有中间变化`(I / -U / U / D)`，然后通过flink的状态计算消费，从而拥有一个接近实时的数据仓库ETL管道(增量计算)。Hudi MOR表以行的形式存储消息，支持保留所有更改日志(格式级集成)。所有的更新日志记录可以使用Flink流reader
 
-| Option Name         | Required | Default | Remarks                                                      |
-| ------------------- | -------- | ------- | ------------------------------------------------------------ |
+| Option Name         | Required | Default | Remarks                                                           |
+| ------------------- | -------- | ------- | ----------------------------------------------------------------- |
 | `changelog.enabled` | `false`  | `false` | 它在默认情况下是关闭的，为了拥有upsert语义，只有合并的消息被确保保留，中间的更改可以被合并。设置为true以支持使用所有更改 |
 
 * 批处理(快照)读取仍然合并所有中间更改，不管格式是否存储了中间更改日志消息。
 * `changelog.enable`设置为true后，更改日志记录的保留只是最好的工作:异步压缩任务将更改日志记录合并到一个记录中，因此，如果流源不及时使用，则压缩后只能读取每个键的合并记录。解决方案是通过调整压缩策略，比如压缩选项:`compress.delta_commits`和`compression .delta_seconds`，为读取器保留一些缓冲时间。
 
-# Insert Mode
+## Insert Mode
 
 * 默认情况下，Hudi对插入模式采用小文件策略:MOR将增量记录追加到日志文件中，COW合并 base parquet文件(增量数据集将被重复数据删除)。这种策略会导致性能下降。
 * 如果要禁止文件合并行为，可将`write.insert.deduplicate`设置为`false`，则跳过重复数据删除。每次刷新行为直接写入一个`now parquet`文件(MOR表也直接写入parquet文件)。
 
-| Option Name                | Required | Default | Remarks                                                      |
-| -------------------------- | -------- | ------- | ------------------------------------------------------------ |
+| Option Name                | Required | Default | Remarks                                                   |
+| -------------------------- | -------- | ------- | --------------------------------------------------------- |
 | `write.insert.deduplicate` | `false`  | `true`  | Insert mode 默认启用重复数据删除功能。关闭此选项后，每次刷新行为直接写入一个now parquet文件 |
 
-# Hive Query
+## Hive Query
 
 * hive1.x只能同步元数据不能进行Hive查询，需要通过Spark查询Hive
 
-## Hive环境
+### Hive环境
 
 1. 导入`hudi-hadoop-mr-bundle`到hive，在hive的根目录创建`auxlib`,将`hudi-hadoop-mr-bundle-0.x.x-SNAPSHOT.jar`放入`auxlib`
 2. 启动`hive metastore`和`hiveServer2`服务
 
-## 同步模板
+### 同步模板
 
 * Flink hive sync现在支持两种hive同步模式，`hms和jdbc`。HMS模式`只需要配置metastore uris即可`。对于jdbc模式，需要配置`jdbc属性和metastore uri`。选项模板如下:
 
@@ -252,7 +254,7 @@ WITH (
 );
 ```
 
-## 查询
+### 查询
 
 * 使用hive beeline查询需要设置以下参数：
 
@@ -260,9 +262,9 @@ WITH (
 set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat;
 ```
 
-# Offline Compaction
+## Offline Compaction
 
-* 默认情况下，MERGE_ON_READ表的压缩是启用的。触发器策略是在完成五次提交后执行压缩。因为压缩会消耗大量内存，并且与写操作处于相同的管道中，所以当`数据量很大(> 100000 /秒)时，很容易干扰写操作`。此时，使用离线压缩更稳定地执行压缩任务。
+* 默认情况下，MERGE\_ON\_READ表的压缩是启用的。触发器策略是在完成五次提交后执行压缩。因为压缩会消耗大量内存，并且与写操作处于相同的管道中，所以当`数据量很大(> 100000 /秒)时，很容易干扰写操作`。此时，使用离线压缩更稳定地执行压缩任务。
 * 压缩任务的执行包含俩个部分：调度压缩计划和执行压缩计划。建议调度压缩计划的进程由写任务周期性触发，默认情况下写参数`compact.schedule.enable`为启用状态。
 * offline compaction需要提交一个flink任务后台运行
 
@@ -270,38 +272,38 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 ./bin/flink run -c org.apache.hudi.sink.compact.HoodieFlinkCompactor lib/hudi-flink-bundle_2.11-0.9.0.jar --path hdfs://xxx:9000/table
 ```
 
-| Option Name               | Required | Default | Remarks                                                      |
-| ------------------------- | -------- | ------- | ------------------------------------------------------------ |
-| `--path`                  | `frue`   | `--`    | 目标表存储在Hudi上的路径                                     |
-| `--compaction-max-memory` | `false`  | `100`   | 压缩期间日志数据的索引映射大小，默认为100 MB。如果您有足够的内存，您可以打开这个参数 |
+| Option Name               | Required | Default | Remarks                                                           |
+| ------------------------- | -------- | ------- | ----------------------------------------------------------------- |
+| `--path`                  | `frue`   | `--`    | 目标表存储在Hudi上的路径                                                    |
+| `--compaction-max-memory` | `false`  | `100`   | 压缩期间日志数据的索引映射大小，默认为100 MB。如果您有足够的内存，您可以打开这个参数                     |
 | `--schedule`              | `false`  | `false` | 是否执行调度压缩计划的操作。当写进程仍在写时，打开此参数有丢失数据的风险。因此，开启该参数时，必须确保当前没有写任务向该表写入数据 |
-| `--seq`                   | `false`  | `LIFO`  | 压缩任务执行的顺序。默认情况下从最新的压缩计划执行。`LIFO`:从最新的计划开始执行。`FIFO`:从最古老的计划执行。 |
+| `--seq`                   | `false`  | `LIFO`  | 压缩任务执行的顺序。默认情况下从最新的压缩计划执行。`LIFO`:从最新的计划开始执行。`FIFO`:从最古老的计划执行。     |
 
-# Write Rate Limit
+## Write Rate Limit
 
 * 在现有的数据同步中，`snapshot data`和`incremental data`发送到kafka，然后通过Flink流写入到Hudi。因为直接使用`snapshot data`会导致高吞吐量和严重无序(随机写分区)等问题，这会导致写性能下降和吞吐量故障。此时，可以打开`write.rate.limit`选项，以确保顺利写入。
 
-| Option Name        | Required | Default | Remarks   |
-| ------------------ | -------- | ------- | --------- |
-| `write.rate.limit` | `false`  | `0`     | 默认 关闭 |
+| Option Name        | Required | Default | Remarks |
+| ------------------ | -------- | ------- | ------- |
+| `write.rate.limit` | `false`  | `0`     | 默认 关闭   |
 
-# Flink SQL Writer
+## Flink SQL Writer
 
-| Option Name                                | Required | Default                              | Remarks                                                      |
-| ------------------------------------------ | -------- | ------------------------------------ | ------------------------------------------------------------ |
-| path                                       | Y        | N/A                                  | 目标hudi表的基本路径。如果路径不存在，则会创建该路径，否则hudi表将被成功初始化 |
-| table.type                                 | N        | COPY_ON_WRITE                        | Type of table to write. COPY_ON_WRITE (or) MERGE_ON_READ     |
-| write.operation                            | N        | upsert                               | The write operation, that this write should do (insert or upsert is supported) |
-| write.precombine.field                     | N        | ts                                   | 实际写入前precombine中使用的字段。当两条记录具有相同的键值时，我们将挑选一个值最大的precombine字段，由Object.compareTo(..)决定。预聚合 |
-| write.payload.class                        | N        | OverwriteWithLatestAvroPayload.class | 插入/插入时滚动您自己的合并逻辑                              |
-| write.insert.drop.duplicates               | N        | false                                | 插入时是否删除重复项。                                       |
-| write.ignore.failed                        | N        | true                                 | Flag to indicate whether to ignore any non exception error (e.g. writestatus error). within a checkpoint batch. By default true (in favor of streaming progressing over data integrity) |
+| Option Name                                | Required | Default                              | Remarks                                                                                                                                                                                                                     |
+| ------------------------------------------ | -------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| path                                       | Y        | N/A                                  | 目标hudi表的基本路径。如果路径不存在，则会创建该路径，否则hudi表将被成功初始化                                                                                                                                                                                 |
+| table.type                                 | N        | COPY\_ON\_WRITE                      | Type of table to write. COPY\_ON\_WRITE (or) MERGE\_ON\_READ                                                                                                                                                                |
+| write.operation                            | N        | upsert                               | The write operation, that this write should do (insert or upsert is supported)                                                                                                                                              |
+| write.precombine.field                     | N        | ts                                   | 实际写入前precombine中使用的字段。当两条记录具有相同的键值时，我们将挑选一个值最大的precombine字段，由Object.compareTo(..)决定。预聚合                                                                                                                                     |
+| write.payload.class                        | N        | OverwriteWithLatestAvroPayload.class | 插入/插入时滚动您自己的合并逻辑                                                                                                                                                                                                            |
+| write.insert.drop.duplicates               | N        | false                                | 插入时是否删除重复项。                                                                                                                                                                                                                 |
+| write.ignore.failed                        | N        | true                                 | Flag to indicate whether to ignore any non exception error (e.g. writestatus error). within a checkpoint batch. By default true (in favor of streaming progressing over data integrity)                                     |
 | hoodie.datasource.write.recordkey.field    | N        | uuid                                 | Record key field. Value to be used as the `recordKey` component of `HoodieKey`. Actual value will be obtained by invoking .toString() on the field value. Nested fields can be specified using the dot notation eg: `a.b.c` |
-| hoodie.datasource.write.keygenerator.class | N        | SimpleAvroKeyGenerator.class         | Key generator class, that implements will extract the key out of incoming record |
-| write.tasks                                | N        | 4                                    | Parallelism of tasks that do actual write, default is 4      |
-| write.batch.size.MB                        | N        | 128                                  | Batch buffer size in MB to flush data into the underneath filesystem |
+| hoodie.datasource.write.keygenerator.class | N        | SimpleAvroKeyGenerator.class         | Key generator class, that implements will extract the key out of incoming record                                                                                                                                            |
+| write.tasks                                | N        | 4                                    | Parallelism of tasks that do actual write, default is 4                                                                                                                                                                     |
+| write.batch.size.MB                        | N        | 128                                  | Batch buffer size in MB to flush data into the underneath filesystem                                                                                                                                                        |
 
-# Key Generation
+## Key Generation
 
 * Hudi维护hoodie keys(record key + partition path)，以唯一地标识一个特定的记录。key的生成类将从传入的记录中提取这些信息。
 * Hudi目前支持如下不同的记录键和分区路径组合：
@@ -311,7 +313,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
   * 复杂的记录键和基于时间戳的分区路径
   * 非分区表
 
-# Deletes
+## Deletes
 
 * hudi支持2种类型删除hudi表数据，通过允许用户指定不同的记录有效负载实现。
   * `Soft Deletes`:保留记录键，并将所有其他字段的值空出来。这可以通过确保表模式中适当的字段为空，并在将这些字段设置为空后简单地插入表来实现。
@@ -328,26 +330,26 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
    .option(HoodieWriteConfig.WRITE_PAYLOAD_CLASS_NAME.key(), "org.apache.hudi.EmptyHoodieRecordPayload")
 ```
 
-# Flink SQL使用实践
+## Flink SQL使用实践
 
-![](./img/FlinkWithHudi.jpg)
+![](img/FlinkWithHudi.jpg)
 
-## precombine
+### precombine
 
 * hudi的`precombine`指定一个字段如果`recordKey和basePartitionPath一致`会基于该键进行compore取最大，可以实现Top One的效果，这样就可以不用基于flink提供的row number函数求top one。
 
-# Flink Hudi Connector源码分析
+## Flink Hudi Connector源码分析
 
 * 源码都基于Flink-hudi 0.9.0版本
 
-## WritePipeline
+### WritePipeline
 
-### StreamWriteFunction
+#### StreamWriteFunction
 
-* 用于将数据写入外部系统，这个函数首先会buffer一批HoodieRecord数据，当一批buffer数据上超过` FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`，或者是Flink开始做ck，则flush。如果一批数据写入成功，则StreamWriteOperatorCoordinator会标识写入成功。
+* 用于将数据写入外部系统，这个函数首先会buffer一批HoodieRecord数据，当一批buffer数据上超过 `FlinkOptions#WRITE_BATCH_SIZE`大小或者全部的buffer数据超过`FlinkOptions#WRITE_TASK_MAX_SIZE`，或者是Flink开始做ck，则flush。如果一批数据写入成功，则StreamWriteOperatorCoordinator会标识写入成功。
 * 这个operator coordinator会校验和提交最后一个instant，当最后一个instant提交成功时会启动一个新的instant。它会开启一个新的instant之前回滚全部inflight instant，hoodie的instant只会在一个ck中。写函数在它ck超时抛出异常时刷新数据buffer，任何检查点失败最终都会触发作业失败。
 
-#### 核心属性
+**核心属性**
 
 ```java
  /**
@@ -422,7 +424,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
   private List<WriteStatus> writeStatuses;
 ```
 
-#### open
+**open**
 
 ```java
 public void open(Configuration parameters) throws IOException {
@@ -493,7 +495,7 @@ public void open(Configuration parameters) throws IOException {
   }
 ```
 
-#### 初始化状态
+**初始化状态**
 
 * 创建hudi写入客户端，获取actionType，然后根据是否savepoint确定是否重新提交inflight阶段的instant
 
@@ -579,7 +581,7 @@ private void restoreWriteMetadata() throws Exception {
   }
 ```
 
-#### snapshotState
+**snapshotState**
 
 ```java
   public void snapshotState(FunctionSnapshotContext functionSnapshotContext) throws Exception {
@@ -660,7 +662,7 @@ private void flushRemaining(boolean endInput) {
   }
 ```
 
-#### bufferRecord
+**bufferRecord**
 
 ```java
 private void bufferRecord(HoodieRecord<?> value) {
@@ -735,7 +737,7 @@ private boolean flushBucket(DataBucket bucket) {
   }
 ```
 
-### StreamWriteOperator
+#### StreamWriteOperator
 
 ```java
 public class StreamWriteOperator<I> extends AbstractWriteOperator<I> {
@@ -750,7 +752,7 @@ public class StreamWriteOperator<I> extends AbstractWriteOperator<I> {
 }
 ```
 
-### BucketAssignFunction
+#### BucketAssignFunction
 
 * 为检查点内的记录构建增量写入配置文件的功能，然后，它使用{@link BucketAssigner}分配带有ID的桶。
 
@@ -935,10 +937,9 @@ public class BucketAssignFunction<K, I, O extends HoodieRecord<?>>
     this.bucketAssigner.close();
   }
 }
-
 ```
 
-#### BucketAssigner
+**BucketAssigner**
 
 * bucket分配器，如果记录是一个更新，检查并重用现有的update桶或生成一个新的;如果记录是插入的，首先检查记录分区是否有小文件，尝试找到一个小文件有空间追加新记录和重用小文件的数据桶，如果没有小文件(或没有留给新记录的空间)，生成一个INSERT桶。
 
@@ -1233,7 +1234,7 @@ public class BucketAssigner implements AutoCloseable {
 }
 ```
 
-### Pipelines
+#### Pipelines
 
 * 构造write pipeline
 
@@ -1262,11 +1263,11 @@ public static DataStream<Object> hoodieStreamWrite(Configuration conf, int defau
 pipeline = Pipelines.hoodieStreamWrite(conf, parallelism, hoodieRecordDataStream);
 ```
 
-## Bootstrap
+### Bootstrap
 
 * 用于全量+增量读取时构造flink index state,用于后续实时数据写入upsert
 
-### BatchBootstrapOperator
+#### BatchBootstrapOperator
 
 * 批量Bootstrap函数
 
@@ -1303,19 +1304,15 @@ public class BatchBootstrapOperator<I, O extends HoodieRecord<?>> extends Bootst
         return true;
     }
 }
-
 ```
 
+#### BootstrapFunction
 
-
-### BootstrapFunction
-
-* 从外部的hudi表加载索引，当第一个元素进入时，函数的每个子任务都会触发index bootstarp，
-  直到所有索引记录都被发送后，记录才会被发送。
+* 从外部的hudi表加载索引，当第一个元素进入时，函数的每个子任务都会触发index bootstarp， 直到所有索引记录都被发送后，记录才会被发送。
 * 然后输出记录应该按recordKey移动，从而进行可伸缩的写入。
 * index boostrap相关核心参数配置可以通过flink提供的Configuration类配置，比如加载的hoodie表path等
 
-#### 核心属性
+**核心属性**
 
 ```java
  // 外部hudi表
@@ -1337,10 +1334,9 @@ public class BatchBootstrapOperator<I, O extends HoodieRecord<?>> extends Bootst
     this.conf = conf;
     this.pattern = Pattern.compile(conf.getString(FlinkOptions.INDEX_PARTITION_REGEX));
   }
-
 ```
 
-#### open
+**open**
 
 * 获取hadoop配置、获取hudi写入配置，获取外部hudiTbale。
 
@@ -1362,7 +1358,7 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-#### processElement
+**processElement**
 
 * 获取外部hudi表的path，
 
@@ -1411,13 +1407,13 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-## BulkInsert
+### BulkInsert
 
-### BulkInsertWriteFunction
+#### BulkInsertWriteFunction
 
-* 将数据写入配置的文件系统中，将会使用WriteOperationType#BULK_INSERT类型，需要输入数据按照分区路径shuffle。
+* 将数据写入配置的文件系统中，将会使用WriteOperationType#BULK\_INSERT类型，需要输入数据按照分区路径shuffle。
 
-#### 核心属性
+**核心属性**
 
 ```java
 /**
@@ -1471,7 +1467,7 @@ private HoodieFlinkTable getTable() {
   }
 ```
 
-#### open
+**open**
 
 * 初始化写入客户端、actionType、初始化instant，发送启动event，初始化写入helper类
 
@@ -1489,7 +1485,7 @@ public void open(Configuration parameters) throws IOException {
   }
 ```
 
-#### processElement
+**processElement**
 
 * RowData格式数据通过HoodieWriterHelper写入hudi
 
@@ -1533,16 +1529,15 @@ public void open(Configuration parameters) throws IOException {
   }
 ```
 
-### use case
+#### use case
 
 * 通过Flink SQL将数据按照Bulk Insert的方式将数据落湖。
+*   0.9.0版本不支持bulk insert
 
-* 0.9.0版本不支持bulk insert
+    * COW表会报错Kryo并发修改异常
+    * MOR表会无限创建rollback元数据
 
-  * COW表会报错Kryo并发修改异常
-  * MOR表会无限创建rollback元数据
-
-  ![](./img/bulkinsert问题.jpg)
+    <img src="https://github.com/collabH/repository/blob/master/bigdata/datalake/hudi/img/bulkinsert%E9%97%AE%E9%A2%98.jpg" alt="" data-size="original">
 
 ```java
  /**
@@ -1613,10 +1608,9 @@ public void open(Configuration parameters) throws IOException {
             }
         });
     }
-
 ```
 
-### bulk insert引用
+#### bulk insert引用
 
 ```java
       if (WriteOperationType.fromValue(writeOperation) == WriteOperationType.BULK_INSERT) {
@@ -1661,11 +1655,9 @@ public static DataStreamSink<Object> bulkInsert(Configuration conf, RowType rowT
   }
 ```
 
+### Compact
 
-
-## Compact
-
-### CompactionPlanOperator
+#### CompactionPlanOperator
 
 * 生成特定的compact plan在ck结束时更加插件化生成。
 
@@ -1766,7 +1758,7 @@ public class CompactionPlanOperator extends AbstractStreamOperator<CompactionPla
 }
 ```
 
-### CompactFunction
+#### CompactFunction
 
 * 函数来执行由compaction plan任务分配的实际compaction任务，为了执行可伸缩的，输入应该被压缩事件{@link CompactionPlanEvent}打乱。
 
@@ -1810,7 +1802,7 @@ private List<WriteStatus> writeStatuses;
 private int taskID;  
 ```
 
-#### 核心属性
+**核心属性**
 
 ```java
 // compact相关配置
@@ -1825,7 +1817,7 @@ private int taskID;
 private transient NonThrownExecutor executor;
 ```
 
-#### processElement
+**processElement**
 
 * 处理CompactionPlanEvent执行compact
 
@@ -1863,7 +1855,7 @@ private transient NonThrownExecutor executor;
   }
 ```
 
-### HoodieFlinkMergeOnReadTableCompactor
+#### HoodieFlinkMergeOnReadTableCompactor
 
 * 核心flink compact类
 
@@ -1956,7 +1948,7 @@ public List<WriteStatus> compact(HoodieCompactionHandler compactionHandler,
   }
 ```
 
-### CompactionCommitSink
+#### CompactionCommitSink
 
 * 检查和提交compaction action，每次接收到一个compaction commit event之后，它会加载并且校验这个compaction计划，如果全部的compaction操作已经结果，将会尝试提交这些compaction action。
 * 这个函数继承了CleanFunction的清理能力，这是必要的，因为SQL API不允许在一个表接收器提供程序中包含多个sink。
@@ -2058,10 +2050,9 @@ public class CompactionCommitSink extends CleanFunction<CompactionCommitEvent> {
     this.commitBuffer.remove(instant);
   }
 }
-
 ```
 
-### Compact引用方
+#### Compact引用方
 
 * 根据配置调用compact对应opeartor或function
 
@@ -2089,11 +2080,11 @@ public static DataStreamSink<CompactionCommitEvent> compact(Configuration conf, 
   }
 ```
 
-## Append
+### Append
 
 * 如果是COW表并且operation为`insert`并且`write.insert.cluster`配置为false，不为insert模式合并小文件，append模式才会生效。
 
-### AppendWriteOperator
+#### AppendWriteOperator
 
 * 创建对应的ProcessOperator,底层保证对应的ProcessFunction
 
@@ -2110,7 +2101,7 @@ public class AppendWriteOperator<I> extends AbstractWriteOperator<I> {
 }
 ```
 
-### AppendWriteFunction
+#### AppendWriteFunction
 
 * 该函数直接为每个检查点写入base文件，当它的大小达到配置的阈值时，文件可能会滚动。
 
@@ -2209,9 +2200,9 @@ public class AppendWriteFunction<I> extends AbstractStreamWriteFunction<I> {
 }
 ```
 
-## Clean
+### Clean
 
-### CleanFunction
+#### CleanFunction
 
 * 清理老的commit数据函数,每次新的ck会开始一个清理任务，同一时间下只有一个清理任务，新的任务不能立刻调度直到最后的任务完成（失败或者成功），清理任务异常永远不会抛出，而只会抛出日志。
 
@@ -2277,7 +2268,7 @@ public class CleanFunction<T> extends AbstractRichFunction
 }
 ```
 
-#### Pipelines
+**Pipelines**
 
 ```java
 public static DataStreamSink<Object> clean(Configuration conf, DataStream<Object> dataStream) {
@@ -2326,16 +2317,16 @@ public static DataStreamSink<Object> clean(Configuration conf, DataStream<Object
   }
 ```
 
-## Source
+### Source
 
 * 读取Hudi表数据
 
-### StreamReadOperator
+#### StreamReadOperator
 
 * 这个operator通过`StreamReadMonitoringFunction`读取`MergeOnReadInputSplit`分片数据，与并行度为1的`StreamReadMonitoringFunction`相反，这个运算符可以有多个并行度。
-* 一旦收到一个input split  `MergeOnReadInputSplit`，它就被放入一个队列中，`MailboxExecutor`读取分裂的实际数据。这种架构允许分离读取和处理检查点障碍，从而消除任何潜在的背压。
+* 一旦收到一个input split `MergeOnReadInputSplit`，它就被放入一个队列中，`MailboxExecutor`读取分裂的实际数据。这种架构允许分离读取和处理检查点障碍，从而消除任何潜在的背压。
 
-#### 源码分析
+**源码分析**
 
 ```java
 // 入参MergeOnReadInputSplit转换为RowData
@@ -2549,11 +2540,11 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
 }
 ```
 
-### MergeOnReadInputFormat
+#### MergeOnReadInputFormat
 
 * 基于Flink的InputFormat用于处理hoodie data和log文件，使用`ParquetRecordReader`替代`FSDataInputStream`读取文件，重写`createInputSplits`和`close`方法
 
-#### 核心属性
+**核心属性**
 
 ```java
 // flink配置
@@ -2605,9 +2596,9 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
   private boolean closed = true;
 ```
 
-#### open
+**open**
 
-```#java
+```
  public void open(MergeOnReadInputSplit split) throws IOException {
     this.currentReadCount = 0L;
     this.closed = false;
@@ -2663,7 +2654,7 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
   }
 ```
 
-### 读取Hudi表
+#### 读取Hudi表
 
 ```java
 public DataStream<RowData> produceDataStream(StreamExecutionEnvironment execEnv) {
@@ -2696,7 +2687,7 @@ public DataStream<RowData> produceDataStream(StreamExecutionEnvironment execEnv)
   }
 ```
 
-### StreamReadMonitoringFunction
+#### StreamReadMonitoringFunction
 
 ```java
 public class StreamReadMonitoringFunction
@@ -2936,4 +2927,3 @@ public class StreamReadMonitoringFunction
   }
 }
 ```
-

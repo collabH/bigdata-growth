@@ -1,17 +1,19 @@
-# 概述
+# ImpalaOverView
 
-## 特点
+## 概述
+
+### 特点
 
 * 提供对HDFS、HBase、Kudu数据的高性能、低延迟的交互式SQL查询性能。
 * 基于Hive，使用内存计算，兼顾数据仓库、基有实时、批处理、多并发的有点，是PB级大数据实时查询分析引擎。
 
-## 适用场景
+### 适用场景
 
-![](./img/impala适用场景.jpg)
+![](https://github.com/collabH/repository/blob/master/bigdata/olap/impala/img/impala%E9%80%82%E7%94%A8%E5%9C%BA%E6%99%AF.jpg)
 
-## 优缺点
+### 优缺点
 
-### 优点
+#### 优点
 
 * MPP架构，去中心化，完全兼容HiIVE元数据,结合kudu实时数仓
 * 基于内存运行，不需要把中间结果写入磁盘，省掉了大量的I/O开销。
@@ -20,22 +22,19 @@
 * 支持各种文件格式，如TEXTFILE、SEQUENCEFILE、RCFile、Parquet。
 * 可以访问hive的metastore，对hive数据支持做数据分析。
 
-#### 性能优势
+**性能优势**
 
-* Impala性能优势有元数据缓存，而且impala会缓存HDFS上相应表数据在blog里的信息，因此查询时会有一个本地读，
-判断元数据是否在本地，通过本地转读方式，log才能连接数据。第二点并行计算，Query Planner生成执行计划将其发往周边节点，
-然后汇聚。第三个利用codegen技术，有些依据执行环境生成执行代码，会对性能提升很大。再一个就是很多算子下推，如果追求高性能不许实现算子下推，
-将存储层与计算层交互变得更小，在底层过滤而不是在计算层，这样对平台整体性能提升较大。
+* Impala性能优势有元数据缓存，而且impala会缓存HDFS上相应表数据在blog里的信息，因此查询时会有一个本地读， 判断元数据是否在本地，通过本地转读方式，log才能连接数据。第二点并行计算，Query Planner生成执行计划将其发往周边节点， 然后汇聚。第三个利用codegen技术，有些依据执行环境生成执行代码，会对性能提升很大。再一个就是很多算子下推，如果追求高性能不许实现算子下推， 将存储层与计算层交互变得更小，在底层过滤而不是在计算层，这样对平台整体性能提升较大。
 
-#### MPP并行架构
+**MPP并行架构**
 
-![impala架构](./img/MPP去中心化.jpg)
+![impala架构](img/MPP去中心化.jpg)
 
-#### 查询性能
+**查询性能**
 
-![](./img/查询性能.jpg)
+![](img/查询性能.jpg)
 
-### 缺点
+#### 缺点
 
 * 对内存依赖大，且完全依赖于Hive。
 * 分区超过1万，性能严重下降。
@@ -44,7 +43,7 @@
 * 链接一个Coordinator失败后无法故障转移到其他可用的Corrdinator
 * 存在木桶原理，执行SQL的速度快慢取决于最慢的那个Executor
 
-## Impala的架构
+### Impala的架构
 
 ![img](http://impala.apache.org/img/impala.png)
 
@@ -66,9 +65,9 @@
   * 负责收集分布在集群中各个impalad进程的资源信息、各节点健康状态，同步节点信息。
   * 负责query的协调调度。
 
-# Impala操作
+## Impala操作
 
-## Impala外部Shell
+### Impala外部Shell
 
 ```shell
 [root@cm-master shell]#  impala-shell -h
@@ -111,21 +110,21 @@ Options:
                         session. [default: none]
 ```
 
-## Impala内部Shell
+### Impala内部Shell
 
-| 选项                      | 描述                                                         |
-| :------------------------ | :----------------------------------------------------------- |
-| help                      | 显示帮助信息                                                 |
-| explain <sql>             | 显示执行计划                                                 |
-| profile (查询完成后执行） | 查询最近一次查询的底层信息                                   |
-| shell <shell>             | 不退出impala-shell执行shell命令                              |
-| version                   | 显示impala-shell和impala的版本信息                           |
-| connect                   | 连接impalad主机，默认端口21000（同于impala-shell -i），如 connect hadoop103; |
-| refresh <tablename>       | 增量刷新元数据库                                             |
-| invalidate metadata       | 全量刷新元数据库（慎用）（同于 impala-shell -r）             |
-| history                   | 历史命令                                                     |
+| 选项                  | 描述                                                            |
+| ------------------- | ------------------------------------------------------------- |
+| help                | 显示帮助信息                                                        |
+| explain             | 显示执行计划                                                        |
+| profile (查询完成后执行）   | 查询最近一次查询的底层信息                                                 |
+| shell               | 不退出impala-shell执行shell命令                                      |
+| version             | 显示impala-shell和impala的版本信息                                    |
+| connect             | 连接impalad主机，默认端口21000（同于impala-shell -i），如 connect hadoop103; |
+| refresh             | 增量刷新元数据库                                                      |
+| invalidate metadata | 全量刷新元数据库（慎用）（同于 impala-shell -r）                              |
+| history             | 历史命令                                                          |
 
-### 进入内部shell
+#### 进入内部shell
 
 ```shell
 # 进入外部shell
@@ -135,37 +134,37 @@ impala-shell
 help方式查看
 ```
 
-# Impala的数据类型
+## Impala的数据类型
 
-| Hive数据类型 | Impala数据类型 | 长度                                                 |
-| ------------ | -------------- | ---------------------------------------------------- |
-| TINYINT      | TINYINT        | 1byte有符号整数                                      |
-| SMALINT      | SMALINT        | 2byte有符号整数                                      |
-| INT          | INT            | 4byte有符号整数                                      |
-| BIGINT       | BIGINT         | 8byte有符号整数                                      |
-| BOOLEAN      | BOOLEAN        | 布尔类型，true或者false                              |
-| FLOAT        | FLOAT          | 单精度浮点数                                         |
-| DOUBLE       | DOUBLE         | 双精度浮点数                                         |
-| STRING       | STRING         | 字符系列。可以指定字符集。可以使用单引号或者双引号。 |
-| TIMESTAMP    | TIMESTAMP      | 时间类型                                             |
-| BINARY       | 不支持         | 字节数组                                             |
+| Hive数据类型  | Impala数据类型 | 长度                         |
+| --------- | ---------- | -------------------------- |
+| TINYINT   | TINYINT    | 1byte有符号整数                 |
+| SMALINT   | SMALINT    | 2byte有符号整数                 |
+| INT       | INT        | 4byte有符号整数                 |
+| BIGINT    | BIGINT     | 8byte有符号整数                 |
+| BOOLEAN   | BOOLEAN    | 布尔类型，true或者false           |
+| FLOAT     | FLOAT      | 单精度浮点数                     |
+| DOUBLE    | DOUBLE     | 双精度浮点数                     |
+| STRING    | STRING     | 字符系列。可以指定字符集。可以使用单引号或者双引号。 |
+| TIMESTAMP | TIMESTAMP  | 时间类型                       |
+| BINARY    | 不支持        | 字节数组                       |
 
 * Impala虽然支持`array`、`map`、`struct`复杂数据类型，但是并不完全支持，一般处理方法，将复杂类型转化为基本类型，从hive中创表。
 
-# 存储和压缩
+## 存储和压缩
 
-## 支持的存储压缩
+### 支持的存储压缩
 
-| 文件格式     | 压缩编码                     | Impala是否可直接创建                                         | 是否可直接插入                                               |
-| ------------ | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| Parquet      | Snappy（默认）, GZIP;        | Yes                                                          | 支持：CREATE TABLE, INSERT, 查询                             |
-| TextFile     | LZO，gzip，bzip2，snappy     | Yes. 不指定 STORED AS 子句的 CREATE TABLE 语句，默认的文件格式就是未压缩文本 | 支持：CREATE TABLE, INSERT, 查询。如果使用 LZO 压缩，则必须在 Hive 中创建表和加载数据 |
-| RCFile       | Snappy, GZIP, deflate, BZIP2 | Yes.                                                         | 支持CREATE，查询，在 Hive 中加载数据                         |
-| SequenceFile | Snappy, GZIP, deflate, BZIP2 | Yes.                                                         | 支持：CREATE TABLE, INSERT, 查询。需设置<br />修改参数:<br /> ALLOW_UNSUPPORTED_FORMATS=true |
+| 文件格式         | 压缩编码                         | Impala是否可直接创建                                         | 是否可直接插入                                                                           |
+| ------------ | ---------------------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Parquet      | Snappy（默认）, GZIP;            | Yes                                                   | 支持：CREATE TABLE, INSERT, 查询                                                       |
+| TextFile     | LZO，gzip，bzip2，snappy        | Yes. 不指定 STORED AS 子句的 CREATE TABLE 语句，默认的文件格式就是未压缩文本 | 支持：CREATE TABLE, INSERT, 查询。如果使用 LZO 压缩，则必须在 Hive 中创建表和加载数据                       |
+| RCFile       | Snappy, GZIP, deflate, BZIP2 | Yes.                                                  | 支持CREATE，查询，在 Hive 中加载数据                                                          |
+| SequenceFile | Snappy, GZIP, deflate, BZIP2 | Yes.                                                  | <p>支持：CREATE TABLE, INSERT, 查询。需设置<br>修改参数:<br>ALLOW_UNSUPPORTED_FORMATS=true</p> |
 
 * impala不支持ORC格式
 
-# 性能优化
+## 性能优化
 
 * 尽量将StateStore和Catalog单独部署到同一个节点上，使其能正常通信。
 * 通过对Impala Daemon内存限制(默认256MB)及StateStore工作线程数，来提供Impala的执行效率。
@@ -176,4 +175,3 @@ help方式查看
   * 条件过滤
   * limit子句
   * 尽量少用全量元数据刷新
-
