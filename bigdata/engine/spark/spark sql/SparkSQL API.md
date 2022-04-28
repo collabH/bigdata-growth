@@ -1,16 +1,16 @@
-# SparkSQL API
+# Structured API基本使用
 
-## Structured API基本使用
+<nav>
+<a href="#一创建DataFrame和Dataset">一、创建DataFrame和Dataset</a><br/>
+<a href="#二Columns列操作">二、Columns列操作</a><br/>
+<a href="#三使用Structured-API进行基本查询">三、使用Structured API进行基本查询</a><br/>
+<a href="#四使用Spark-SQL进行基本查询">四、使用Spark SQL进行基本查询</a><br/>
+</nav>
 
-[一、创建DataFrame和Dataset](<SparkSQL API.md#一创建DataFrame和Dataset>)\
-[二、Columns列操作](<SparkSQL API.md#二Columns列操作>)\
-[三、使用Structured API进行基本查询](<SparkSQL API.md#三使用Structured-API进行基本查询>)\
-[四、使用Spark SQL进行基本查询](<SparkSQL API.md#四使用Spark-SQL进行基本查询>)\
 
+## 一、创建DataFrame和Dataset
 
-### 一、创建DataFrame和Dataset
-
-#### 1.1 创建DataFrame
+### 1.1 创建DataFrame
 
 Spark 中所有功能的入口点是 `SparkSession`，可以使用 `SparkSession.builder()` 创建。创建后应用程序就可以从现有 RDD，Hive 表或 Spark 数据源创建 DataFrame。示例如下：
 
@@ -25,14 +25,15 @@ import spark.implicits._
 
 可以使用 `spark-shell` 进行测试，需要注意的是 `spark-shell` 启动后会自动创建一个名为 `spark` 的 `SparkSession`，在命令行中可以直接引用即可：
 
-![](https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/spark-sql-shell.png)\
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/spark-sql-shell.png"/> </div>
 
+<br/>
 
-#### 1.2 创建Dataset
+### 1.2 创建Dataset
 
 Spark 支持由内部数据集和外部数据集来创建 DataSet，其创建方式分别如下：
 
-**1. 由外部数据集创建**
+####  1. 由外部数据集创建
 
 ```scala
 // 1.需要导入隐式转换
@@ -47,7 +48,7 @@ val ds = spark.read.json("/usr/file/emp.json").as[Emp]
 ds.show()
 ```
 
-**2. 由内部数据集创建**
+#### 2. 由内部数据集创建
 
 ```scala
 // 1.需要导入隐式转换
@@ -64,11 +65,11 @@ val caseClassDS = Seq(Emp("ALLEN", 300.0, 30, 7499, "1981-02-20 00:00:00", "SALE
 caseClassDS.show()
 ```
 
-#### 1.3 由RDD创建DataFrame
+### 1.3 由RDD创建DataFrame
 
 Spark 支持两种方式把 RDD 转换为 DataFrame，分别是使用反射推断和指定 Schema 转换：
 
-**1. 使用反射推断**
+#### 1. 使用反射推断
 
 ```scala
 // 1.导入隐式转换
@@ -85,7 +86,7 @@ val rddToDS = spark.sparkContext
   .toDS()  // 如果调用 toDF() 则转换为 dataFrame 
 ```
 
-**2. 以编程方式指定Schema**
+#### 2. 以编程方式指定Schema
 
 ```scala
 import org.apache.spark.sql.Row
@@ -110,7 +111,7 @@ val deptDF = spark.createDataFrame(rowRDD, schema)
 deptDF.show()
 ```
 
-#### 1.4 DataFrames与Datasets互相转换
+### 1.4  DataFrames与Datasets互相转换
 
 Spark 提供了非常简单的转换方法用于 DataFrame 与 Dataset 间的互相转换，示例如下：
 
@@ -124,11 +125,11 @@ scala> ds.toDF()
 res2: org.apache.spark.sql.DataFrame = [COMM: double, DEPTNO: bigint ... 6 more fields]
 ```
 
-### 二、Columns列操作
+## 二、Columns列操作
 
-#### 2.1 引用列
+### 2.1 引用列
 
-Spark 支持多种方法来构造和引用列，最简单的是使用 `col()` 或 `column()` 函数。
+Spark 支持多种方法来构造和引用列，最简单的是使用 `col() ` 或 `column() ` 函数。
 
 ```scala
 col("colName")
@@ -139,7 +140,7 @@ df.select($"ename", $"job").show()
 df.select('ename, 'job).show()
 ```
 
-#### 2.2 新增列
+### 2.2 新增列
 
 ```scala
 // 基于已有列值新增列
@@ -148,14 +149,14 @@ df.withColumn("upSal",$"sal"+1000)
 df.withColumn("intCol",lit(1000))
 ```
 
-#### 2.3 删除列
+### 2.3 删除列
 
 ```scala
 // 支持删除多个列
 df.drop("comm","job").show()
 ```
 
-#### 2.4 重命名列
+### 2.4 重命名列
 
 ```scala
 df.withColumnRenamed("comm", "common").show()
@@ -163,10 +164,9 @@ df.withColumnRenamed("comm", "common").show()
 
 需要说明的是新增，删除，重命名列都会产生新的 DataFrame，原来的 DataFrame 不会被改变。
 
-\
+<br/>
 
-
-### 三、使用Structured API进行基本查询
+## 三、使用Structured API进行基本查询
 
 ```scala
 // 1.查询员工姓名及工作
@@ -188,12 +188,11 @@ df.select("deptno").distinct().show()
 df.groupBy("deptno").count().show()
 ```
 
-\
+<br/>
 
+## 四、使用Spark SQL进行基本查询
 
-### 四、使用Spark SQL进行基本查询
-
-#### 4.1 Spark SQL基本使用
+### 4.1 Spark  SQL基本使用
 
 ```scala
 // 1.首先需要将 DataFrame 注册为临时视图
@@ -218,7 +217,7 @@ spark.sql("SELECT DISTINCT(deptno) FROM emp").show()
 spark.sql("SELECT deptno,count(ename) FROM emp group by deptno").show()
 ```
 
-#### 4.2 全局临时视图
+### 4.2 全局临时视图
 
 上面使用 `createOrReplaceTempView` 创建的是会话临时视图，它的生命周期仅限于会话范围，会随会话的结束而结束。
 
@@ -232,32 +231,32 @@ df.createGlobalTempView("gemp")
 spark.sql("SELECT ename,job FROM global_temp.gemp").show()
 ```
 
-## 聚合函数
+# 聚合函数
 
-### 简单聚合
+## 简单聚合
 
-#### count
+### count
 
 ```scala
 df.select(count($"id")).show()
 ```
 
-#### countDistinct
+### countDistinct
 
 ```scala
 // 计算姓名不重复的员工人数
 empDF.select(countDistinct("deptno")).show()
 ```
 
-#### approx\_count\_distinct
+### approx_count_distinct
 
-* 通常在使用大型数据集时，你可能关注的只是近似值而不是准确值，这时可以使用 approx\_count\_distinct 函数，并可以使用第二个参数指定最大允许误差。
+* 通常在使用大型数据集时，你可能关注的只是近似值而不是准确值，这时可以使用 approx_count_distinct 函数，并可以使用第二个参数指定最大允许误差。
 
 ```scala
 empDF.select(approx_count_distinct("ename",0.1)).show()
 ```
 
-#### first & last
+###  first & last
 
 * 获取 DataFrame 中指定列的第一个值或者最后一个值。
 
@@ -265,7 +264,7 @@ empDF.select(approx_count_distinct("ename",0.1)).show()
 empDF.select(first("ename"),last("job")).show()
 ```
 
-#### min & max
+### min & max
 
 * 获取 DataFrame 中指定列的最小值或者最大值。
 
@@ -273,7 +272,7 @@ empDF.select(first("ename"),last("job")).show()
 empDF.select(min("sal"),max("sal")).show()
 ```
 
-#### sum & sumDistinct
+### sum & sumDistinct
 
 * 求和以及求指定列所有不相同的值的和。
 
@@ -282,7 +281,7 @@ empDF.select(sum("sal")).show()
 empDF.select(sumDistinct("sal")).show()
 ```
 
-#### avg
+### avg
 
 * 内置的求平均数的函数。
 
@@ -290,25 +289,26 @@ empDF.select(sumDistinct("sal")).show()
 empDF.select(avg("sal")).show()
 ```
 
-#### 聚合数据到集合
+### 聚合数据到集合
 
 ```scala
  empDF.agg(collect_set("job"), collect_list("ename")).show()
 ```
 
-## Join
+# Join
 
 Spark 中支持多种连接类型：
 
-* **Inner Join** : 内连接；
-* **Full Outer Join** : 全外连接；
-* **Left Outer Join** : 左外连接；
-* **Right Outer Join** : 右外连接；
-* **Left Semi Join** : 左半连接；
-* **Left Anti Join** : 左反连接；
-* **Natural Join** : 自然连接；
-* **Cross (or Cartesian) Join** : 交叉 (或笛卡尔) 连接。
++ **Inner Join** : 内连接；
++ **Full Outer Join** :  全外连接；
++ **Left Outer Join** :  左外连接；
++ **Right Outer Join** :  右外连接；
++ **Left Semi Join** :  左半连接；
++ **Left Anti Join** :  左反连接；
++ **Natural Join** :  自然连接；
++ **Cross (or Cartesian) Join** :  交叉 (或笛卡尔) 连接。
 
 其中内，外连接，笛卡尔积均与普通关系型数据库中的相同，如下图所示：
 
-![](https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/sql-join.jpg)
+<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/sql-join.jpg"/> </div>
+

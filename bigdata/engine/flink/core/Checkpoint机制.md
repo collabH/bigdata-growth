@@ -1,5 +1,4 @@
 # Checkpoint机制剖析
-
 ## 容错与状态
 
 ### Checkpoint
@@ -18,14 +17,20 @@
 #### 检查点算法
 
 * 一种简单的想法
-  * 暂停应用，保存状态到检查点，再重新恢复应用。
+
+    * 暂停应用，保存状态到检查点，再重新恢复应用。
+
 * Flink实现方式
-  * 基于Chandy-Lamport算法的分布式快照
-  * 将检查点的保存和数据处理分离开，不暂停整个应用，对Source进行`checkpoint barrier`控制
+
+    * 基于Chandy-Lamport算法的分布式快照
+    * 将检查点的保存和数据处理分离开，不暂停整个应用，对Source进行`checkpoint barrier`控制
+
 * 检查点屏障(Checkpoint Barrier)
-  * Flink的检查点算法用到一种称为屏障(barrier)的特殊数据形式，用来把一条流上数据按照不同的检查点分开。
-  * Barrier之前到来的数据导致的状态更改，都会被包含在当前分界线所属的检查点中；基于barrier之后的数据导致的所有更改，就会被包含在之后的检查点中。
-*   **检查点barrier流程**
+
+    * Flink的检查点算法用到一种称为屏障(barrier)的特殊数据形式，用来把一条流上数据按照不同的检查点分开。
+    * Barrier之前到来的数据导致的状态更改，都会被包含在当前分界线所属的检查点中；基于barrier之后的数据导致的所有更改，就会被包含在之后的检查点中。
+
+* **检查点barrier流程**
 
     * 有两个输入流的应用程序，并行的两个Source任务来读取，JobManager会向每个Source任务发送一个带有新checkpoint ID的消息，通过这种方式来启动checkpoint。
     * 数据源将它们的状态写入checkpoint，并发出一个`checkpointbarrier`，状态后端在状态存入checkpoint之后，会返回通知给source任务，source任务就会向JobManager确认checkpoint完成。
@@ -33,15 +38,16 @@
     * 当收到所有输入分区的barrier时，任务就将其状态保存到`状态后端的checkpoint中`，然后将barrier继续向下游转发，下游继续正常处理数据。
     * Sink任务向JobManager确认状态保存到checkpoint完毕，当所有任务都确认已成功将状态保存到checkpoint时，checkpoint完毕。
 
-    <img src="../img/checkpoint1.jpg" alt="checkpoint1" data-size="original">
+  ![checkpoint1](../img/checkpoint1.jpg)
 
-    <img src="../img/checkpoint2.jpg" alt="checkpoint1" data-size="original">
+  ![checkpoint1](../img/checkpoint2.jpg)
 
-    <img src="../img/checkpoint3.jpg" alt="checkpoint1" data-size="original">
+  ![checkpoint1](../img/checkpoint3.jpg)
 
 #### checkpoint配置
 
 * checkpoint默认情况下`仅用于恢复失败的作业，并不保留，当程序取消时checkpoint就会被删除`。可以通过配置来保留checkpoint，保留的checkpoint在作业失败或取消时不会被清除。
+
 * **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
 * **`ExternalizedCheckpointCleanup.DELETE_ON_CANCELLATION`**：当作业取消时，删除作业的 checkpoint。仅当作业失败时，作业的 checkpoint 才会被保留。
 
@@ -73,12 +79,12 @@ env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
 ```
 
 * **设置重启策略**
-  * noRestart
-  * fallBackRestart:回滚
-  * fixedDelayRestart: 固定延迟时间重启策略，在固定时间间隔内重启
-  * failureRateRestart: 失败率重启
+    * noRestart
+    * fallBackRestart:回滚
+    * fixedDelayRestart: 固定延迟时间重启策略，在固定时间间隔内重启
+    * failureRateRestart: 失败率重启
 
-**checkpoint存储目录**
+##### checkpoint存储目录
 
 * checkpoint由元数据文件、数据文件组成。通过`state.checkpoints.dir`配置元数据文件和数据文件存储路径，也可以在代码中设置。
 
@@ -95,13 +101,14 @@ env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
 ```
 
 * 其中 **SHARED** 目录保存了可能被多个 checkpoint 引用的文件，**TASKOWNED** 保存了不会被 JobManager 删除的文件，**EXCLUSIVE** 则保存那些仅被单个 checkpoint 引用的文件。
+
 * 从保留的checkpoint中恢复状态
 
 ```shell
 $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
 ```
 
-**flink-conf容错配置**
+##### flink-conf容错配置
 
 ```yaml
 state.backend: rocksdb
@@ -153,25 +160,25 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 * 使用YARN触发Savepoint,`flink savepoint :jobId [:targetDirctory] -yid :yarnAppId`
 * 使用savepoint取消作业,`flink cancel -s [:targetDirectory] :jobId`
 * 从savepoint恢复,`flink run -s :savepointPath [:runArgs]`
-  * \--allowNoRestoredState 跳过无法映射到新程序的状态
+    * --allowNoRestoredState 跳过无法映射到新程序的状态
 * 删除savepoint,`flink savepoint -d :savepointPath`
 
 ### 状态快照
 
 #### 概念
 
-* _快照_ – 是 Flink 作业状态全局一致镜像的通用术语。快照包括指向每个数据源的指针（例如，到文件或 Kafka 分区的偏移量）以及每个作业的有状态运算符的状态副本，该状态副本是处理了 sources 偏移位置之前所有的事件后而生成的状态。
-* _Checkpoint_ – 一种由 Flink 自动执行的快照，其目的是能够从故障中恢复。Checkpoints 可以是增量的，并为快速恢复进行了优化。
-* _外部化的 Checkpoint_ – 通常 checkpoints 不会被用户操纵。Flink 只保留作业运行时的最近的 _n_ 个 checkpoints（_n_ 可配置），并在作业取消时删除它们。但你可以将它们配置为保留，在这种情况下，你可以手动从中恢复。
-* _Savepoint_ – 用户出于某种操作目的（例如有状态的重新部署/升级/缩放操作）手动（或 API 调用）触发的快照。Savepoints 始终是完整的，并且已针对操作灵活性进行了优化
+- *快照* – 是 Flink 作业状态全局一致镜像的通用术语。快照包括指向每个数据源的指针（例如，到文件或 Kafka 分区的偏移量）以及每个作业的有状态运算符的状态副本，该状态副本是处理了 sources 偏移位置之前所有的事件后而生成的状态。
+- *Checkpoint* – 一种由 Flink 自动执行的快照，其目的是能够从故障中恢复。Checkpoints 可以是增量的，并为快速恢复进行了优化。
+- *外部化的 Checkpoint* – 通常 checkpoints 不会被用户操纵。Flink 只保留作业运行时的最近的 *n* 个 checkpoints（*n* 可配置），并在作业取消时删除它们。但你可以将它们配置为保留，在这种情况下，你可以手动从中恢复。
+- *Savepoint* – 用户出于某种操作目的（例如有状态的重新部署/升级/缩放操作）手动（或 API 调用）触发的快照。Savepoints 始终是完整的，并且已针对操作灵活性进行了优化
 
 #### 原理
 
-* 基于异步barrier快照(asynchronous barrier snapshotting),当 checkpoint coordinator（job manager 的一部分）指示 task manager 开始 checkpoint 时，它会让所有 sources 记录它们的偏移量，并将编号的 _checkpoint barriers_ 插入到它们的流中。这些 barriers 流经 job graph，标注每个 checkpoint 前后的流部分。
+* 基于异步barrier快照(asynchronous barrier snapshotting),当 checkpoint coordinator（job manager 的一部分）指示 task manager 开始 checkpoint 时，它会让所有 sources 记录它们的偏移量，并将编号的 *checkpoint barriers* 插入到它们的流中。这些 barriers 流经 job graph，标注每个 checkpoint 前后的流部分。
 
-![Checkpoint barriers are inserted into the streams](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream\_barriers.svg)
+![Checkpoint barriers are inserted into the streams](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream_barriers.svg)
 
-![Barrier alignment](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream\_aligning.svg)
+![Barrier alignment](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream_aligning.svg)
 
 * Flink 的 state backends 利用写时复制（copy-on-write）机制允许当异步生成旧版本的状态快照时，能够不受影响地继续流处理。只有当快照被持久保存后，这些旧版本的状态才会被当做垃圾回收。
 
@@ -196,19 +203,19 @@ checkpoint_start_delay = end_to_end_duration - synchronous_duration - asynchrono
 StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(milliseconds)
 ```
 
-![Illustration how the minimum-time-between-checkpoints parameter affects checkpointing behavior.](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/checkpoint\_tuning.svg)
+![Illustration how the minimum-time-between-checkpoints parameter affects checkpointing behavior.](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/checkpoint_tuning.svg)
 
 #### 优化RocksDB
 
-**增量checkpoint**
+##### 增量checkpoint
 
 * 开启rocksDB增量checkpoint可以减少checkpoint的时间。
 
-**定时器存储在RocksDB或JVM堆**
+##### 定时器存储在RocksDB或JVM堆
 
 * 默认情况下timers存储在rocksDB中，这是更健壮和可扩展的选择。当性能调优只有少量计时器(没有窗口，在ProcessFunction中不使用计时器)的任务时，将这些计时器放在堆中可以提高性能。要小心使用此特性，因为基于堆的计时器可能会增加检查点时间，而且自然不能扩展到内存之外。
 
-**优化RocksDB内存**
+##### 优化RocksDB内存
 
 * 默认情况下RocksDB状态后端使用Flink管理的RocksDBs缓冲区和缓存的内存预算`state.backend.rocksdb.memory.managed: true`
 * 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率
@@ -223,7 +230,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 ### 一致性分类
 
 * AT-MOST-ONCE 最多一次
-  * 当任务故障时，最简单的做法是什么都不敢，即不恢复丢失的状态，也不重播丢失的数据。
+    * 当任务故障时，最简单的做法是什么都不敢，即不恢复丢失的状态，也不重播丢失的数据。
 * AT-LEAST-ONCE 至少一次
 * EXACTLY-ONCE 精准一次
 
@@ -252,21 +259,21 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 * 从故障恢复时，数据不会重复写入外部系统
 * 幂等写入
 * 事务写入
-  * Write-Ahead-Log WAL
-    * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性写入sink系统
-    * 简单已于实现，由于数据提前在状态后端中做了缓存，所以无论什么sink系统，都能一批搞定
-    * DataStream API提供一个模版类:`GenericWriteAheadSink`来实现。
-    * 存在的问题，延迟性大，如果存在批量写入失败时需要考虑回滚重放。
-  * 2PAC（Two-Phase-Commit）
-    * 对于每个checkpoint，sink任务会启动一个事务，并将接下来所有接受的数据添加到事务里。
-    * 然后将这些数据写入外部sink系统，但不提交它们--这时只是"预提交"
-    * 当它收到checkpoint完成的通知时，它才正式提交事务，实现结果真正写入（参考checkpoint barrier sink端写入完成后的ack checkpoint通知）
-    * Flink提供`TwoPhaseCommitSinkFunction`接口,参考`FlinkKafkaProducer`
-    * 对外部sink系统的要求
-      * 外部sink系统提供事务支持，或者sink任务必须能够模拟外部系统上的事务
-      * 在checkpoint的间隔期间，必须能够开启一个事务并接收数据写入
-      * 在收到checkpoint完成的通知之前，事务必须时“等待提交”的状态。在故障恢复情况下，可能需要一些时间。如果这个时候sink系统关闭了事务，那么未提交的数据就丢失了。
-      * sink任务必须能在进程失败后恢复事务，提交事务时幂等操作。
+    * Write-Ahead-Log WAL
+        * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性写入sink系统
+        * 简单已于实现，由于数据提前在状态后端中做了缓存，所以无论什么sink系统，都能一批搞定
+        * DataStream API提供一个模版类:`GenericWriteAheadSink`来实现。
+        * 存在的问题，延迟性大，如果存在批量写入失败时需要考虑回滚重放。
+    * 2PAC（Two-Phase-Commit）
+        * 对于每个checkpoint，sink任务会启动一个事务，并将接下来所有接受的数据添加到事务里。
+        * 然后将这些数据写入外部sink系统，但不提交它们--这时只是"预提交"
+        * 当它收到checkpoint完成的通知时，它才正式提交事务，实现结果真正写入（参考checkpoint barrier sink端写入完成后的ack checkpoint通知）
+        * Flink提供`TwoPhaseCommitSinkFunction`接口,参考`FlinkKafkaProducer`
+        * 对外部sink系统的要求
+            * 外部sink系统提供事务支持，或者sink任务必须能够模拟外部系统上的事务
+            * 在checkpoint的间隔期间，必须能够开启一个事务并接收数据写入
+            * 在收到checkpoint完成的通知之前，事务必须时“等待提交”的状态。在故障恢复情况下，可能需要一些时间。如果这个时候sink系统关闭了事务，那么未提交的数据就丢失了。
+            * sink任务必须能在进程失败后恢复事务，提交事务时幂等操作。
 
 ### Flink+Kafka端到端一致性保证
 

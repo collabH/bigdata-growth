@@ -1,21 +1,19 @@
-# DebeziumOverView
-
-## 架构设计
+# 架构设计
 
 * source connector从debezium发送消息到kafka
 * sink connector将记录从kafka中发送到其他系统接收器
 
-![Debezium Architecture](https://debezium.io/documentation/reference/1.4/\_images/debezium-architecture.png)
+![Debezium Architecture](https://debezium.io/documentation/reference/1.4/_images/debezium-architecture.png)
 
-### Debezium Server
+## Debezium Server
 
 * 使用Debezium Server部署Debezium，这个Server是可配置的。
 
-![Debezium Architecture](https://debezium.io/documentation/reference/1.4/\_images/debezium-server-architecture.png)
+![Debezium Architecture](https://debezium.io/documentation/reference/1.4/_images/debezium-server-architecture.png)
 
-## Configuration
+# Configuration
 
-### Avro序列化
+## Avro序列化
 
 * Debezium的序列化根据Kafka配置的序列化方式
 
@@ -24,18 +22,18 @@ key.converter=org.apache.kafka.connect.json.JsonConverter
 value.converter=org.apache.kafka.connect.json.JsonConverter
 ```
 
-#### 关闭schemas的传递
+### 关闭schemas的传递
 
 * `key.converter.schemas.enable`：设置为false关闭key的schema传递
 * `value.converter.schemas.enable`：设置为false关闭value的schema传递
 
-#### Avro序列化的优势
+### Avro序列化的优势
 
 * Avro二进制格式是紧凑和有效的，并且可以保证每条记录的数据格式的正确。
 * 这对于Debezium连接器非常重要，它将动态生成每条记录的模式，以匹配已更改的数据库表的结构。
 * 变更的事件记录写入相同的topic可能有相同的schema不同的版本，avro更容易适用于变更的记录schema
 
-#### APIicurio API Schema Registry使用
+### APIicurio API Schema Registry使用
 
 * 使用avro序列化必须部署一个schema registry为了管理Avro消息schemas和他们的版本。
 
@@ -52,7 +50,7 @@ value.converter.apicurio.registry.url=http://apicurio:8080/api
 value.converter.apicurio.registry.global-id=io.apicurio.registry.utils.serde.strategy.GetOrCreateIdStrategy
 ```
 
-#### Confluent Schema Registry
+### Confluent Schema Registry
 
 * debezium connector配置
 
@@ -74,7 +72,7 @@ docker run -it --rm --name schema-registry \
     -p 8181:8181 confluentinc/cp-schema-registry
 ```
 
-### Topic路由
+## Topic路由
 
 * 每个kafka记录包含一个数据变更事件有一个默认定义的topic。如果需要重新发送到其他topic需要在在记录到kafkaConnector之前指定一个topic。
 * debezium提供的topic路由是单独消息转换，配置这个转换器在debezium的kafkaConnect配置中
@@ -82,12 +80,12 @@ docker run -it --rm --name schema-registry \
   * 一个解析到目标主题的表达式
   * 如何确保重新路由到目标主题的记录之间有唯一的密钥
 
-#### Use case
+### Use case
 
 * 默认debezium提供的topic的名字为:`debeziumname.database.tablename`
-* 对于PG的分区表关闭添加唯一键行为:`key.enforce.uniqueness=false`
+* 对于PG的分区表关闭添加唯一键行为:`key.enforce.uniqueness=false` 
 
-#### reroute配置
+### reroute配置
 
 ```properties
 transforms=Reroute
@@ -97,23 +95,23 @@ transforms.Reroute.topic.regex=(.*)customers_shard(.*)
 transforms.Reroute.topic.replacement=$1customers_all_shards
 ```
 
-**topic.regex**
+#### topic.regex
 
 * 指定将转换应用于每个更改事件记录的正则表达式，以确定是否应将其路由到特定主题。
 
-**topic.replacement**
+#### topic.replacement
 
 * 指定表示目标主题名称的正则表达式。转换将每个匹配的记录路由到由该表达式标识的主题。
 
-#### 满足唯一键
+### 满足唯一键
 
 * 一个debezium变更事件的key使用的是表的列作为表的主键，对于分库的表来说可能debezium的key是重复的。为了满足每个相同的key发送到相同的partition，topic路由转换插入一个字段`__dbz__physicalTableIdentifier`来保证，其默认为目标topic名称。
 * `transforms.Reroute.key.field.name=shard_id`设置其他唯一key名称。
 * 如果表包含全局唯一键，并且不需要更改键结构，则可以设置`key.enforcement.uniqueness`选项为false
 
-### 新记录状态提取
+## 新记录状态提取
 
-#### 改变时间结构
+### 改变时间结构
 
 * Debezium生成的数据变更事件是一个复杂的结构，每个事件包含三个部分
   * Metadata:进行更改的操作\数据源信息比如database、table名称/变更时间/可选的转换信息等
@@ -138,7 +136,7 @@ transforms.Reroute.topic.replacement=$1customers_all_shards
 }
 ```
 
-#### 配置
+### 配置
 
 * [相关配置](https://debezium.io/documentation/reference/1.3/configuration/event-flattening.html)
 
@@ -164,7 +162,7 @@ transforms.unwrap.add.fields=table,lsn
 }
 ```
 
-* `transforms.unwrap.add.fields` 在metadata中添加字段，包括`table`/`lsn`等
+* `transforms.unwrap.add.fields`  在metadata中添加字段，包括`table`/`lsn`等
 
 ```json
 {
@@ -177,19 +175,19 @@ transforms.unwrap.add.fields=table,lsn
 }
 ```
 
-### 自定义Topic自动创建
+## 自定义Topic自动创建
 
 * topic动态为offsets，connector status，config storge和history topics创建内部topics。目标topics为了捕获表将会动态创建一个默认的配置当kafka brokers的配置`auto.create.topics.enable`设置为`true`时
 * 发送`POST`请求的请求体配置
 
-#### 配置Kafka Connect
+### 配置Kafka Connect
 
 ```properties
 # 开启动态topic创建
 auto.topic.creation.enable = true
 ```
 
-**默认group配置**
+#### 默认group配置
 
 ```json
 {
@@ -204,7 +202,7 @@ auto.topic.creation.enable = true
 }
 ```
 
-**自定义group配置**
+#### 自定义group配置
 
 ```json
 {
@@ -229,7 +227,7 @@ auto.topic.creation.enable = true
 }
 ```
 
-**注册自定义group**
+#### 注册自定义group
 
 ```json
 {
@@ -241,7 +239,7 @@ auto.topic.creation.enable = true
 }
 ```
 
-**完整的配置**
+#### 完整的配置
 
 ```json
 {
@@ -265,19 +263,19 @@ auto.topic.creation.enable = true
 }
 ```
 
-## Connector
+# Connector
 
-### MySQL Connector
+## MySQL Connector
 
 * 由于通常将MySQL设置为在指定的时间段后清除binlog，因此MySQL连接器会对每个数据库执行初始的一致快照。 MySQL连接器从创建快照的位置读取binlog。
 * 当连接器崩溃或正常停止后重新启动时，连接器从特定位置(即从特定时间点)开始读取binlog。连接器通过读取数据库`历史Kafka topic`并`解析所有DDL语句`，重新构建了此时存在的表结构，直到binlog中连接器开始的位置。
 * database的history topic仅提供给connector使用，connnctor可以选择性的生成schema变更事件对于不同的topic提供给应用程序使用。
 
-#### 执行database快照
+### 执行database快照
 
 * 当连接器第一次启动时，它会对你的数据库执行一个初始一致的快照。
 
-**初始化快照执行流程**
+#### 初始化快照执行流程
 
 1. 获取阻止其他数据库客户端写操作的全局读锁。
 2. 使用可重复读语义启动事务，以确保事务内的所有后续读取都针对一致快照执行。
@@ -289,20 +287,20 @@ auto.topic.creation.enable = true
 8. 提交事务
 9. 在连接器偏移中记录完成的快照。
 
-**connector初始化过程失败**
+#### connector初始化过程失败
 
 * 如果连接器发生故障、停止或在生成初始快照时重新平衡，则连接器在重新启动后将创建一个新快照。一旦初始快照完成，Debezium MySQL连接器就会从binlog中的相同位置重新启动，这样它就不会错过任何更新。
 * 如果connector停止或者中断过程，mysql的binlog被清空，那么就会在发生一次初始化快照的过程。
 
-**全局读锁**
+#### 全局读锁
 
 * 有些环境不允许全局读锁。如果Debezium MySQL连接器检测到不允许全局读锁，连接器将使用表级锁，并使用该方法执行快照。
 
-#### 暴露Schema变更
+### 暴露Schema变更
 
 * 通过配置Debezium MySQL连接器去提供schema变更事件，其中包括应用于MySQL服务器数据库的所有DDL语句这个连接器写入这些事件到名为"serverName"的kafka topic中，serverName通过`database.server.name`配置
 
-**schema变更topic结构**
+#### schema变更topic结构
 
 * schema变更topic的key
 
@@ -443,9 +441,9 @@ auto.topic.creation.enable = true
 }
 ```
 
-### 事件
+## 事件
 
-#### create event
+### create event
 
 ```json
 {
@@ -631,7 +629,7 @@ auto.topic.creation.enable = true
 }
 ```
 
-#### update event
+### update event
 
 ```json
 {
@@ -672,7 +670,7 @@ auto.topic.creation.enable = true
 }
 ```
 
-#### delete event
+### delete event
 
 ```json
 {
@@ -707,72 +705,72 @@ auto.topic.creation.enable = true
 }
 ```
 
-**墓碑event**
+#### 墓碑event
 
-* 当一行被删除时，delete事件值仍然在日志压缩中工作，因为Kafka可以删除所有具有相同键的早期消息。然而，Kafka删除所有具有相同密钥的消息，消息值必须为空。为了实现这一点，Debezium MySQL连接器发出delete事件后，连接器发出一个特殊的tombstone事件，该事件具有相同的键，但为空值。
+* 当一行被删除时，delete事件值仍然在日志压缩中工作，因为Kafka可以删除所有具有相同键的早期消息。然而，Kafka删除所有具有相同密钥的消息，消息值必须为空。为了实现这一点，Debezium  MySQL连接器发出delete事件后，连接器发出一个特殊的tombstone事件，该事件具有相同的键，但为空值。
 
-### 映射数据类型
+## 映射数据类型
 
 * **literal type** : 值如何表示使用Kafka连接schema类型
 * **semantic type** : Kafka连接模式如何捕获字段(schema名)的含义
 
-| MySQL type          | Literal type        | Semantic type                                                                                                                                                                                                                                                                          |
-| ------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BOOLEAN, BOOL`     | `BOOLEAN`           | _n/a_                                                                                                                                                                                                                                                                                  |
-| `BIT(1)`            | `BOOLEAN`           | _n/a_                                                                                                                                                                                                                                                                                  |
-| `BIT(>1)`           | `BYTES`             | `io.debezium.data.Bits`The `length` schema parameter contains an integer that represents the number of bits. The `byte[]` contains the bits in _little-endian_ form and is sized to contain the specified number of bits.example (where n is bits)`numBytes = n/8 + (n%8== 0 ? 0 : 1)` |
-| `TINYINT`           | `INT16`             | _n/a_                                                                                                                                                                                                                                                                                  |
-| `SMALLINT[(M)]`     | `INT16`             | _n/a_                                                                                                                                                                                                                                                                                  |
-| `MEDIUMINT[(M)]`    | `INT32`             | _n/a_                                                                                                                                                                                                                                                                                  |
-| `INT, INTEGER[(M)]` | `INT32`             | _n/a_                                                                                                                                                                                                                                                                                  |
-| `BIGINT[(M)]`       | `INT64`             | _n/a_                                                                                                                                                                                                                                                                                  |
-| `REAL[(M,D)]`       | `FLOAT32`           | _n/a_                                                                                                                                                                                                                                                                                  |
-| `FLOAT[(M,D)]`      | `FLOAT64`           | _n/a_                                                                                                                                                                                                                                                                                  |
-| `DOUBLE[(M,D)]`     | `FLOAT64`           | _n/a_                                                                                                                                                                                                                                                                                  |
-| `CHAR(M)]`          | `STRING`            | _n/a_                                                                                                                                                                                                                                                                                  |
-| `VARCHAR(M)]`       | `STRING`            | _n/a_                                                                                                                                                                                                                                                                                  |
-| `BINARY(M)]`        | `BYTES` or `STRING` | _n/a_Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting                                      |
-| `VARBINARY(M)]`     | `BYTES` or `STRING` | _n/a_Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting                                      |
-| `TINYBLOB`          | `BYTES` or `STRING` | _n/a_Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting                                      |
-| `TINYTEXT`          | `STRING`            | _n/a_                                                                                                                                                                                                                                                                                  |
-| `BLOB`              | `BYTES` or `STRING` | _n/a_Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting                                      |
-| `TEXT`              | `STRING`            | _n/a_                                                                                                                                                                                                                                                                                  |
-| `MEDIUMBLOB`        | `BYTES` or `STRING` | _n/a_Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting                                      |
-| `MEDIUMTEXT`        | `STRING`            | _n/a_                                                                                                                                                                                                                                                                                  |
-| `LONGBLOB`          | `BYTES` or `STRING` | _n/a_Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting                                      |
-| `LONGTEXT`          | `STRING`            | _n/a_                                                                                                                                                                                                                                                                                  |
-| `JSON`              | `STRING`            | `io.debezium.data.Json`Contains the string representation of a `JSON` document, array, or scalar.                                                                                                                                                                                      |
-| `ENUM`              | `STRING`            | `io.debezium.data.Enum`The `allowed` schema parameter contains the comma-separated list of allowed values.                                                                                                                                                                             |
-| `SET`               | `STRING`            | `io.debezium.data.EnumSet`The `allowed` schema parameter contains the comma-separated list of allowed values.                                                                                                                                                                          |
-| \`YEAR\[(2          | 4)]\`               | `INT32`                                                                                                                                                                                                                                                                                |
-| `TIMESTAMP[(M)]`    | `STRING`            | `io.debezium.time.ZonedTimestamp`In [ISO 8601](https://www.iso.org/iso-8601-date-and-time-format.html) format with microsecond precision. MySQL allows `M` to be in the range of `0-6`.                                                                                                |
+| MySQL type          | Literal type        | Semantic type                                                |
+| :------------------ | :------------------ | :----------------------------------------------------------- |
+| `BOOLEAN, BOOL`     | `BOOLEAN`           | *n/a*                                                        |
+| `BIT(1)`            | `BOOLEAN`           | *n/a*                                                        |
+| `BIT(>1)`           | `BYTES`             | `io.debezium.data.Bits`The `length` schema parameter contains an integer that represents the number of bits. The `byte[]` contains the bits in *little-endian* form and is sized to contain the specified number of bits.example (where n is bits)`numBytes = n/8 + (n%8== 0 ? 0 : 1)` |
+| `TINYINT`           | `INT16`             | *n/a*                                                        |
+| `SMALLINT[(M)]`     | `INT16`             | *n/a*                                                        |
+| `MEDIUMINT[(M)]`    | `INT32`             | *n/a*                                                        |
+| `INT, INTEGER[(M)]` | `INT32`             | *n/a*                                                        |
+| `BIGINT[(M)]`       | `INT64`             | *n/a*                                                        |
+| `REAL[(M,D)]`       | `FLOAT32`           | *n/a*                                                        |
+| `FLOAT[(M,D)]`      | `FLOAT64`           | *n/a*                                                        |
+| `DOUBLE[(M,D)]`     | `FLOAT64`           | *n/a*                                                        |
+| `CHAR(M)]`          | `STRING`            | *n/a*                                                        |
+| `VARCHAR(M)]`       | `STRING`            | *n/a*                                                        |
+| `BINARY(M)]`        | `BYTES` or `STRING` | *n/a*Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting |
+| `VARBINARY(M)]`     | `BYTES` or `STRING` | *n/a*Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting |
+| `TINYBLOB`          | `BYTES` or `STRING` | *n/a*Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting |
+| `TINYTEXT`          | `STRING`            | *n/a*                                                        |
+| `BLOB`              | `BYTES` or `STRING` | *n/a*Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting |
+| `TEXT`              | `STRING`            | *n/a*                                                        |
+| `MEDIUMBLOB`        | `BYTES` or `STRING` | *n/a*Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting |
+| `MEDIUMTEXT`        | `STRING`            | *n/a*                                                        |
+| `LONGBLOB`          | `BYTES` or `STRING` | *n/a*Either the raw bytes (the default), a base64-encoded String, or a hex-encoded String, based on the [binary handling mode](https://debezium.io/documentation/reference/1.3/connectors/mysql.html#mysql-property-binary-handling-mode) setting |
+| `LONGTEXT`          | `STRING`            | *n/a*                                                        |
+| `JSON`              | `STRING`            | `io.debezium.data.Json`Contains the string representation of a `JSON` document, array, or scalar. |
+| `ENUM`              | `STRING`            | `io.debezium.data.Enum`The `allowed` schema parameter contains the comma-separated list of allowed values. |
+| `SET`               | `STRING`            | `io.debezium.data.EnumSet`The `allowed` schema parameter contains the comma-separated list of allowed values. |
+| `YEAR[(2|4)]`       | `INT32`             | `io.debezium.time.Year`                                      |
+| `TIMESTAMP[(M)]`    | `STRING`            | `io.debezium.time.ZonedTimestamp`In [ISO 8601](https://www.iso.org/iso-8601-date-and-time-format.html) format with microsecond precision. MySQL allows `M` to be in the range of `0-6`. |
 
-### 表对应的topic
+## 表对应的topic
 
 * 一个表对应一个topic，格式为`serverName.databaseName.tableName`
 
-### 支持的MySQL拓扑
+## 支持的MySQL拓扑
 
-#### _Standalone_
+### *Standalone*
 
 * 当使用一个MySQL服务器时，该服务器必须启用binlog(可选启用GTIDs)，以便Debezium MySQL连接器可以监视服务器。这通常是可以接受的，因为二进制日志还可以用作增量备份。在这种情况下，MySQL连接器总是连接并遵循这个独立的MySQL服务器实例。
 
-#### _Primary and replica_
+### *Primary and replica*
 
 * Debezium MySQL连接器可以跟随一个主服务器或一个副本(如果该副本启用了binlog)，但是连接器只能看到集群中对该服务器可见的更改。通常，除了多主拓扑之外，这不是问题。
 * 连接器记录其在服务器binlog中的位置，这在集群中的每个服务器上都是不同的。因此，连接器将只需要遵循一个MySQL服务器实例。如果该服务器发生故障，必须重新启动或恢复该服务器，连接器才能继续运行。
 
-#### _High available clusters_
+### *High available clusters*
 
 * MySQL有各种各样的高可用性解决方案，它们使其更容易容忍，几乎可以立即从问题和故障中恢复。大多数HA MySQL集群使用GTIDs，以便副本能够跟踪任何主服务器上的所有更改。
 
-#### _Multi-primary_
+### *Multi-primary*
 
-#### _Hosted_
+### *Hosted*
 
-### 配置MYSQL服务端
+## 配置MYSQL服务端
 
-#### 为Debezium创建一个MySQL用户
+### 为Debezium创建一个MySQL用户
 
 ```sql
 -- 创建用户
@@ -785,7 +783,7 @@ GRANT SELECT, RELOAD, SHOW DATABASES, REPLICATION SLAVE, REPLICATION CLIENT ON *
 FLUSH PRIVILEGES;
 ```
 
-#### 开启binlog
+### 开启binlog
 
 ```sql
 -- 检查log-bin是否开启
@@ -802,7 +800,7 @@ binlog_row_image  = FULL
 expire_logs_days  = 10 
 ```
 
-#### 开启全局事务标识
+### 开启全局事务标识
 
 * 全局事务标识符(GTIDs)唯一地标识集群内服务器上发生的事务。虽然Debezium MySQL连接器不需要GTIDs，但使用GTIDs可以简化复制，并允许您更容易地确认主服务器和副本服务器是否一致。
 
@@ -813,33 +811,33 @@ enforce_gtid_consistency=ON
 show global variables like '%GTID%';
 ```
 
-#### 设置会话超时时间
+### 设置会话超时时间
 
 ```properties
 interactive_timeout=<duration-in-seconds>
 wait_timeout= <duration-in-seconds>
 ```
 
-#### 开启查询log event
+### 开启查询log event
 
 ```properties
 binlog_rows_query_log_events=ON
 ```
 
-### 部署Mysql connector
+## 部署Mysql connector
 
-#### 安装Mysql Connector
+### 安装Mysql Connector
 
-**必需环境**
+#### 必需环境
 
 * zk、kafka、kafka-connect、Mysql Server
 
-**提供**
+#### 提供
 
 * 将[mysql connector插件](https://repo1.maven.org/maven2/io/debezium/debezium-connector-mysql/1.3.0.Final/debezium-connector-mysql-1.3.0.Final-plugin.tar.gz)放入到kafkaConnect环境中
 * 添加kafka connect配置`plugin.path=/kafka/connect`
 
-#### 配置Mysql connector
+### 配置Mysql connector
 
 * 监听`inventory`库
 
@@ -863,7 +861,7 @@ binlog_rows_query_log_events=ON
 ```
 
 * 将配置添加至kafka connect
-  * 使用[kafka connect restful api](https://kafka.apache.org/documentation/#connect\_rest)
+  * 使用[kafka connect restful api](https://kafka.apache.org/documentation/#connect_rest)
 
 ```
 1. Method：POST，URL：http://ip:port/connectors 提交connector
@@ -915,3 +913,4 @@ binlog_rows_query_log_events=ON
     }
 }
 ```
+
