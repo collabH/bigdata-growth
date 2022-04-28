@@ -115,17 +115,17 @@ description: 知识库概览
 * [Hadoop广义生态系统](https://github.com/collabH/repository/blob/master/bigdata/hadoop/Hadoop%E5%B9%BF%E4%B9%89%E7%94%9F%E6%80%81%E7%B3%BB%E7%BB%9F.xmind)
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
 * [HadoopCommon分析](https://github.com/collabH/repository/blob/master/bigdata/hadoop/HDFS/HadoopCommon%E5%8C%85%E5%88%86%E6%9E%90.pdf)
-* [HDFS集群相关管理](bigdata/hadoop/HDFS/HDFS集群管理.md)
+* [HDFS集群相关管理](bigdata/hadoop/hdfs/hdfs-ji-qun-guan-li.md)
 * [HDFS Shell](<bigdata/hadoop/HDFS/HDFS Shell命令.md>)
 
 **MapReduce**
 
-* [分布式处理框架MapReduce](bigdata/hadoop/MapReduce/分布式处理框架MapReduce.md)
+* [分布式处理框架MapReduce](bigdata/hadoop/mapreduce/fen-bu-shi-chu-li-kuang-jia-mapreduce.md)
 * [MapReduce概览](https://github.com/collabH/repository/blob/master/bigdata/hadoop/MapReduce/MapReduceOverView.xmind)
 * [MapReduce调优](https://github.com/collabH/repository/blob/master/bigdata/hadoop/MapReduce/MapReduce%E8%B0%83%E4%BC%98.xmind)
 * [MapReduce数据相关操作](bigdata/hadoop/MapReduce/MapReduce数据操作.md)
-* [MapReduce输入输出剖析](bigdata/hadoop/MapReduce/MapReduce输入输出剖析.md)
-* [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
+* [MapReduce输入输出剖析](bigdata/hadoop/mapreduce/mapreduce-shu-ru-shu-chu-pou-xi.md)
+* [MapReduce的工作机制](bigdata/hadoop/mapreduce/mapreduce-de-gong-zuo-yuan-li-pou-xi.md)
 
 **Yarn**
 
@@ -134,7 +134,7 @@ description: 知识库概览
 **生产配置**
 
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
-* [Hadoop生产相关配置](bigdata/hadoop/Hadoop相关组件生产级别配置.md)
+* [Hadoop生产相关配置](bigdata/hadoop/yarn/hadoop-xiang-guan-zu-jian-sheng-chan-ji-bie-pei-zhi.md)
 
 #### Engine
 
