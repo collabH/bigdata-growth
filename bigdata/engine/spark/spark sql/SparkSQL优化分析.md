@@ -28,7 +28,7 @@
 * 数据倾斜会严重降低join查询的性能。该特性通过将倾斜的任务拆分(如果需要，还可以复制)为大小大致相同的任务来动态处理sort-merge join中的倾斜。当`spark.sql.adaptive.enabled` 和 `spark.sql.adaptive.skewJoin.enabled`配置同时启用时生效。
 * `spark.sql.adaptive.skewJoin.enabled`当和`spark.sql.adaptive.enabled`同时为true时，spark会通过分裂(必要时复制)倾斜分区来动态处理sort-merge join的倾斜分区。
 * `spark.sql.adaptive.skewJoin.skewedPartitionFactor`，如果一个分区的大小大于这个因子乘以分区中值大小，并且大于`spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`，则认为该分区是倾斜的。
-* `spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`,如果分区的字节大小大于这个阈值，并且大于spark.sql.adaptive.skewJoin.skewedPartitionFactor乘以分区大小中值，则认为分区是倾斜的。理想情况下，这个配置应该设置比`spark.sql.adaptive.advisoryPartitionSizeInBytes`大。
+* `spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`,如果分区的字节大小大于这个阈值，并且大于`spark.sql.adaptive.skewJoin.skewedPartitionFactor`乘以分区大小中值，则认为分区是倾斜的。理想情况下，这个配置应该设置比`spark.sql.adaptive.advisoryPartitionSizeInBytes`大。
 
 # RBO(Rule-base Optimization)
 
