@@ -5,6 +5,7 @@
 ## 合并shuffle后的分区
 
 * 通过设置`spark.sql.adaptive.enabled` 和`spark.sql.adaptive.coalescePartitions.enabled`为`true`开启shuffle分区合并，基于map端输出分析合并shuffle后的分区。不需要在通过`spark.shuffle.partition`设置特定的分区数，只需要设置`spark.sql.adaptive.coalescePartitions.initialPartitionNum`初始化分区配置spark就可以找到他合适的分区数。
+* 合并的分区为了保证IO顺序读写只会合并相邻的partition，并且spark提供个一个mapper可以读取多个分区的接口，保证读取多个合并的partition的时候只经过一次IO。
 
 | Property Name                                               | Default | Meaning                                                      | Since Version |
 | :---------------------------------------------------------- | :------ | :----------------------------------------------------------- | :------------ |
