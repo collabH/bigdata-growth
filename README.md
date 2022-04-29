@@ -9,7 +9,7 @@
 ## 概述
 
 * 个人学习知识库涉及到数据仓库建模、实时计算、大数据、Java、算法等。
-* [在线文档](https://repository-1.gitbook.io/bigdata-growth/)
+* [在线文档](https://shimin-huang.gitbook.io/doc/)
 
 ## RoadMap
 
