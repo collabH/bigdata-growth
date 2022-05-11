@@ -73,12 +73,12 @@
 * 生命周期
   * constructor -> onStart -> receive* -> onStop
 
-```
+```shell
 -- main
   -- 模式匹配设置参数
   -- run 运行executor
   	--onStart
-  		-- ref.ask[Boolean](RegisterExecutor(executorId, self, hostname, cores, extractLogUrls)) ask反向注册
+  		-- ref.ask[Boolean](RegisterExecutor(executorId, self, hostname, cores, extractLogUrls)) ask反向注册 监听事件
   	--receive
   	  -- case RegisteredExecutor
   	     --new Executor
