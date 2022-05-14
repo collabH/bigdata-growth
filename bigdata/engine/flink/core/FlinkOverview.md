@@ -20,22 +20,22 @@
 
 ## Flink和SparkStreaming区别
 
-* stream and micro-batching
+* stream and micro-batching(流和微批)
 
 ![SparkStreamingVsFlink](../img/SparkStreamingVsFlink.jpg)
 
 * 数据模型
-  * spark采用RDD模型，spark Streaming的DStream相当于对RDD序列的操作，是一小批一小批的RDD集合。
+  * spark采用RDD模型，spark Streaming的DStream相当于对RDD序列的操作，是一小批一小批的RDD集合统称为DStream(离散流)
   * flink基本数据模型是数据流，以及事件序列。
 * 运行时架构
-  * spark是批计算，将DAG划分为不同的stage，一个stage完成后才可以计算下一个。
-  * flink是标准的流执行模式，一个事件在一个节点处理完后可以直接发往下一个节点进行处理。
+  * spark是批计算，将DAG划分为不同的stage，一个stage完成后才可以计算下一个，通过BFS方式进行调度。
+  * flink是标准的流执行模式，一个事件在一个节点处理完后可以直接发往下一个节点进行处理，operator粒度
 
 # Flink集群架构
 
 ## 核心组件
 
-按照上面的介绍，Flink 核心架构的第二层是 Runtime 层， 该层采用标准的 Master - Slave 结构， 其中，Master 部分又包含了三个核心组件：Dispatcher、ResourceManager 和 JobManager，而 Slave 则主要是 TaskManager 进程。它们的功能分别如下：
+按照上面的介绍，Flink 核心架构的第二层是 Runtime 层， 该层采用标准的 **Master - Slave** 结构， 其中，Master 部分又包含了三个核心组件：**Dispatcher、ResourceManager 和 JobManager**，而 Slave 则主要是 **TaskManager** 进程。它们的功能分别如下：
 
 - **JobManagers** (也称为 *masters*) ：JobManagers 接收由 Dispatcher 传递过来的执行程序，该执行程序包含了作业图 (JobGraph)，逻辑数据流图 (logical dataflow graph) 及其所有的 classes 文件以及第三方类库 (libraries) 等等 。紧接着 JobManagers 会将 JobGraph 转换为执行图 (ExecutionGraph)，然后向 ResourceManager 申请资源来执行该任务，一旦申请到资源，就将执行图分发给对应的 TaskManagers 。因此每个作业 (Job) 至少有一个 JobManager；高可用部署下可以有多个 JobManagers，其中一个作为 *leader*，其余的则处于 *standby* 状态。
 - **TaskManagers** (也称为 *workers*) : TaskManagers 负责实际的子任务 (subtasks) 的执行，每个 TaskManagers 都拥有一定数量的 slots。Slot 是一组固定大小的资源的合集 (如计算能力，存储空间)。TaskManagers 启动后，会将其所拥有的 slots 注册到 ResourceManager 上，由 ResourceManager 进行统一管理。
@@ -48,7 +48,7 @@
 
 上面我们提到：TaskManagers 实际执行的是 `SubTask`，而不是` Task`，这里解释一下两者的区别：
 
-* 在执行分布式计算时，Flink 将可以链接的操作 (operators) 链接到一起，这就是 Task。之所以这样做， 是为了减少线程间切换和缓冲而导致的开销，在降低延迟的同时可以提高整体的吞吐量。 但不是所有的 operator 都可以被链接，如下 keyBy 等操作会导致网络 shuffle 和重分区，因此其就不能被链接，只能被单独作为一个 Task。  简单来说，一个 Task 就是一个可以链接的最小的操作链 (Operator Chains) 。如下图，source 和 map 算子被链接到一块，因此整个作业就只有三个 Task：
+* 在执行分布式计算时，Flink 将可以链接的算子 (operators) 链接到一起，这就是 Task。之所以这样做， 是为了减少线程间切换和缓冲而导致的开销，在降低延迟的同时可以提高整体的吞吐量。 但不是所有的 operator 都可以被链接，如下 keyBy 等操作会导致网络 shuffle 和重分区（类似于Spark根据宽窄依赖区分Stage），因此其就不能被链接，只能被单独作为一个 Task。  简单来说，一个 Task 就是一个可以链接的最小的操作链 (Operator Chains) 。如下图，source 和 map 算子被链接到一块，因此整个作业就只有三个 Task：
 
 <div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-task-subtask.png"/> </div>
 
@@ -70,6 +70,8 @@
 * 可以看到一个 Task Slot 中运行了多个 SubTask 子任务，此时每个子任务仍然在一个独立的线程中执行，只不过共享一组 Sot 资源而已。那么 Flink 到底如何确定一个 Job 至少需要多少个 Slot 呢？Flink 对于这个问题的处理很简单，默认情况一个 Job 所需要的 Slot 的数量就等于其 Operation 操作的最高并行度。如下， A，B，D 操作的并行度为 4，而 C，E 操作的并行度为 2，那么此时整个 Job 就需要至少四个 Slots 来完成。通过这个机制，Flink 就可以不必去关心一个 Job 到底会被拆分为多少个 Tasks 和 SubTasks。
 
 <div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-task-parallelism.png"/> </div>
+
+* 资源比例：1 task: n subtask, 1 subtask: 1 slot,但是可以存在slot共享的情况，如果subtask对应的并行度一直不存在shuffle情况则可以共享一个slot。
 
 ## 组件通讯
 
@@ -114,17 +116,14 @@ hadoop2
 
 ### 集群命令
 
-#### 启动集群
-
-* bin/start-cluster.sh和bin/stop-cluster.sh
-
-#### 添加JobManager
-
-* bin/jobmanager.sh ((start|start-foreground) [host] [webui-port])|stop|stop-all
-
-#### 添加taskManager
-
-* bin/taskmanager.sh start|start-foreground|stop|stop-all
+```shell
+# 启动集群
+bin/start-cluster.sh和bin/stop-cluster.sh
+## 添加jm
+bin/jobmanager.sh ((start|start-foreground) [host] [webui-port])|stop|stop-all
+## 添加tm
+bin/taskmanager.sh start|start-foreground|stop|stop-all
+```
 
 ## Yarn模式
 
@@ -135,12 +134,12 @@ hadoop2
 export HADOOP_CLASSPATH=/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/etc/hadoop:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/common/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/common/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/hdfs/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/yarn/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/yarn/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/mapreduce/lib/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/share/hadoop/mapreduce/*:/Users/babywang/Documents/reserch/studySummary/module/hadoop-2.8.5/contrib/capacity-scheduler/*.jar:/Users/babywang/Documents/reserch/studySummary/module/hbase/hbase-1.6.0/lib
 ```
 
-* 下载`flink-shaded-hadoop-2-uber-2.8.3-10.0.jar`放在lib下
+* 下载`flink-shaded-hadoop-2-uber-2.8.3-10.0.jar`放在lib下，1.10.x版本之后无需再讲hadoop相关jar防止flinkHome的lib下
 
 ### Session模式
 
 * Session-Cluster模式需要先启动集群，然后再提交作业，接着会向yarn申请一块空间后，资源永远保持不变。如果资源满了，下个作业就无法提交类似于standalone模式。
-* 所有作业共享Dispatcher和RM，共享资源，适合小规模执行时间短的作业。
+* 所有作业共享**Dispatcher和RM**，共享资源，适合小规模执行时间短的作业。
 
 ```shell
 yarn-session.sh
@@ -174,11 +173,11 @@ flink run
 	-t 执行模式， "collection", "remote", "local","kubernetes-session", "yarn-per-job", "yarn-session","yarn-application" and "kubernetes-application"
 ```
 
-* yarn.per-job-cluster.include-user-jar 用户jar包
+* `yarn.per-job-cluster.include-user-jar` 用户jar包
 
 ### Pre-Job-Cluster模式
 
-* 耦合Job会对应一个集群，每提交一个作业会根据自身的情况，都会单独向yarn申请资源，直到作业执行完成，一个作业的失败与否不会影响下一个作业的正常提交和运行。
+* 整个Job会对应一个集群，每提交一个作业会根据自身的情况，都会单独向yarn申请资源，直到作业执行完成，一个作业的失败与否不会影响下一个作业的正常提交和运行。
 * 独享Dispatcher和RM，按需接受资源申请，适合规模大长时间运行的作业。
 
 ```shell
@@ -264,19 +263,19 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 
 ### 运行时组件
 
-* JobManager,作业管理器
+* JobManager
   * 控制应用程序的主进程，每个应用程序会被一个不同的JobManager所控制执行。
   * JobManger会先接收到执行的应用程序，这个应用程序包含：作业图(JobGrap)、逻辑数据流图(logic dataflow graph)和打包了所有的类、库和其他资源的jar包。
   * jobManager会把JobGraph转换成一个物理层面的数据流图，这个图被叫做“执行图”（ExecutionGraph），包含了所有可以并行执行的任务。
   * JobManager会向RM请求执行任务必要的资源，就是tm所需的slot。一旦获取足够的资源，就会将执行图分发到真正运行它们的tm上。运行过程中，Jm负责所需要中央协调的操作，比如checkpoint、savepoint的元数据存储等。
-* TaskManager，任务管理器
+* TaskManager
   * 任务管理器中资源调度的最小单元是taskSlot。taskManager中的taskSlot数表示并发处理任务的数量。
   * flink的工作进程存在多个，每个存在多个slot，slot的个数限制了tm执行任务的数量。
   * 启动后tm向rm注册它的slot，收到rm的指令后，tm会将一个或多个slot提供给jm调用。jm可以向slot分配tasks来执行。
   * 执行的过程中，一个tm可以跟其他运行同一个应用程序的tm交换数据。
-* ResourceManager，资源管理器
+* ResourceManager
   * ResourceManager负责Flink集群中的资源取消/分配和供应-它管理任务插槽，这些任务插槽是Flink集群中资源调度的单位（请参阅TaskManagers）。 Flink为不同的环境和资源提供者（例如YARN，Mesos，Kubernetes和独立部署）实现了多个ResourceManager。 在独立设置中，ResourceManager只能分配可用TaskManager的插槽，而不能自行启动新的TaskManager。
-* Dispatcher，分发器
+* Dispatcher
   * 可以跨作业运行，它为应用提交提供了REST接口。
   * 当一个应用被提交执行时，分发器就会启动并将应用移交给一个JM。
   * Dispatcher会启动一个Web UI，用来方便的展示和监听作业执行的信息。
@@ -353,8 +352,8 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 
 ### 任务链(operator chains)
 
-* Flink采用一种称为任务链的优化技术，可以在特定条件下减少本地通信的开销。为了满足任务链的要求，必须将两个或多个算子设为相同的并行度，并通过本地转发(local forward)的方式进行连接。
-* `相同的并行度`的one-to-one操作，flink这样相连的算子链接在一起形成一个task，原来的算子成为里面的subtask。
+* Flink采用一种称为任务链的优化技术，可以在特定条件下减少本地通信的开销。为了满足任务链的要求，必须将两个或多个算子设为**相同的并行度，并通过本地转发(local forward)的方式**进行连接。
+* `相同的并行度`的one-to-one操作，flink这样**相连的算子链接在一起形成一个task**，原来的算子成为里面的subtask。
 * `并行度相同，并且是one-to-one`操作，可以将俩个task合并。
 
 ![执行图](../img/任务链.jpg)
