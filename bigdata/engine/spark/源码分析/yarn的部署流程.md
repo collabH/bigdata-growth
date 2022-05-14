@@ -1,6 +1,6 @@
 # SparkSubmit
 
-```
+```shell
 -- main 启动进程
 	--new SparkSubmitArguments //封装启动参数
 	--submit //提交
@@ -15,12 +15,12 @@
 	      --将maven jar包添加至classpath下
 	  -- mainClass = Utils.classForName(childMainClass) 反射加载类，childMainClass就是参数指定的-class配置
 	  -- mainClass.getConstructor().newInstance().asInstanceOf[SparkApplication]& new JavaMainApplication(mainClass) 根据main方法创建SparkApplication
-	  -- mainMethod.invoke(null, args)
+	  -- mainMethod.invoke(null, args) 调用main方法入口，启动driver
 ```
 
 # Client
 
-```
+```shell
 --main 主方法
 	--new ClientArguments(args) 封装client参数
 		--parse 解析启动参数
@@ -40,7 +40,7 @@
 
 # ApplicationMaster
 
-```
+```shell
 --main
 	-- new ApplicationMasterArguments 封装am的参数
 	// 创建ApplicationMaster对象
@@ -73,12 +73,12 @@
 * 生命周期
   * constructor -> onStart -> receive* -> onStop
 
-```
+```shell
 -- main
   -- 模式匹配设置参数
   -- run 运行executor
   	--onStart
-  		-- ref.ask[Boolean](RegisterExecutor(executorId, self, hostname, cores, extractLogUrls)) ask反向注册
+  		-- ref.ask[Boolean](RegisterExecutor(executorId, self, hostname, cores, extractLogUrls)) ask反向注册 监听事件
   	--receive
   	  -- case RegisteredExecutor
   	     --new Executor

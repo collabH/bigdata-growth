@@ -62,7 +62,7 @@ val schedulableQueue = new ConcurrentLinkedQueue[Schedulable]
 
 ## 本地化调度
 
-* DAGScheduler切割Job，划分Stage，通过调用submitStage来提交一个Stage对应的taskset，subStage会调用submitMissingTasks，submitMissingTasks确定每个需要计算的task的preferredLocations(数据本地化调度)，通过调用getPreferrdeLocations()得到partition的优先位置，**partition对应一个task，此partition的优先位置就是task的优先位置**，对于要提交到TaskScheduler的TaskSet中的每一个task,该task优先位置与其parittion对应的优先位置一致。
+* DAGScheduler切割Job，划分Stage，通过调用submitStage来提交一个Stage对应的taskSet，subStage会调用submitMissingTasks，submitMissingTasks确定每个需要计算的task的preferredLocations(数据本地化调度)，通过调用getPreferrdeLocations()得到partition的优先位置，**partition对应一个task，此partition的优先位置就是task的优先位置**，对于要提交到TaskScheduler的TaskSet中的每一个task,该task优先位置与其parittion对应的优先位置一致。
 
 ## 失败重试与黑名单机制
 
@@ -109,7 +109,7 @@ ExecutorBackend
   1. map task执行完毕后会将计算状态及磁盘小文件位置等信息封装到MapStatus对象中，然后由本进程中的MapOutPutTrackerWorker对象将mapStatus对象发送给Driver进程的MapOutPutTrackerMaster对象；
   2. **在reduce task开始执行之前会让本进程中的MapOutPutTrackerWorker向Driver进程中的MapOutPutTrackerMaster发请求，请求磁盘小文件信息；**
   3. **当所有的Map task执行完毕后，Driver进程中的MapOutPutTrackerMaster就拿到了所有map端输出的磁盘小文件信息**，此时就会将消息发送给请求过来的MapOutPutTrackerWorker。
-  4. 完成之前的操作之后，由BlockTransforService去Executor0所在的节点拉数据，默认启动5个子线程。每次拉取的数据量不能超过48M(reduce task每次最多拉取48M数据，将拉取来的数据存储到Executor内存的20%内存中)。
+  4. 完成之前的操作之后，由BlockTransforService去Executor所在的节点拉数据，默认启动5个子线程。每次拉取的数据量不能超过48M(reduce task每次最多拉取48M数据，将拉取来的数据存储到Executor内存的20%内存中)。
 
   ```
   --BlockStoreShuffleReader
