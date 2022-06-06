@@ -40,8 +40,6 @@ table.executeInsert()
     }
 ```
 
-
-
 * 基于TableEnvironment做操作
   * 注册Catalog
   * 在Catalog中注册表
@@ -145,11 +143,11 @@ table.executeInsert()
 
 #### Flink SQL优化器优化方式
 
-##### Expression Reduce
+##### Expression Reduce（Spark类似操作，常数优化）
 
 * 表达式（Expression） 是 SQL 中最常见的语法。比如 t1.id 是一个表达式， 1 + 2 + t1.value 也是一个表达式。优化器在优化过程中会递归遍历树上节点，尽可能预计算出每个表达式的值，这个过程就称为表达式折叠。这种转换在逻辑上等价，通过优化后，真正执行时不再需要为每一条记录都计算一遍 1 + 2。
 
-##### PushDown Optimization
+##### PushDown Optimization(Rule-Based Optimization(RBO))
 
 * 下推优化是指在保持关系代数语义不变的前提下将 SQL 语句中的变换操作尽可能下推到靠近数据源的位置以获得更优的性能，常见的下推优化有谓词下推（Predicate Pushdown），投影下推（Projection Pushdown，有时也译作列裁剪）等。
 * Predicate Pushdown（谓词下推）
@@ -160,7 +158,7 @@ table.executeInsert()
 
 ### Physical Planning on Batch
 
-* 逻辑执行计划描述了执行步骤和每一步需要完成的操作，但没有描述操作的具体实现方式。而物理执行计划会考虑物理实现的特性，生成每一个操作的具体实现方式。比如 Join 是使用 SortMergeJoin、HashJoin 或 BroadcastHashJoin 等。优化器在生成逻辑执行计划时会计算整棵树上每一个节点的 Cost，对于有多种实现方式的节点（比如 Join 节点），优化器会展开所有可能的 Join 方式分别计算。最终整条路径上 Cost 最小的实现方式就被选中成为 Final Physical Plan。
+* 逻辑执行计划描述了执行步骤和每一步需要完成的操作，但没有描述操作的具体实现方式。而物理执行计划会考虑物理实现的特性，生成每一个操作的具体实现方式。比如 Join 是使用 SortMergeJoin、HashJoin 或 BroadcastHashJoin 等。优化器在生成逻辑执行计划时会计算整棵树上每一个节点的 Cost，对于有多种实现方式的节点（比如 Join 节点），优化器会展开所有可能的 Join 方式分别计算。最终整条路径上 Cost 最小的实现方式就被选中成为 Final Physical Plan。Cost-Based Optimization(CBO)
 
 ### Translation&Code Generation
 
@@ -189,11 +187,11 @@ table.executeInsert()
 
 * 查询优化器分为两类：基于规则的优化器(Rule-Base Optimizer,RBO)和基于代价的优化器(Cost-Based Optimizer,CBO);
 
-#### RBO
+#### RBO（Rule-Based Optimization）
 
 * RBO根据事先设定好的优化规则对SQL计划树进行转换，降低计算成本。只要SQL语句相同，应用完规则就会得到相同的SQL物理执行计划，也就是说RBO并不考虑数据的规模、数据倾斜等问题，对数据不敏感，导致优化后的执行计划往往并不是最优的。这就要求SQL的使用者了解更多的RBO的规则，使用门槛更高。
 
-#### CBO
+#### CBO（Cost-Based Optimization）
 
 * CBO优化器根据事先设定好的优化规则对SQL计划树反复应用规则，SQL语句生成一组可能被使用的执行计划，然后CBO会根据统计信息和代价模型（Cost Model）计算每个执行计划的代价，从中挑选代价最小的执行计划。由上可知，CBO中有两个依赖：统计信息和代价模型。统计信息的准确与否、代价模型的合理与否都会影响CBO选择最优计划。
 * 一般情况下，CBO是优于RBO的，原因是RBO是一种只认规则，只针对数据不敏感的过时的优化器。在实际场景中，数据往往是有变化的，通过RBO生成的执行计划很有可能不是最优的。
@@ -243,7 +241,7 @@ WHERE rowNum <= 3
 
 * Table:Table APIDE核心接口
 * GroupedTable:在Table上使用列、表达式(不包含时间窗口)、两者组合进行分组之后的Table，可以理解为对Table进行GroupBy运算。
-* GroupWindowedTable:使用格式件窗口分组后的Table，按照时间对数据进行切分，时间窗口必须是GroupBy中的第一项，且每个GroupBy只支持一个窗口。
+* GroupWindowedTable:使用格式将窗口分组后的Table，按照时间对数据进行切分，**时间窗口**必须是GroupBy中的第一项，且每个GroupBy只支持一个窗口。
 * WindowedGroupTable:GroupWindowdTable和WindowedGroupTable一般组合使用，在GroupWindowedTable上再按照字段进行GroupBy运算后的Table
 * AggregatedTable:对分组之后的Table（如GroupedTable和WindowedGroupTable）执行AggregationFunction聚合函数的结果
 * FlatAggregateTable:对分组之后的Table（如GroupedTable和WindowedGroupTable）执行TableAggregationFunction（表聚合函数）的结果
@@ -486,7 +484,7 @@ configuration.setString("table.exec.mini-batch.size", "5000"); // the maximum nu
 
 ## Local-Global 聚合
 
-* Local-global聚合是为解决数据倾斜问题，通过将一组聚合氛围两个阶段，首先在上游进行本地聚合，然后在下游进行全局聚合，类似于MR中的Combine+Reduce模式。
+* Local-global聚合是为解决数据倾斜问题，通过将一组聚合氛围两个阶段，首先在上游进行本地聚合，然后在下游进行全局聚合，类似于MR中的**Combine+Reduce**模式。
 * 每次本地聚合累积的输入数据量基于 mini-batch 间隔。
 
 ![img](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/local_agg.png)
