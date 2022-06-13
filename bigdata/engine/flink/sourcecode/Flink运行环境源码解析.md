@@ -106,8 +106,8 @@ public static LocalStreamEnvironment createLocalEnvironment(int parallelism, Con
 		return currentEnvironment;
 	}
 
-## 本地运行环境webUI
-  	public static StreamExecutionEnvironment createLocalEnvironmentWithWebUI(Configuration conf) {
+// 本地运行环境webUI
+ public static StreamExecutionEnvironment createLocalEnvironmentWithWebUI(Configuration conf) {
 		checkNotNull(conf, "conf");
 
 		if (!conf.contains(RestOptions.PORT)) {
@@ -242,6 +242,7 @@ public Plan createProgramPlan(String jobName, boolean clearSinks) {
 ### PlanGenerator
 
 ```java
+// 将dataSink转换称plan
 public class PlanGenerator {
 
 	private static final Logger LOG = LoggerFactory.getLogger(PlanGenerator.class);
@@ -437,9 +438,9 @@ public interface TableEnvironment {
   Optional<Catalog> getCatalog(String catalogName);
   // 根据moduleName记载一个Module，会根据顺序加载Module，如果已经存在抛出异常，module主要记录一些catalog函数和flink内置函数
   void loadModule(String moduleName, Module module);
-  	void unloadModule(String moduleName);
+  void unloadModule(String moduleName);
   // 注册临时UDF函数
-  	void createTemporarySystemFunction(String name, Class<? extends UserDefinedFunction> functionClass);
+  void createTemporarySystemFunction(String name, Class<? extends UserDefinedFunction> functionClass);
   void createTemporarySystemFunction(String name, UserDefinedFunction functionInstance);
   boolean dropTemporarySystemFunction(String name);
   void createFunction(String path, Class<? extends UserDefinedFunction> functionClass);
