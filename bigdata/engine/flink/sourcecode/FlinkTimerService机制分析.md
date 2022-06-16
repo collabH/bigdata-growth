@@ -451,7 +451,7 @@ public interface TimerService {
 
 # InternalTimerService
 
-* Timer是维护在JVM堆内存中的，如果频繁注册大量Timer，或者同时触发大量Timer，也是一笔不小的开销。
+* Timer是维护在JVM堆内存中的，如果频繁注册大量Timer，或者同时触发大量Timer，也是一笔不小的开销。时间窗口风暴问题
 
 ```java
 public interface InternalTimerService<N> {
@@ -476,7 +476,7 @@ public interface InternalTimerService<N> {
 }
 ```
 
-- TimerService接口的实现类为SimpleTimerService，它实际上又是InternalTimerService的非常简单的代理。
+- TimerService接口的实现类为SimpleTimerService，它实际上又是InternalTimerService的代理。
 - InternalTimerService的实例由getInternalTimerService()方法取得，该方法定义在所有算子的基类AbstractStreamOperator中.
 - KeyedProcessOperator.processElement()方法调用用户自定义函数的processElement()方法，顺便将上下文实例ContextImpl传了进去，所以用户可以由它获得TimerService来注册Timer。
 - Timer在代码中叫做InternalTimer。

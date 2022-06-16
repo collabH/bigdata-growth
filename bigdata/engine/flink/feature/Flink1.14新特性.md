@@ -71,7 +71,7 @@
 
 **1. `alignmentTimeout`配置改变含义**
 
-* `alignmentTimeou`t配置的语义已经改变了含义，现在它被测量为`从检查点(在检查点协调器上)开始到任务接收到检查点屏障的时间`。
+* `alignmentTimeout配置的语义已经改变了含义，现在它被测量为`从检查点(在检查点协调器上)开始到任务接收到检查点屏障的时间`。
 
 **2. 关闭非对齐checkpoint BROADCAST的exchanges**
 
@@ -91,7 +91,7 @@
 
 ![img](https://nightlies.apache.org/flink/flink-docs-release-1.14/fig/dynamic_slot_alloc.png)
 
-* 左边为粗粒度资源关闭，是没有明确的让用户指定slot的资源配额。对于没有指定资源配置文件的资源需求，Flink 会自动决定一个资源配置文件。 目前，它的资源配置文件是根据TaskManager的总资源和taskmanager.numberOfTaskSlots计算出来的，就像粗粒度的资源管理一样。 如上图，TaskManager 的总资源为 1 Core 和 4 GB 内存，任务槽数设置为 2，Slot 2 是根据需求创建的，具有 0.5 Core 和 2 GB 内存，没有指定资源配置文件。
+* 左边为粗粒度资源管理，是没有明确的让用户指定slot的资源配额。对于没有指定资源配置文件的资源需求，Flink 会自动决定一个资源配置文件。 目前，它的资源配置文件是根据TaskManager的总资源和taskmanager.numberOfTaskSlots计算出来的，就像粗粒度的资源管理一样。 如上图，TaskManager 的总资源为 1 Core 和 4 GB 内存，任务槽数设置为 2，Slot 2 是根据需求创建的，具有 0.5 Core 和 2 GB 内存，没有指定资源配置文件。
 * 细粒度的资源管理，槽请求包含用户可以指定的特定资源配置文件。 Flink 将尊重那些用户指定的资源需求，并动态地从 TaskManager 的可用资源中切出一个完全匹配的槽。 如上图，有0.25 Core 1GB内存的插槽需求，Flink为其分配了Slot 1。
 
 ## 使用方式

@@ -27,7 +27,7 @@ select TUMBLE_START(bidtime,INTERVAL '10' MINUTE) as window_start,
        
 # 1.13
 select window_start,window_end,window_time,sum(price)
-			from TABLE(TUMBLE(bidtime,INTERVAL '10' MINUTES))
+			from TABLE(TUMBLE(TABLE Bid, DESCRIPTOR(bidtime),INTERVAL '10' MINUTES))
 			GROUP BY window_start,window_end;
 ```
 
@@ -42,13 +42,35 @@ select window_start,window_end,window_time,sum(price)
 * 支持TUMBLE、HOP WIndow
 * 新增CUMULATE WINDOW，适合计算增量UV统计需求，比如当前uv从10点到下午6点增量数据
 
+```sql
+CUMULATE(TABLE data, DESCRIPTOR(timecol), step, size)
+
+# 10分钟进行计算，没2分钟累加计算输出一次
+ SELECT window_start, window_end, SUM(price)
+  FROM TABLE(
+    CUMULATE(TABLE Bid, DESCRIPTOR(bidtime), INTERVAL '2' MINUTES, INTERVAL '10' MINUTES))
+  GROUP BY window_start, window_end;
++------------------+------------------+-------+
+|     window_start |       window_end | price |
++------------------+------------------+-------+
+| 2020-04-15 08:00 | 2020-04-15 08:06 |  4.00 |
+| 2020-04-15 08:00 | 2020-04-15 08:08 |  6.00 |
+| 2020-04-15 08:00 | 2020-04-15 08:10 | 11.00 |
+| 2020-04-15 08:10 | 2020-04-15 08:12 |  3.00 |
+| 2020-04-15 08:10 | 2020-04-15 08:14 |  4.00 |
+| 2020-04-15 08:10 | 2020-04-15 08:16 |  4.00 |
+| 2020-04-15 08:10 | 2020-04-15 08:18 | 10.00 |
+| 2020-04-15 08:10 | 2020-04-15 08:20 | 10.00 |
++------------------+------------------+-------+
+```
+
 ![](./img/cumulate window.png)
 
 ### Window性能优化
 
 * 内存优化:通过内存预分配缓存window的数据，通过window watermark触发计算。
 * 切片优化:将window切片，尽可能复用已计算结果，如hop window，cumulate window。
-* 算子优化:window支持local-global优化，同事支持count(distinct)自动解热点优化。
+* 算子优化:window支持local-global优化，同时支持count(distinct)自动解热点优化。
 * 迟到数据:支持迟到数据计算到后续分片，保证数据准确性。
 
 ### 多维数据分析
@@ -164,7 +186,7 @@ Schema.newBuilder()
 
 * 支持changlog数据流在table和datastream间互相转换
 
-```
+```java
 # DataStream转Table
 StreamTableEnvironment.fromChangelogStream(DataStream<Row>):Table
 StreamTableEnvironment.fromChangelogStream(DataStream<Row>,Schema):Table

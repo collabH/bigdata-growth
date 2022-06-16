@@ -59,7 +59,7 @@
 
 ## Encoding / Decoding Formats
 
-* 某些表连接器接受编码和解码键和/或值的不同格式。例如`cancl-json`/`json`等格式
+* 某些表连接器接收编码和解码键和/或值的不同格式。例如`cancl-json`/`json`等格式
 
 * 格式的工作方式类似于模式`DynamicTableSourceFactory-> DynamicTableSource-> ScanRuntimeProvider`，其中工厂负责翻译选项，而source负责创建运行时逻辑。
 

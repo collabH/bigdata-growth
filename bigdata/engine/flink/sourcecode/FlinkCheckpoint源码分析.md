@@ -181,7 +181,7 @@ public class ChannelStateReaderImpl implements ChannelStateReader {
 
 
 	/**
-	 * 俩个结果集更执行图有关，最终执行图从task-》inputchannel-》ResultSubpartition
+	 * 俩个结果集更执行图有关，最终执行图从task-》ResultSubpartition-》inputchannel
 	 */
 	// 输出管道处理器
 	private final Map<InputChannelInfo, ChannelStateStreamReader> inputChannelHandleReaders;
@@ -602,7 +602,7 @@ interface ChannelStateWriteRequestDispatcher {
 
 ## Hooks模块
 
-* 核心执行checkpoint模块，包含出发ck，恢复ck等等
+* 核心执行checkpoint模块，包含触发ck，恢复ck等等
 
 ### triggerHook
 

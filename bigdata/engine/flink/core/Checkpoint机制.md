@@ -178,6 +178,8 @@ datasource.uid("network-source").map(new WordCountMapFunction())
 
 ![Checkpoint barriers are inserted into the streams](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream_barriers.svg)
 
+* barrier对齐机制
+
 ![Barrier alignment](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream_aligning.svg)
 
 * Flink 的 state backends 利用写时复制（copy-on-write）机制允许当异步生成旧版本的状态快照时，能够不受影响地继续流处理。只有当快照被持久保存后，这些旧版本的状态才会被当做垃圾回收。
@@ -252,7 +254,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 ### 内部保证
 
-* checkpoint
+* checkpoint机制保证
 
 ### sink端
 
@@ -265,7 +267,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
         * DataStream API提供一个模版类:`GenericWriteAheadSink`来实现。
         * 存在的问题，延迟性大，如果存在批量写入失败时需要考虑回滚重放。
     * 2PAC（Two-Phase-Commit）
-        * 对于每个checkpoint，sink任务会启动一个事务，并将接下来所有接受的数据添加到事务里。
+        * 对于每个checkpoint，sink任务会启动一个事务，并将接下来所有接收的数据添加到事务里。
         * 然后将这些数据写入外部sink系统，但不提交它们--这时只是"预提交"
         * 当它收到checkpoint完成的通知时，它才正式提交事务，实现结果真正写入（参考checkpoint barrier sink端写入完成后的ack checkpoint通知）
         * Flink提供`TwoPhaseCommitSinkFunction`接口,参考`FlinkKafkaProducer`

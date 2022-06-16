@@ -26,7 +26,7 @@
 	// 是否updated
 	private final boolean[] updated;
 	
-		public void setField(int pos, Object value) {
+	public void setField(int pos, Object value) {
 		updated[pos] = true;
 		fields[pos] = value;
 	}
@@ -61,7 +61,7 @@
 * 数组方式存储列的全部数据，根据对应的offset和pos获取对应行的列的值
 
 ```java
-// 存储每列的数据
+ // 存储每列的数据
 	private final ColumnVector data;
 	// 偏移量，offset+pos获取指定行的数据
 	private final int offset;
@@ -88,7 +88,7 @@
 /**
  * Writer to write a composite data format, like row, array.
  * 1. Invoke {@link #reset()}.
- * // 通过writeXx或者setBullAt写入每个字段，相同字段不能重复写入
+ * // 通过writeXx或者setNullAt写入每个字段，相同字段不能重复写入
  * 2. Write each field by writeXX or setNullAt. (Same field can not be written repeatedly.)
  * 3. Invoke {@link #complete()}.
  */

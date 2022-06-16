@@ -80,7 +80,7 @@ public static void main(final String[] args) {
 
 ### RpcEndpoint
 
-* 通信终端，提供RPC服务组件的生命周期管理(start、stop)，每个RpcEndpoint对应了一个路径(endpointId和actorSystem确定)，每个路径对应一个Actpr，其实现了RpcGateway接口。
+* 通信终端，提供RPC服务组件的生命周期管理(start、stop)，每个RpcEndpoint对应了一个路径(endpointId和actorSystem确定)，每个路径对应一个Actor，其实现了RpcGateway接口。
 
 ### RpcService和RpcServer
 
@@ -120,13 +120,13 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 * StreamGraph:是根据用户通过StreamAPI编写的代码生成的最初的图，表示程序的拓扑结构。
   * StreamNode:用来代表operator的类，并具有所有相关的属性，如并发度，入边和出边（表示算子的上游和下游）等。
   * StreamEdge:表示连续两个StreamNode的边。
-* JobGraph:StreamGraph经过优化后生成了JobGraph，提交给JobManager的数据结构，会进行chain链优化，减少各个节点所需的序列化/反序列化/传输消耗。
-  * JobVertex:经过优化后符合条件的多个StreamNode可能会chain在一起生成一个Vertext，即一个JobVertex包含一个或多个opeartor，JobVertext的输入是Jobedge，输出是IntermediateDataSet。
+* JobGraph:StreamGraph经过优化后生成了JobGraph，提交给JobManager的数据结构，会进行operator chain链优化，减少各个节点所需的序列化/反序列化/传输消耗。
+  * JobVertex:经过优化后符合条件的多个StreamNode可能会chain在一起生成一个Vertex，即一个JobVertex包含一个或多个opeartor，JobVertext的输入是Jobedge，输出是IntermediateDataSet。
   * IntermediateDataSet:表示JobVertex的输出，即经过opeartor处理产生的数据集，producer是JobVertex，consumer是JobEdge。
   * JobEdge:代表了JobGraph中的一条数据传输通道。source是IntermediateDataSet，target是JobVertex。即数据通过JobEdge由IntermediateDataSet传递给目标的JobVertex。
 * ExecutionGraph:JobManager根据JobGraph生成ExecutionGraph，是并行版本的JobGraph，是调度层最核心的数据结构。
   * ExecutionVertex:表示ExecutionJobVertex的其中一个并发子任务，输入是ExecutionEdge，输出是IntermediateResultPartition。
-  * IntermediateResult:和JobGraph的IntermediateDataSet一一对应。一个IntermediateResult包含多个IntermediateResultPartition，其个数等于该operator的并行度。
+  * IntermediateResult:和JobGraph的IntermediateDataSet一一对应。`一个IntermediateResult包含多个IntermediateResultPartition`，其个数等于该operator的并行度。
   * IntermediateResultPartition:表示ExecutionVertex的一个输入分区，producer是ExecutionVertex，consumer是若干个Executionedge。
   * ExecutionEdge:表示ExecutionVertex的输入，source是IntermediateResultPartition，traget是ExecutionVertex，source和target都只能有一个。
   * Execution:是执行一个ExecutionVertex的一次尝试，当发生故障或者数据需要重算的情况下ExecutionVertex可能会有多个ExecutionAttemptID，一个Execution通过ExecutionAttemptID来唯一标识。JM和TM之间关于task的部署和task status的更新都是通过ExecutionAttemptID来确定消息接受者。
@@ -134,7 +134,7 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
   * Task:Execution被调度后分配的TaskManager中启动对应的Task。Task包裹来具有用户执行逻辑的operator。
   * ResultPartition:代表一个Task的生成的数据，和ExecutionGraph的IntermediateResultPartition一一对应。
   * ResultSubPartition:是ResultPartition的一个子分区。每个ResultPartition都多个ResultSubPartition，其数目要由下游消费Task数和DistributionPattern来决定。
-  * InputGate:代表Task的输入封装，和JobGraph中JobEdge一一对应。每个InputGate消费一个或多个ResultPArtition。
+  * InputGate:代表Task的输入封装。每个InputGate消费一个或多个ResultPartition。
   * InputChannel:每个InputGate会包含一个以上的InputChannel，和ExecutionGraph的ExecutionEdge一一对应，也和ResultSubPartition一对一地相连，即一个InputChannel接收一个ResultSubPartition的输出。
 
 ## Task任务调度
@@ -245,7 +245,7 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 
 #### 分阶段调度
 
-* LAZY_FROM_SOURCES适用于批处理，聪SourceTask开始分阶段调度，申请资源的时候，一次性申请本阶段所需要的所有资源。上游Task执行完毕后开始调度执行下游的Task，读取上游的数据，执行本阶段的计算任务，执行完毕之后，调度后一个阶段的Task，依次进行调度，直到作业完成。
+* LAZY_FROM_SOURCES适用于批处理，从SourceTask开始分阶段调度，申请资源的时候，一次性申请本阶段所需要的所有资源。上游Task执行完毕后开始调度执行下游的Task，读取上游的数据，执行本阶段的计算任务，执行完毕之后，调度后一个阶段的Task，依次进行调度，直到作业完成。
 
 #### 分阶段Slot重用调度
 
@@ -260,11 +260,11 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 
 # 内存管理
 
-* Flink自定义了内存管理机制，规避传统JVM内存管理存在的问题，多级缓存为命中，内存占用过大，Full GC问题等
+* Flink自定义了内存管理机制，规避传统JVM内存管理存在的问题，多级缓存未命中，内存占用过大，Full GC问题等
 
 ## JobMananger内存模型
 
-* `jobmananger.memory.process.size`管理堆外堆内内存，已经metaspace、jvmoverhead相关
+* `jobmananger.memory.process.size`管理堆外堆内内存，以及metaspace、jvmoverhead相关
 
 ### JobManagerFlinkMemory
 
@@ -302,7 +302,7 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 * JVM特有内存:JVM本身占用的内存，包括Metaspace和执行开销JVMOverhead。
 
 ```
-Flink使用内存=框架堆内和对外内存+Task堆内和堆外内存+网络缓冲内存+管理内存
+Flink使用内存=框架堆内和堆外内存+Task堆内和堆外内存+网络缓冲内存+管理内存
 进程内存=Flink内存+JVM特有内存
 ```
 
@@ -346,14 +346,14 @@ Flink使用内存=框架堆内和对外内存+Task堆内和堆外内存+网络�
 
 ### 内存段
 
-* 内存段是MemorySegment，是Flink中最小的内存分配单元，默认大小32KB。它是堆上内存(Java的byte数组)，也可以是堆外内存 (给予Netty的DirectByteBuffer)，同时提供了对二进制数据进行读取和写入的方法。
+* 内存段是MemorySegment，是Flink中最小的内存分配单元，默认大小32KB。它是堆上内存(Java的byte数组)，也可以是堆外内存 (基于Netty的DirectByteBuffer)，同时提供了对二进制数据进行读取和写入的方法。
 * 实现类为HeapMemorySegment、HybridMemorySegment
   * HeapMemorySegment:用来分配堆上内存
   * HybridMemorySegment用来分配堆外和堆上内存，目前主要使用HybridMemorySegment
 
 ### 内存页
 
-* 内存页是MemorySegement之上的数据访问时图，数据读取抽象为DataInputView，数据写入抽象为DataOutputView。
+* 内存页是MemorySegement之上的数据访问视图，数据读取抽象为DataInputView，数据写入抽象为DataOutputView。
 
 ### Buffer
 

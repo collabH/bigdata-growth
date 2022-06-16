@@ -10,8 +10,8 @@
 
 ![](../img/Window抽象概念.jpg)
 
-* Timestampasasigner:指定记录中作为记录eventtime的字段
-* keyselector:选择记录中的列作为key的键
+* TimestampAsasigner:指定记录中作为记录eventtime的字段
+* keySelector:选择记录中的列作为key的键
 * WindowAssigner:将记录划分一个个的窗口
 * State:存储的中间状态，状态可以调用增量集合函数，增量的方式计算状态
 * Trigger:  决定什么时候触发window的计算
@@ -421,9 +421,7 @@ public <R> SingleOutputStreamOperator<R> reduce(
 	}
 ```
 
-###EvictingWindowOperator
-
-### WindowOperator
+### EvictingWindowOperator
 
 #### processElement
 
