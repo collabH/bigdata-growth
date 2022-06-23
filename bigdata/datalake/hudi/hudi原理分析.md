@@ -83,7 +83,7 @@
 3. 检查get 获取的数据是否为有效索引，这时Hudi 会连接元数据检查commit时间是否有效，如果无效currentLocation将不会被赋值。检查是否为有效索引的目的是当索引更新一半hbase 宕机导致任务失败，保证不会加载过期索引。避免hbase 索引和数据不一致导致数据进入错误的分区。
 4. 检查是否开启允许分区变更，这里的做法和全局布隆索引、全局简易索引的实现方式一样。
 
-```
+```properties
 hoodie.index.hbase.zkquorum   必填项：zk连接地址
 hoodie.index.hbase.zkport    必填项：zk连接端口
 hoodie.index.hbase.zknode.path  必填项:zookeeper znode路径
