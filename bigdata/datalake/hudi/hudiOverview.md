@@ -510,7 +510,7 @@ Options:
 
 ## 支持的并发控制
 
-* **MVCC**:压缩、清理、集群等Hudi表服务利用Multi Version Concurrency Control在多个表服务写入器和读取器之间提供快照隔离。此外，通过使用MVCC, Hudi提供了`单个摄取写入器和多个并发读取器`之间的快照隔离。通过这个模型，Hudi支持并发运行任意数量的表服务作业，而不存在任何并发冲突。这是通过确保此类表服务的调度计划总是在单个写入模式下发生，以确保没有冲突并避免竞争条件而实现的
+* **MVCC**:压缩、清理、clustering等Hudi表服务利用Multi Version Concurrency Control在多个表服务写入器和读取器之间提供快照隔离。此外，通过使用MVCC, Hudi提供了`单个摄取写入器和多个并发读取器`之间的快照隔离。通过这个模型，Hudi支持并发运行任意数量的表服务作业，而不存在任何并发冲突。这是通过确保此类表服务的调度计划总是在单个写入模式下发生，以确保没有冲突并避免竞争条件而实现的
 *  **OPTIMISTIC CONCURRENCY**:上面描述的写操作(如UPSERT、INSERT)等，利用乐观并发控制来支持对同一个Hudi表的多个写入操作。Hudi支持`file level OCC`，也就是说，`对于发生在同一个表上的任何2次提交(或写入)`，如果它们没有对被更改的`重叠文件`进行写操作，则允许两个写入操作成功。这个功能目前还处于实验阶段，需要Zookeeper或hivemetstore来获取锁。
 
 ## Single Writer Guarantee
@@ -554,7 +554,7 @@ hoodie.write.lock.hivemetastore.table
 * 如果表名是`test`,表类型是`COW`
   * 通过`HoodieParquetInputFormat`格式支持`snapshot query和incremental query`，暴露完整的`columnar data`。
 * 如果表名是`test`,表类型是`MOR`
-  * 支持对`HoodieParquetRealtimeInputFormat`支持的表进行快照查询和增量查询(提供近实时数据)，公开base数据和日志数据的合并视图。
+  * 支持对`HoodieParquetRealtimeInputFormat`支持的表进行快照查询和增量查询(提供近实时数据)，公开base数据和delta file数据的合并视图。
   * 支持对`HoodieParquetInputFormat`支持的表进行` read optimized query`，公开存储在base文件中的纯`columnar data`。
 
 ## 支持的能力
@@ -628,7 +628,7 @@ hoodie.write.lock.hivemetastore.table
 * 从0.9.0开始，hudi将把表同步到hive作为spark数据源表。因此不需要设置`spark.sql.hive.convertMetastoreParquet=false`
 
 ```shell
-$ spark-shell --driver-class-path /etc/hive/conf  --packages org.apache.hudi:hudi-spark-bundle_2.11:0.5.3,org.apache.spark:spark-avro_2.11:2.4.4 --conf spark.sql.hive.convertMetastoreParquet=false --num-executors 10 --driver-memory 7g --executor-memory 2g  --master yarn-client
+$ spark-shell --driver-class-path /etc/hive/conf  --packages org.apache.hudi:hudi-spark-bundle_2.11:0.5.3,org.apache.spark:spark-avro_2.11:2.4.4  --num-executors 10 --driver-memory 7g --executor-memory 2g  --master yarn-client
 ```
 
 ### COPY_ON_WRITE
@@ -660,7 +660,7 @@ val hudiIncQueryDF = spark
      .format("org.apache.hudi")
      .option(DataSourceReadOptions.QUERY_TYPE.key(), DataSourceReadOptions.QUERY_TYPE_INCREMENTAL_OPT_VAL())
      .option(DataSourceReadOptions.BEGIN_INSTANTTIME.key(), <beginInstantTime>)
-     .option(DataSourceReadOptions.INCR_PATH_GLOB.key(), "/year=2020/month=*/day=*") // Optional, use glob pattern if querying certain partitions
+     .option(DataSourceReadOptions.INCR_PATH_GLOB.key(), "/year=2020/month=*/day=*") // 如果查询确定的分区使用incr path glob
      .load(tablePath); // For incremental query, pass in the root/base path of table
      
 hudiIncQueryDF.createOrReplaceTempView("hudi_trips_incremental")
@@ -679,13 +679,13 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ### Delta log file
 
-* 在MOR表类型中更新操作被写入到`Delta log file`中，该文件以avro格式存储。`delta log file`始终与`base file`相关联。假设有一个名为 data_file_1 的数据文件，对 data_file_1 中记录的任何更新都将写入到新的增量日志文件。在服务读取查询时，Hudi 将实时合并基础文件及其相应的增量日志文件中的记录。
+* 在MOR表类型中更新操作被写入到`Delta log file`中，该文件以avro格式存储。`delta log file`始终与`base file`相关联。假设有一个名为 data_file_1 的数据文件，对 data_file_1 中记录的任何更新都将写入到新的增量日志文件。在服务读取查询时，Hudi 将实时合并base data文件及其相应的delta log文件中的记录。
 
 ![](./img/deltafile.jpg)
 
 ###  FileGroup
 
-* 通常根据存储的数据量，可能会有很多数据文件。每个数据文件及其对应的增量日志文件形成一个文件组。在 COW 的情况下，它要简单得多，因为只有基本文件。
+* 通常根据存储的数据量，可能会有很多数据文件。每个数据文件及其对应的增量日志文件形成一个file group。在 COW 的情况下，它要简单得多，因为只有基本文件。
 
 ![](./img/filegroup.jpg)
 
@@ -697,7 +697,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ### FileSlice
 
-* 对于每个文件组，可能有不同的文件版本。因此文件切片由特定版本的数据文件及其增量日志文件组成。对于 COW，最新的文件切片是指所有文件组的最新数据/基础文件。对于 MOR，最新文件切片是指所有文件组的最新数据/基础文件及其关联的增量日志文件。
+* 对于每个file group，可能有不同的文件版本。因此文件切片由特定版本的数据文件及其增量日志文件组成。对于 COW，最新的文件切片是指所有文件组的最新数据/基础文件。对于 MOR，最新文件切片是指所有文件组的最新数据/基础文件及其关联的增量日志文件。
 
 ## COW
 
@@ -721,7 +721,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ![](./img/morfilegroup.jpg)
 
-* 读取端将实时合并基本文件及其各自的增量日志文件。你可能会想到这种方式，每次的读取延迟都比较高（因为查询时进行合并），所 以 Hudi 使用压缩机制来将数据文件和日志文件合并在一起并创建更新版本的数据文件。
+* 读取端将实时合并基本文件及其各自的增量日志文件。你可能会想到这种方式，每次的读取延迟都比较高（因为查询时进行合并），所以 Hudi 使用压缩机制来将数据文件和日志文件合并在一起并创建更新版本的数据文件。
 
 ![](./img/morfilegroup1.jpg)
 
@@ -731,7 +731,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ### 写入延迟
 
-* COW延迟会比MOR相对搞很多，因为实在写入的时候去合并不同版本的datafile
+* COW延迟会比MOR相对高很多，因为COW写入的时候去合并不同版本的datafile
 
 ### 读取延迟
 
@@ -743,4 +743,4 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ### 写放大
 
-* 同样当我们创建更新版本的数据文件时，COW 会更高。假设您有一个大小为 100Mb 的数据文件，并且每次更新 10% 的记录进行 4 批写入，4 次写入后，Hudi 将拥有 5 个大小为 100Mb 的 COW 数据文件。你可以配置你的清理器（将在后面的博客中讨论）清理旧版本文件，但如果没有进行清理，最终会有 5 个版本的数据文件，总大小**约500Mb**。MOR 的情况并非如此，由于更新进入日志文件，写入放大保持在最低限度。对于上面的例子，假设压缩还没有开始，在 4 次写入后，我们将有 1x100Mb 的文件和 4 个增量日志文件（10Mb） 的大小**约140Mb**。
+* 同样当我们创建更新版本的数据文件时，COW 会更高。假设您有一个大小为 100Mb 的数据文件，并且每次更新 10% 的记录进行 4 批写入，4 次写入后，Hudi 将拥有 5 个大小为 100Mb 的 COW 数据文件。你可以配置你的清理器清理旧版本文件，但如果没有进行清理，最终会有 5 个版本的数据文件，总大小**约500Mb**。MOR 的情况并非如此，由于更新进入日志文件，写入放大保持在最低限度。对于上面的例子，假设压缩还没有开始，在 4 次写入后，我们将有 1x100Mb 的文件和 4 个增量日志文件（10Mb） 的大小**约140Mb**。
