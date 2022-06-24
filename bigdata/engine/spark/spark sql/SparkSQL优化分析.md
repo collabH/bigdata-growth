@@ -128,14 +128,11 @@ Cost = CostCPU * weight + CostIO * (1 - weight)
   * left-deep tree，因此所有后续 Join 都依赖于前面的 Join 结果，各 Join 间无法并行进行
   * 前面的两次 Join 输入输出数据量均非常大，属于大 Join，执行时间较长
 
-![Spark SQL multi join](http://www.jasongj.com/img/spark/spark3_cbo/spark_cbo_linear_join.png)
+![Spark SQL multi join](../img/leftjoinskew.jpg)
 
 开启 CBO 后， Spark SQL 将执行计划优化如下
 
-
-
-
-[![Spark SQL multi join reorder with CBO](http://www.jasongj.com/img/spark/spark3_cbo/spark_cbo_join_reorder.png)](http://www.jasongj.com/img/spark/spark3_cbo/spark_cbo_join_reorder.png)
+![Spark SQL multi join](../img/cbojoin.png)
 
 - Join 树不再是 left-deep tree，因此 Join 3 与 Join 4 可并行进行，Join 5 与 Join 6 可并行进行
 - 最大的 Join 5 输出数据只有两百万条结果，Join 6 有 1.49 亿条结果，Join 7相当于小 Join
@@ -151,13 +148,13 @@ Cost = CostCPU * weight + CostIO * (1 - weight)
 
 ### 数据量不大
 
-* 通过挑战broadcast的阈值将reduce join转换为map join。
+* 通过调整broadcast的阈值将reduce join转换为map join。
 
 ## 重复的key的数据量过大
 
 ### 为skew的key增加随机前/后缀
 
-![spark random prefix](http://www.jasongj.com/img/spark/spark1_skew/randomprefix.png)
+![spark random prefix](../img/dataskew.png)
 
 * 为数据量特别大的Key增加随机前/后缀，使得原来Key相同的数据变为Key不相同的数据，从而使倾斜的数据集分散到不同的Task中，彻底解决数据倾斜问题。Join另一则的数据中，与倾斜Key对应的部分数据，与随机前缀集作笛卡尔乘积，从而保证无论数据倾斜侧倾斜Key如何加前缀，都能与之正常Join。
 
@@ -246,7 +243,7 @@ public class SparkDataSkew{
 
 * 如果出现数据倾斜的Key比较多，上一种方法将这些大量的倾斜Key分拆出来，意义不大。此时更适合直接对存在数据倾斜的数据集全部加上随机前缀，然后对另外一个不存在严重数据倾斜的数据集整体与随机前缀集作笛卡尔乘积（即将数据量扩大N倍）。
 
-![spark random prefix](http://www.jasongj.com/img/spark/spark1_skew/randomprefixandenlargesmalltable.png)
+![spark random prefix](../img/randomprefixandenlargesmalltable.png)
 
 ```java
 public class SparkDataSkew {
