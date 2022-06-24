@@ -91,7 +91,7 @@ hoodie.index.hbase.table  必填项：hbase中的表名
 hoodie.index.hbase.get.batch.size   默认值100 ：每批量请求大小
 hoodie.hbase.index.update.partition.path  默认值false： 是否允许分区变更 
 hoodie.index.hbase.put.batch.size.autocompute  默认值false ：是否开启自动计算每个批次大小
-hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启同步索引。如果设置为true在写入hbase索引导致hbase 宕机或者jvm oom任务失败，在触发rollback 阶段 会删除失败任务的索引保证索引和数据一致。在上次任务失败且数据分区字段值反复变更时可以避免数据重复。
+hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启同步索引。如果设置为true在写入hbase索引导致hbase宕机或者jvm oom任务失败，在触发rollback 阶段会删除失败任务的索引保证索引和数据一致。在上次任务失败且数据分区字段值反复变更时可以避免数据重复。
 ```
 
 * 内存索引(InMemoryHashIndex)
@@ -101,7 +101,7 @@ hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启�
 
 * **普通索引**：主要用于非分区表和分区不会发生分区列值变更的表。当然如果你不关心多分区主键重复的情况也是可以使用。他的优势是只会加载upsert数据中的分区下的每个文件中的索引，相对于全局索引需要扫描的文件少。并且索引只会命中当前分区的fileid 文件，需要重写的快照也少相对全局索引高效。但是某些情况下我们的设置的分区列的值就是会变那么必须要使用全局索引保证数据不重复，这样upsert 写入速度就会慢一些。其实对于非分区表他就是个分区列值不会变且只有一个分区的表，很适合普通索引，如果非分区表硬要用全局索引其实和普通索引性能和效果是一样的。
 * **全局索引**：分区表场景要考虑分区值变更，需要加载所有分区文件的索引比普通索引慢。
-* **布隆索引**：加载fileid 文件页脚布隆过滤器，加载少量数据数据就能判断数据是否在文件存在。缺点是有一定的误判，但是merge机制可以避免重复数据写入。parquet文件多会影响索引加载速度。适合没有分区变更和非分区表。主键如果是类似自增的主键布隆索引可以提供更高的性能，因为布隆索引记录的有最大key和最小key加速索引查找。Hudi支持动态布隆过滤器（设置`hoodie.bloom.index.filter.type=DYNAMIC_V0`）。它可以根据文件里存放的记录数量来调整大小从而达到设定的伪正率。
+* **布隆索引**：加载fileid 文件footer布隆过滤器，加载少量数据数据就能判断数据是否在文件存在。缺点是有一定的误判，但是merge机制可以避免重复数据写入。parquet文件多会影响索引加载速度。适合没有分区变更和非分区表。主键如果是类似自增的主键布隆索引可以提供更高的性能，因为布隆索引记录的有最大key和最小key加速索引查找。Hudi支持动态布隆过滤器（设置`hoodie.bloom.index.filter.type=DYNAMIC_V0`）。它可以根据文件里存放的记录数量来调整大小从而达到设定的伪正率。
 * **全局布隆索引**：解决分区变更场景，原理和布隆索引一样，在分区表中比普通布隆索引慢。
 * **简易索引**：直接加载文件里的数据不会像布隆索引一样误判，但是加载的数据要比布隆索引要多，left join 关联的条数也要比布隆索引多。大多数场景没布隆索引高效，但是极端情况命中所有的parquet文件，那么此时还不如使用简易索引加载所有文件里的数据进行判断。
 * **全局简易索引**：解决分区变更场景，原理和简易索引一样，在分区表中比普通简易索引慢。建议优先使用全局布隆索引。
@@ -126,7 +126,7 @@ hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启�
 
    **分桶参数**
 
-```
+```properties
 hoodie.parquet.small.file.limit   默认104857600（100兆）：小于100兆的文件会被认为小文件，有新增数据时会被分配数据插入。
 hoodie.copyonwrite.record.size.estimate   默认1024 （1kb）： 预估一条数据大小多大，用来计算一个桶可以放多少条数据。
 hoodie.record.size.estimation.threshold   默认为1： 数据最开始的时候parquet文件没有数据会去用默认的1kb预估一条数据的大小，如果有fileid的文件大小大于 (hoodie.record.size.estimation.threshold*hoodie.parquet.small.file.limit) 一条记录的大小将会根据（fileid文件大小/文件的总条数）来计算，所以这里是一个权重值。
@@ -137,7 +137,7 @@ hoodie.copyonwrite.insert.auto.split   默认true : 是否开启自动分桶。
 
 4.分桶结束后调用handleUpsertPartition合并数据。首先会获取map 集合中的桶信息，桶类型有两种`新增和修改`两种。如果桶fileid文件只有新增数据操作，直接追加文件或新建parquet文件写入就好，这里会调用`handleInsert`方法。如果桶fileid文件既`有新增又有修改或只有修改一定会走handUpdate方法`。这里设计的非常的巧妙`对于新增多修改改少的场景大部分的数据直接可以走新增的逻辑可以很好的提升性能`。对于handUpdate方法的处理会先构造HoodieMergeHandle对象初始化一个map集合，这个map集合很特殊拥有存在内存的map集合和存在磁盘的map 集合，这个map集合是用来存放所有需要update数据的集合用来遍历fileid旧文件时查询文件是否存在要不要覆盖旧数据。这里使用内存加磁盘为了避免update桶中数据特别大情况可以将一部分存磁盘避免jvm oom。update 数据会优先存放到内存map如果内存map不够才会存在磁盘map，而内存Map默认大小是1g 。DiskBasedMap 存储是key信息存放的还是record key ,value 信息存放value 的值存放到那个文件上，偏移量是多少、存放大小和时间。这样如果命中了磁盘上map就可以根据value存放的信息去获取hoodieRecord了。
 
-```
+```properties
 hoodie.memory.spillable.map.path   默认值 /tmp/ ： 存放DiskBasedMap的路径
 hoodie.memory.merge.max.size       默认值 1024*1024*1024（1g）：内存map的最大容量
 ```
@@ -148,7 +148,7 @@ hoodie.memory.merge.max.size       默认值 1024*1024*1024（1g）：内存map�
 
 * 在MOR模式中的实现和前面COW模式分桶阶段逻辑相同，这里主要说下最后的合并和COW模式不一样的操作。在MOR合并是调用`AbstarctSparkDeltaCommitActionExecutor#execute`方法，会构造HoodieAppaendHandle对象。在写入时调用append向log日志文件追加数据，如果日志文件不存在或不可追加将新建log文件。
 
-```
+```properties
 hoodie.logfile.max.size   默认值：1024 * 1024 * 1024（1g） 日志文件最大大小
 hoodie.logfile.data.block.max.size  默认值：256 * 1024 * 1024（256兆） 写入多少数据后刷一次磁盘
 ```
@@ -170,7 +170,7 @@ hoodie.logfile.data.block.max.size  默认值：256 * 1024 * 1024（256兆） �
 1. sparkRddWriteClient 调用commit 方法，首先会向Hdfs 上提交一个.commit 后缀的文件，里面记录的是writeStatus的信息包括写入多少条数据、fileID快照的信息、Schema结构等等。当commit 文件写入成功就意味着一次upsert 已经成功，Hudi 内的数据就可以查询到。
 2. 为了不让元数据一直增长下去需要对元数据做归档操作。元数据归档会先创建HoodieTimelineArchiveLog对象，通过HoodieTableMetaClient 获取.hoodie目录下所有的元数据信息，根据这些元数据信息来判断是否达到归档条件。如果达到条件构造HooieLogFormatWrite对象对archived文件进行追加。每个元数据文件会封装成 HoodieLogBlock 对象批量写入。**归档参数**
 
-```
+```properties
 hoodie.keep.max.commits   默认30：最多保留多少个commit元数据，默认会在第31个commit的时候会触发一次元数据归档操作，由这个参数来控制元数据归档时机。
 hoodie.keep.min.commits   默认20： 最少保留多少个commit元数据，默认会将当前所有的commimt提交的个数减去20，剩下的11个元数据被归档，这个参数间接控制每次回收元数据个数。
 hoodie.commits.archival.batch  默认10 ：每多少个元数据写入一次到archived文件里，这里就是一个刷盘的间隔。
@@ -185,7 +185,7 @@ hoodie.commits.archival.batch  默认10 ：每多少个元数据写入一次到a
   * 生成执行计划后调用baseCleanPanActionExecutor 的继承类clean方法完成执行spark任务前的准备操作，然后向hdfs写入xxx.clean.inflight对象准备执行spark任务。
   * spark任务获取HoodieCleanPlan中所有分区序列化成为Rdd并调用flatMap迭代每个分区的文件。然后在mapPartitions算子中调用deleteFilesFunc方法删除每一个分区的过期的文件。最后reduceBykey汇总删除文件的结果构造成HoodieCleanStat对象，将结果元数据写入xxx.clean中完成数据清理。
 
-```
+```properties
 hoodie.clean.automatic  默认true :是否开启自动数据清理，如果关闭upsert 不会执行清理任务。
 hoodie.clean.async   默认false: 是否异步清理文件。开启异步清理文件的原理是开启一个后台线程，在client执行upsert时就会被调用。
 hoodie.cleaner.policy  默认 HoodieCleaningPolicy.KEEP_LATEST_COMMITS ：数据清理策略参数，清理策略参数有两个配置KEEP_LATEST_FILE_VERSIONS和KEEP_LATEST_COMMITS。
@@ -195,15 +195,15 @@ hoodie.cleaner.fileversions.retained  默认3 :在KEEP_LATEST_FILE_VERSIONS策�
 
 ![](./img/数据清理.jpg)
 
-### 数据压缩
+### 数据compaction
 
-* 数据压缩是mor模式才会有的操作，目的是让log文件合并到新的field快照文件中。因为数据压缩也是spark 任务完成的，所以在运行时也对应的`xxx.compaction.requet`、`xxx.compaction.clean`、`xxx.compaction`元数据生成记录每个阶段。数据压缩实现步骤如下：
+* 数据compaction是mor模式才会有的操作，目的是让log文件合并到新的field快照(data file)文件中。因为数据压缩也是spark 任务完成的，所以在运行时也对应的`xxx.compaction.requet`、`xxx.compaction.inflight`、`xxx.compaction`元数据生成记录每个阶段。数据压缩实现步骤如下：
   * sparkRDDwirteClient 调用compaction方法构造BaseScheduleCompationActionExecutor对象并调用scheduleCompaction方法，计算是否满足数据压缩条件生成HoodieCompactionPlan执行计划元数据。如果满足条件会向hdfs 写入xxx.compation.request元数据标识请求提交spark任务。
   * BaseScheduleCompationActionExecutor会调用继承类SparkRunCompactionExecutor类并调用compact方法构造HoodieSparkMergeOnReadTableCompactor 对象来实现压缩逻辑，完成一切准备操作后向hdfs写入xxx.compation.inflight标识。
   * spark任务执行parallelize加载HooideCompactionPlan 的执行计划,然后调用compact迭代执行每个分区中log的合并逻辑。在 compact会构造HoodieMergelogRecordScanner 扫描文件对象，加载分区中的log构造迭代器遍历log中的数据写入ExtemalSpillableMap。这个ExtemalSpillableMap和cow 模式中内存加载磁盘的map 是一样的。至于合并逻辑是和cow模式的合并逻辑是一样的，这里不重复阐述都是调用cow模式的handleUpdate方法。
   * 完成合并操作会构造writeStatus结果信息，并写入xxx.compaction标识到hdfs中完成合并操作。
 
-```
+```properties
 hoodie.compact.inline  默认false：是否在一个事务完成后内联执行压缩操作，这里开启并不一定每次都会触发索引操作后面还有策略判断。
 hoodie.compact.inline.trigger.strategy  默认CompactionTriggerStrategy.NUM_COMMITS: 压缩策略参数。该参数有NUM_COMMITS、TIME_ELAPSED、NUM_AND_TIME、NUM_OR_TIME。NUM_COMMITS根据提交次数来判断是否进行压缩;TIME_ELAPSED根据实际来判断是否进行压缩;NUM_AND_TIME 根据提交次数和时间来判断是否进行压缩；NUM_OR_TIME根据提交次数或时间来判断是否进行压缩。
 hoodie.compact.inline.max.delta.commits  默认5 ：设置提交多少次后触发压缩策略。在NUM_COMMITS、NUM_AND_TIME和NUM_OR_TIME策略中生效。
@@ -220,7 +220,7 @@ hoodie.compact.inline.max.delta.seconds  默认60 * 60（1小时）：设置在�
 
 * 当事务提交成功后向外部系统发送通知消息，通知方式有俩种，一种是发送http服务消息，一种是发送kafka消息。这个通知过程我们可以把清理操作、压缩操作、hive元数据操作都交给外部系统异步处理或者做其他扩展，也可以自己实现`HoodieWriteCommitCallback`
 
-```
+```properties
 hoodie.write.commit.callback.on   默认false：是否开启提交成功后向外部系统发送回调指令。
 hoodie.write.commit.callback.class   默认org.apache.Hudi.callback.impl.HoodieWriteCommitHttpCallback： 配置回调实现类，默认通过Http的方式发送消息到外部系统
 http实现类配置参数
@@ -252,7 +252,7 @@ hoodie.write.commit.callback.kafka.retries  默认值值3：配置kafka 失败�
 
 * 识别符合Clustering条件的文件：根据所选的Clustering策略，调度逻辑将识别符合Clustering条件的文件。
 * 根据特定条件对符合Clustering条件的文件进行分组。每个组的数据大小应为`targetFileSize`的倍数。分组是计划中定义的"策略"的一部分。此外还有一个选项可以限制组大小，以改善并行性并避免混排大量数据。
-* 最后将Clustering计划以avro元数据格式保存到时间线。
+* 最后将Clustering计划以avro元数据格式保存到timeline。
 
 ## 执行Clustering
 
@@ -264,7 +264,7 @@ Clustering服务基于Hudi的`MVCC设计`，允许继续插入新数据，而Clu
 
 **现在对表进行Clustering时还不支持更新，将来会支持并发更新。**
 
-![](./img/clustering.jpg)
+<img src="./img/clustering.jpg" style="zoom:200%;" />
 
 ## Clustering配置
 
@@ -287,7 +287,7 @@ Clustering服务基于Hudi的`MVCC设计`，允许继续插入新数据，而Clu
 * 使用Clustering，我们可以通过以下方式提高查询性能：
   * 利用空间填充曲线之类的概念来适应数据湖布局并减少查询读取的数据量。
   * 将小文件合并成较大的文件以减少查询引擎需要扫描的文件总数。
-* Clustering使得大数据进行流处理，摄取可以写入小文件以满足流处理的延迟要求，可以在后台使用Clustering将这些小文件重写成较大的文件并减少文件数。
+* Clustering使得大数据进行流处理摄取可以写入小文件以满足流处理的延迟要求，可以在后台使用Clustering将这些小文件重写成较大的文件并减少文件数。
 * 除此之外，Clustering框架还提供了根据特定要求异步重写数据的灵活性，我们预见到许多其他用例将采用带有自定义可插拔策略的Clustering框架来按需管理数据湖数据，如可以通过Clustering解决如下一些用例：
   * 重写数据并加密数据。
   * 从表中修剪未使用的列并减少存储空间。
