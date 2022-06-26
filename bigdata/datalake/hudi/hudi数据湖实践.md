@@ -72,4 +72,4 @@
 - Alluxio 支持读取时缓存 promote 模式；
 - Alluxio 支持异步写模式；
 - Alluxio 支持 LRU 回收策略；
-- Alluxio 拥有 pin 以及 TTL 特性；
+- Alluxio 拥有 ping 以及 TTL 特性；
