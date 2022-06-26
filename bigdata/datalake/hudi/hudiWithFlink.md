@@ -973,7 +973,7 @@ public class BucketAssigner implements AutoCloseable {
   private final int maxParallelism;
    // subTask个数
   private final int numTasks;
-  //每个桶的类型
+  // 每个桶的类型
   private final HashMap<String, BucketInfo> bucketInfoMap;
   protected final HoodieWriteConfig config;
   private final WriteProfile writeProfile;
@@ -1265,7 +1265,7 @@ pipeline = Pipelines.hoodieStreamWrite(conf, parallelism, hoodieRecordDataStream
 
 ## Bootstrap
 
-* 用于全量+增量读取时构造flink index state,用于后续实时数据写入upsert
+* 用于全量+增量读取时构造flink index state,用于后续实时数据写入upsert，将历史数据的index重写构建在flink的state里，为后续增量数据也可以保证唯一性。  
 
 ### BatchBootstrapOperator
 
@@ -2415,7 +2415,7 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
   }
 
   private void enqueueProcessSplits() {
-    // 如果挡圈是空闲状态并且split队列不为空则处理队列的split
+    // 如果当前是空闲状态并且split队列不为空则处理队列的split
     if (currentSplitState == SplitState.IDLE && !splits.isEmpty()) {
       currentSplitState = SplitState.RUNNING;
       executor.execute(this::processSplits, "process input split");
@@ -2608,7 +2608,7 @@ public class StreamReadOperator extends AbstractStreamOperator<RowData>
 
 #### open
 
-```#java
+```java
  public void open(MergeOnReadInputSplit split) throws IOException {
     this.currentReadCount = 0L;
     this.closed = false;
