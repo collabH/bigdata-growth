@@ -297,7 +297,7 @@ http://＜your-host＞:8050
 
 ### 系统目录表
 
-* 由entry_trype、entry_id和metadata三列组成，目录管理器将此表加载到内存中，并且构造3个哈希表以快速查找目录信息。
+* 由entry_type、entry_id和metadata三列组成，目录管理器将此表加载到内存中，并且构造3个哈希表以快速查找目录信息。
 * 目录信息是紧凑的，并且由于仅包含元数据而不包含真实的用户数据，会一直比较小，也不需要占用大量的内存和CPU资源。
 
 ### master高层架构
@@ -407,10 +407,10 @@ sudu systemctl start kudu-server
 
 #### decommission步骤
 
-1. 将这个table server的所有副本复制到另一个活动的tablet server，并确保所有被复制的副本都加入了Raft一致性协议。
-2. 删除这个talet服务器上的所有副本
-3. 停止这个tablet服务器
-4. 删除tablet服务器的可执行文件
+1. 将这个tablet server的所有副本复制到另一个活动的tablet server，并确保所有被复制的副本都加入了Raft一致性协议。
+2. 删除这个tablet server上的所有副本
+3. 停止这个tablet server
+4. 删除tablet server的可执行文件
 
 * 为了确保在执行decommission操作时tablet服务器上没有创建新的tablet，你需要确保在删除时不执行新的DDL操作。
 
@@ -431,7 +431,7 @@ sudu systemctl start kudu-server
 --memory_limit_hard_bytes
 ```
 
-### 维护管理器的线程
+### 维护管理器的线程：将memrowset数据刷新到diskrowset、将行数据转换为列存数据
 
 * 执行各种任务的后台线程，会做各种工作，比如将数据从内存刷新到磁盘，从而进行内存管理(把记录从行存储格式的内存切换到列存储格式的磁盘)，还能提高整体的读性能或释放磁盘空间。
 * 基于行的数据很容易写，因为写一行只需要做很少的处理。基于行意味着该行中的数据与另一行中的数据无关。
@@ -453,7 +453,7 @@ sudu systemctl start kudu-server
 
 ### 容忍磁盘故障
 
-* Tablet server可以容忍磁盘故障，但是如果WAL和tablet元数据的磁盘发生故障，则tablet服务器会挂掉。
+* Tablet server可以容忍磁盘故障，但是如果WAL和tablet元数据的磁盘发生故障，则tablet server会挂掉。
 * tablet的数据会被分开存储在各个tablet server的多个磁盘上，默认为3个磁盘，这样可以保证tablet server的可靠性。
 
 ```shell
@@ -550,7 +550,8 @@ kudu-client
 spark-submit --class org.apache.kudu.backup.KuduBackup kudu-backup2_2.11-1.10.0.jar \
   --kuduMasterAddresses master1-host,master-2-host,master-3-host \
   --rootPath hdfs:///kudu-backups \
-  foo bar
+  # foo表和bar表
+  foo bar 
 ```
 
 ### 恢复
