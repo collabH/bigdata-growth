@@ -153,7 +153,7 @@ MemRowSet 并不是以列式存储在内存中, 而是正常的 行式存储, �
 ### **Kudu 仅允许相同主键出现一次，但如何实现呢？**
 
 * 数据从 MemRowSets 落地到 DiskRowSets, 多个 DiskRowSets 的数据并非是全局有序的。意味着要确定待插入的 Primary key 是否已经存在，需要遍历所有的 DiskRowSets。因为一个 Tablet 可能有成百上千的 DiskRowSets，所以要求这个速度应该尽量的快。
-* 因此，上文提到的 Primary key Bloom Filter 便派上了用场。需要注意的是 Bloom Filter 只能确保 Primary key 不存在，但是不能保证 Primary key 一定存在。因此 Bloom Filter 实际上相当于一个剪枝(Purning)的作用。
+* 因此，上文提到的 Primary key Bloom Filter 便派上了用场。需要注意的是 Bloom Filter 只能确保 Primary key 不存在，但是不能保证 Primary key 一定存在。因此 Bloom Filter 实际上相当于一个剪枝(Pruning)的作用。
 * Primary key Bloom Filter 会以 LRU Cache 在内存中，Kudu 会尽量保证 Bloom Filter 会一直存放在内存中。
 * 此外，就像Parquet/ORC一样，DiskRowSet 存储了 Primary key 的`最大值/最小值`，并且这些范围值使用 interval tree去组织起来，这样可以在针对 Primary key 的查询时做进一步的剪枝。并且interval tree可以作为 compaction 时选取特定几个 DiskRowSet 的依据。
 * 对于不能被剪枝的 DiskRowSet，需要使用 Primary key (B-Tree) 去判断是非已经存在。这当然是很慢的，考虑到局部性原理，所以 Kudu 会缓存被访问过的 Primary key page。
