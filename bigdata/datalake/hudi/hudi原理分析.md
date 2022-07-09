@@ -27,7 +27,7 @@
 
 ## 构造HoodieRecord Rdd对象
 
-* `HoodieRecord Rdd`对象的构造先通过map算子提取`df中的scehma和数据`，构造avro的GenericRecords Rdd，然后Hudi会使用map算子封装为`HoodieRecord Rdd`。对于`HoodieRecord Rdd`主要由`currentLocation`,`newLocation`,`hoodieKey`,`data`组成。HoodileRecord数据结构是为后续数据去重和数据合并时提供基础。
+* `HoodieRecord Rdd`对象的构造先通过map算子提取`df中的scehma和数据`，构造avro的GenericRecords Rdd，然后Hudi会使用map算子封装为`HoodieRecord Rdd`。对于`HoodieRecord Rdd`主要由`currentLocation`,`newLocation`,`hoodieKey`,`data`组成。HoodieRecord数据结构是为后续数据去重和数据合并时提供基础。
 
 ![](./img/Hoodie对象生产过程.jpg)
 
@@ -110,7 +110,7 @@ hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启�
 
 ## 数据合并
 
-* COW会根据`位置信息中fileId` 重写parquet文件，在重写中如果数据是更新会`比较parquet文件的数据和当前的数据的大小`进行更新，完成更新数据和插入数据。而MOR模式会根据`fileId 生成一个log 文件`，将数据直接写入到log文件中，如果fileID的log文件已经存在，追加数据写入到log 文件中。与COW 模式相比少了数据比较的工作所以性能要好，但是在log 文件中可能保存多次写有重复数据在读log数据时候就不如cow模式了。还有在mor模式中log文件和parquet 文件都是存在的，log 文件的数据会达到一定条件和parqeut 文件合并。所以mor有`两个视图，ro后缀的视图是读优化视图（read-optimized）只查询parquet 文件的数据。rt后缀的视图是实时视图（real-time）查询parquet 和log 日志中的内容`。
+* COW会根据`位置信息中fileId` 重写parquet文件，在重写中如果数据是更新会`比较parquet文件的数据和当前的数据的大小`进行更新，完成更新数据和插入数据。而MOR模式会根据`fileId 生成一个log 文件`，将数据直接写入到log文件中，如果fileid的log文件已经存在，追加数据写入到log 文件中。与COW 模式相比少了数据比较的工作所以性能要好，但是在log 文件中可能保存多次写有重复数据在读log数据时候就不如cow模式了。还有在mor模式中log文件和parquet 文件都是存在的，log 文件的数据会达到一定条件和parqeut 文件合并。所以mor有`两个视图，ro后缀的视图是读优化视图（read-optimized）只查询parquet 文件的数据。rt后缀的视图是实时视图（real-time）查询parquet 和log 日志中的内容`。
 
 ### Copy On Write模式
 
@@ -142,7 +142,7 @@ hoodie.memory.spillable.map.path   默认值 /tmp/ ： 存放DiskBasedMap的路�
 hoodie.memory.merge.max.size       默认值 1024*1024*1024（1g）：内存map的最大容量
 ```
 
-5.构造sparkMergHelper 开始合并数据写入到新的快照文件。在SparkMergHelper 内部会构造一个BoundedInMemoryExecutor 的队列，在这个队列中会构造多个生产者和一个消费者（file 文件一般情况只有一个文件所以生产者也会是一个）。producers 会加载老数据的fileId文件里的数据构造一个迭代器，执行的时候先调用producers 完成初始化后调用consumer。而consumer被调用后会比较数据是否存在ExternalSpillableMap 中如果不存在重新写入数据到新的快照文件，如果存在调用当前的HoodileRecordPayload 实现类combineAndGetUpdateValue 方法进行比较来确定是写入老数据还是新数据，默认比较那个数据时间大。这里有个特别的场景就是硬删除，对于硬删除里面的数据是空的，比较后会直接忽略写入达到数据删除的目的。
+5.构造sparkMergeHelper 开始合并数据写入到新的快照文件。在SparkMergHelper 内部会构造一个BoundedInMemoryExecutor 的队列，在这个队列中会构造多个生产者和一个消费者（file 文件一般情况只有一个文件所以生产者也会是一个）。producers 会加载老数据的fileId文件里的数据构造一个迭代器，执行的时候先调用producers 完成初始化后调用consumer。而consumer被调用后会比较数据是否存在ExternalSpillableMap 中如果不存在重新写入数据到新的快照文件，如果存在调用当前的HoodileRecordPayload 实现类combineAndGetUpdateValue 方法进行比较来确定是写入老数据还是新数据，默认比较那个数据时间大。这里有个特别的场景就是硬删除，对于硬删除里面的数据是空的，比较后会直接忽略写入达到数据删除的目的。
 
 ### Merge On Read模式
 

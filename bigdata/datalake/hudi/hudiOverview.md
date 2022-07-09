@@ -1,7 +1,3 @@
-
-
-
-
 # 对比传统数据湖
 
 * 传统数据湖方案通过Hive来完成T+1级别的数据仓库，海量数据存储在HDFS上，通过Hive的元数据管理及SQL化查询来完成数据分析。
@@ -67,8 +63,9 @@
   * `CLEANS`:删除表中不再需要的`旧版本文件`的后台线程。
   * `DELTA_COMMIT`:`增量提交`指的是将一批记录原子写入`MergeOnRead`类型的表中，其中一些/所有的数据可以只写入增量日志。
   * `COMPACTION`:后台进行`COMPACTION`操作合并数据，例如基于log文件移动修改的行列格式等
-  * `ROLLBACK`:表示提交/增量提交不成功并回滚，删除在此期间在此期间产生的任何部分文件
+  * `ROLLBACK`:表示提交/增量提交不成功并回滚，删除在此期间产生的任何部分文件
   * `SAVEPOINT`:将某些文件组标记为“已保存”，以便清洁器不会删除它们。在灾难/数据恢复方案的情况下，它有助于将表恢复到时间轴上的点。
+  * `CLUSTERING`:clustering操作将hudi底层数据文件重新分布，防止小文件问题。
   
 * 任何给定的瞬间都可能处于以下状态之一:
   * `REQUESTED`:表示已安排的操作，但尚未启动,在`.hoodie`目录下是个空文件
@@ -236,7 +233,7 @@
 ![](./img/hudi_timeline.png)
 
 * 在10:00到10:20之间在Hudi表上发生的upserts，大约每5分钟，在Hudi时间轴上留下提交元数据，以及其他后台清理/压缩。需要做的一个关键观察是，提交时间指示数据的到达时间`(commit time)`(10:20AM)，而实际数据组织反映实际时间或事件时间，数据的目的是(从07:00开始的每小时桶)。在权衡延迟和数据完整性时，这是两个关键概念。
-* 当有延迟到达的数据(原定为9:00到达>的数据在10:20晚了1小时)时，我们可以看到upsert将新数据生成到更旧的时间桶/文件夹中。在时间轴的帮助下，尝试获取从10:00小时以来成功提交的所有新数据的增量查询，能够非常有效地只使用更改的文件，而不必扫描所有时间桶> 07:00。这里主要是延迟的时间虽然10点20才commit但是他的数据增量逻辑9点的分区中，根据commit time增量读取仍然能读取到延迟的数据。
+* 当有延迟到达的数据(原定为9:00到达>的数据在10:20晚了1小时)时，我们可以看到upsert将新数据生成到更旧的时间桶/文件夹中。在时间轴的帮助下，尝试获取从10:00以来成功提交的所有新数据的增量查询，能够非常有效地只使用更改的文件，而不必扫描所有时间桶> 07:00。这里主要是延迟的时间虽然10点20才commit但是他的数据增量逻辑9点的分区中，根据commit time增量读取仍然能读取到延迟的数据。
 
 ## 文件布局
 
@@ -260,29 +257,29 @@
 
 * Copy On Write:使用专用的columnar文件格式存在数据(例如parquet)，通过在`写入期间执行同步合并`，简单地更新版本和重写文件。
   * 寻找一种简单的替换现有的parquet表的方法，而无需实时数据。
-  * 当前的工作流是重写整个表/分区以处理更新，而每个分区中实际上只有几个文件发生更改。
+  * 当前Hive的写入流程是重写整个表/分区以处理更新，而每个分区中实际上只有几个文件发生更改。
   * 想使操作更为简单（无需compact等），并且摄取/写入性能仅受parquet文件大小以及受更新影响文件数量限制
-  * 工作流很简单，并且不会突然爆发大量更新或插入到较旧的分区。COW写入时付出了合并成本，因此，这些突然的更改可能会阻塞摄取，并干扰正常摄取延迟目标。
+  * 数据流很简单，并且不会突然爆发大量更新或插入到较旧的分区。COW写入时付出了合并成本，因此，这些突然的更改可能会阻塞摄取，并干扰正常摄取延迟目标。
 * Merge On Read:使用混合的columnar(例如parquet)+row based(例如avro)文件格式来存储数据。更新被记录到增量文件中，然后被compact以同步或异步地生成新版本的columnar文件。
   * 希望数据尽快被摄取并尽可能快地可被查询。
-  * 工作负载可能会突然出现模式的峰值/变化（例如，对上游数据库中较旧事务的批量更新导致对DFS上旧分区的大量更新）。异步压缩（Compaction）有助于缓解由这种情况引起的写放大，而正常的提取则需跟上上游流的变化。
+  * 适用于工作负载可能会突然出现模式的峰值/变化（例如，对上游数据库中较旧事务的批量更新导致对DFS上旧分区的大量更新）。异步压缩（Compaction）有助于缓解由这种情况引起的写放大，而正常的提取则需跟上上游流的变化。
 
 #### 俩种表类型的对比
 
-| Trade-off           | CopyOnWrite                     | MergeOnRead                              |
-| ------------------- | ------------------------------- | ---------------------------------------- |
-| Data Latency        | Higher                          | Lower                                    |
-| Query Latency       | Lower                           | Higher                                   |
-| Update cost (I/O)   | Higher (rewrite entire parquet) | Lower (append to delta log)              |
-| Parquet File Size   | Smaller (high update(I/0) cost) | Larger (low update cost)                 |
-| Write Amplification | Higher                          | Lower (depending on compaction strategy) |
+| Trade-off           | CopyOnWrite                     | MergeOnRead                                                  |
+| ------------------- | ------------------------------- | ------------------------------------------------------------ |
+| Data Latency        | Higher                          | Lower                                                        |
+| Query Latency       | Lower                           | Higher                                                       |
+| Update cost (I/O)   | Higher (rewrite entire parquet) | Lower (append to delta log)                                  |
+| Parquet File Size   | Smaller (high update(I/0) cost) | Larger (low update cost)                                     |
+| Write Amplification | Higher                          | Lower (depending on compaction strategy)主要存在读放大问题，需要配合合适的compaction策略 |
 
 ### Query types
 
 * hudi支持以下查询类型：
   * `Snapshot Queries`：查询查看给定提交或压缩操作时表的最新快照。对于**MergeOnRead**，它通过动态合并最新文件片的base file和delte file来达到接近实时的数据(几分钟)。对于**CopyOnWrite**，它提供了现有parquet表的临时替代品，同时提供了插入/删除和其他写功能。
   * `Incremental Queries`:由于给定的commit/compaction，查询只能看到写入表的新数据。这有效地提供了更改流来支持增量数据管道。
-  * `Read Optimized Queries`:查询查看给定commit/compaction操作时的表的最新快照。仅公开最新文件片中的base/columnar文件，并保证与非hudi columnar表相比具有相同的columnar查询性能，只读取最近期compaction的base file。
+  * `Read Optimized Queries`:查询查看给定commit/compaction操作时的表的最新快照。仅公开最新文件片中的base/columnar文件，并保证与非hudi columnar表相比具有相同的columnar查询性能，只读取最近期compaction的base file。只读取近期commit的base file。
 
 #### 快照读和Read Optimized的对比
 
@@ -298,7 +295,7 @@
 
 ![](./img/copy_on_write.png)
 
-* 当数据写入的时候，对现有文件组的更新将为该文件组生成一个带有`提交即时时间戳`的新file slice，插入时，分配一个新的文件组，并为该文件组写入第一个file slice。这些file slice和它们的提交时间在上面用颜色编码。针对这样一个表运行的SQL查询(例如:select count(*)计算该分区中的总记录)，首先检查最近提交的时间轴，然后过滤每个文件组中除最近的文件片以外的所有文件片。如您所见，旧查询没有看到当前用粉红色编码的inflight提交文件，但在提交后开始的新查询将获得新数据。因此，查询不受任何写失败/部分写的影响，只在**已提交**的数据上运行。
+* 当数据写入的时候，对现有file group的更新将为该file group生成一个带有`提交即时时间戳`的新file slice，插入时，分配一个新的file group，并为该file group写入第一个file slice。这些file slice和它们的提交时间在上面用颜色编码。针对这样一个表运行的SQL查询(例如:select count(*)计算该分区中的总记录)，首先检查最近提交的时间轴，然后过滤每个file group中除最近的file slice以外的所有file slices。如您所见，旧查询没有看到当前用粉红色编码的inflight提交文件，但在提交后开始的新查询将获得新数据。因此，查询不受任何写失败/部分写的影响，只在**已提交**的数据上运行。
 * Copy On Write Table的目的，是从根本上改进目前表的管理方式
   * 第一类支持在文件级`原子更新数据，而不是重写整个表/分区`
   * 能够增量地消费更改，而不是浪费的扫描或摸索启发式
@@ -306,12 +303,12 @@
 
 ## Merge On Read Table
 
-* Merge on Read Table是`copy on write`的一个超集，从某种意义上说，它仍然支持对表的读优化查询，方法是只公开最新文件片中的base/columnar文件。另外，它将每个文件组传入的upserts存储到基于行的增量日志中，以便在查询期间动态地将增量日志应用到每个文件id的最新版本中，从而支持快照查询。因此，这种表类型试图智能地平衡读和写放大，以提供接近实时的数据。这里最重要的变化是压缩(compact)器，它现在仔细选择需要将哪些增量日志文件压缩到它们的columnar base文件中，以保持查询性能(较大的增量日志文件在查询端合并数据时会导致更长的合并时间)
+* Merge on Read Table是`copy on write`的一个超集，从某种意义上说，它仍然支持对表的Read Optimized查询，方法是只公开最新文件片中的base/columnar文件。另外，它将每个file group传入的upserts存储到基于行的delta log中，以便在查询期间动态地将delta log应用到每个文件id的最新版本中，从而支持快照查询。因此，这种表类型试图智能地平衡读和写放大，以提供接近实时的数据。这里最重要的变化是压缩(compact)器，它现在仔细选择需要将哪些增量日志文件压缩到它们的base file中，以保持查询性能(较多的增量日志文件在查询端合并数据时会导致更长的合并时间)
 
 <img src="./img/merge_on_read.png" style="zoom: 200%;" />
 
 * 我们现在大约每1分钟提交一次，这在其他表类型中是做不到的。
-* 在每个文件id组中，现在有一个增量日志文件，它保存对base columnar文件中的记录的传入更新。在这个示例中，增量日志文件保存了从10:05到10:10的所有数据。与之前一样，base columnar文件仍然使用提交进行版本控制。因此，如果只看base文件，那么表布局看起来就像COW表的副本。
+* 在每个fileid组中，现在有一个delta log文件，它保存对base columnar文件中的记录的传入更新。在这个示例中，增量日志文件保存了从10:05到10:10的所有数据。与之前一样，base columnar文件仍然使用提交进行版本控制。因此，如果只看base文件，那么表布局看起来就像COW表的副本。
 * 查询相同的底层表有两种方法: Read Optimized query 和 Snapshot query,这取决于我们选择的是查询性能还是数据的新鲜度。
 * 对于Read Optimized query，何时提交的数据可用的语义会以一种微妙的方式改变。注意，这种在10:10运行的查询不会看到上面10:05之后的数据，而Snapshot query总是看到最新的数据。
 * 当我们触发压缩时，决定压缩的是什么，这是解决这些难题的关键。通过实现压缩策略，将最新的分区与旧的分区进行比较，我们可以确保Read Optimized query以一致的方式查看X分钟内发布的数据。
@@ -354,8 +351,8 @@
 * `HoodieDeltaStreamer`实用程序(hudi-utilities-bundle的一部分)提供了从不同来源(如DFS或Kafka)获取信息的方法，具有以下功能。
   * 从kafka exactly once方式采集新事件，sqoop增量导入或`HiveIncrementalPuller`的输出或者一个DFS的目录下的文件
   * 支持接收`json、avro或者一个自定义的数据类型`的数据
-  * 管理checkpoints，robback&recovery
-  * 利用DFS或Confluentschema registry来管理Avro的schema
+  * 管理checkpoints，rollback&recovery
+  * 利用DFS或Confluent schema registry来管理Avro的schema
   * 支持transformations插件
 
 ```shell
@@ -695,7 +692,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ![](./img/fileversion.jpg)
 
-### FileSlice
+### FileSlice（一个切片是一个版本）
 
 * 对于每个file group，可能有不同的文件版本。因此文件切片由特定版本的数据文件及其增量日志文件组成。对于 COW，最新的文件切片是指所有文件组的最新数据/基础文件。对于 MOR，最新文件切片是指所有文件组的最新数据/基础文件及其关联的增量日志文件。
 
