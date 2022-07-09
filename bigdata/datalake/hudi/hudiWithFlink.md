@@ -114,7 +114,7 @@ select * from t1;
 ## Compaction
 
 * 以下配置近支持实时compaction
-* 通过设置`compaction.async.enabled = false`关闭在线压缩，但我们仍然建议对写作业启用`compaction.schedule.enable`。然后，您可以通过脱机压缩来执行压缩计划。
+* 通过设置`compaction.async.enabled = false`关闭在线压缩，但我们仍然建议对写作业启用`compaction.schedule.enable`。然后，您可以通过离线压缩来执行压缩计划。
 
 | Option Name                   | Description                                             | Default       | Remarks                                                      |
 | ----------------------------- | ------------------------------------------------------- | ------------- | ------------------------------------------------------------ |
@@ -273,7 +273,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 
 | Option Name               | Required | Default | Remarks                                                      |
 | ------------------------- | -------- | ------- | ------------------------------------------------------------ |
-| `--path`                  | `frue`   | `--`    | 目标表存储在Hudi上的路径                                     |
+| `--path`                  | `true`   | `--`    | 目标表存储在Hudi上的路径                                     |
 | `--compaction-max-memory` | `false`  | `100`   | 压缩期间日志数据的索引映射大小，默认为100 MB。如果您有足够的内存，您可以打开这个参数 |
 | `--schedule`              | `false`  | `false` | 是否执行调度压缩计划的操作。当写进程仍在写时，打开此参数有丢失数据的风险。因此，开启该参数时，必须确保当前没有写任务向该表写入数据 |
 | `--seq`                   | `false`  | `LIFO`  | 压缩任务执行的顺序。默认情况下从最新的压缩计划执行。`LIFO`:从最新的计划开始执行。`FIFO`:从最古老的计划执行。 |
@@ -300,7 +300,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 | hoodie.datasource.write.recordkey.field    | N        | uuid                                 | Record key field. Value to be used as the `recordKey` component of `HoodieKey`. Actual value will be obtained by invoking .toString() on the field value. Nested fields can be specified using the dot notation eg: `a.b.c` |
 | hoodie.datasource.write.keygenerator.class | N        | SimpleAvroKeyGenerator.class         | Key generator class, that implements will extract the key out of incoming record |
 | write.tasks                                | N        | 4                                    | Parallelism of tasks that do actual write, default is 4      |
-| write.batch.size.MB                        | N        | 128                                  | Batch buffer size in MB to flush data into the underneath filesystem |
+| write.batch.size                           | N        | 128                                  | Batch buffer size in MB to flush data into the underneath filesystem |
 
 # Key Generation
 
@@ -315,7 +315,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 # Deletes
 
 * hudi支持2种类型删除hudi表数据，通过允许用户指定不同的记录有效负载实现。
-  * `Soft Deletes`:保留记录键，并将所有其他字段的值空出来。这可以通过确保表模式中适当的字段为空，并在将这些字段设置为空后简单地插入表来实现。
+  * `Soft Deletes`:保留记录键，并将所有其他字段的值空出来。这可以通过确保表schema中删除的字段为空，并在将这些字段设置为空后简单地插入表来实现。
   * `Hard Deletes`:更强的删除形式是物理地从表中删除记录的任何跟踪。这可以通过3种不同的方式实现。
     * 使用DataSource，设置`OPERATION.key()`为`DELETE_OPERATION_OPT_VAL`.这将会移除这个正在提交的数据集的全部记录。
     * 使用DataSource，设置`HoodieWriteConfig.WRITE_PAYLOAD_CLASS_NAME.key()`为`org.apache.hudi.EmptyHoodieRecordPayload`.这将会移除这个正在提交的数据集的全部记录。
@@ -335,7 +335,7 @@ set hive.input.format = org.apache.hudi.hadoop.hive.HoodieCombineHiveInputFormat
 
 ## precombine
 
-* hudi的`precombine`指定一个字段如果`recordKey和basePartitionPath一致`会基于该键进行compore取最大，可以实现Top One的效果，这样就可以不用基于flink提供的row number函数求top one。
+* hudi的`precombine`指定一个字段如果`recordKey和basePartitionPath一致`会基于该键进行compare取最大，可以实现Top one的效果，这样就可以不用基于flink提供的row number函数求top one。
 
 # Flink Hudi Connector源码分析
 
