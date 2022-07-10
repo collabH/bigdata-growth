@@ -64,12 +64,25 @@
 
 #### hudi
 
+##### quick start
+
 * [Hudi概览](bigdata/datalake/hudi/hudiOverview.md)
 * [Hudi整合Spark](bigdata/datalake/hudi/hudiWithSpark.md)
 * [Hudi整合Flink](bigdata/datalake/hudi/hudiWithFlink.md)
 * [Hudi调优实践](bigdata/datalake/hudi/hudi调优实践.md)
 * [Hudi原理分析](bigdata/datalake/hudi/hudi原理分析.md)
 * [hudi数据湖实践](bigdata/datalake/hudi/hudi数据湖实践.md)
+
+##### doc with source
+
+**配合官方文档和源码带从0到1学习hudi**
+
+* [Timeline](bigdata/datalake/hudi/docwithsource/timeline.md)
+
+##### article
+
+* [Flink基于Apache Hudi+Alluxio的数据湖实践](bigdata/datalake/hudi/article/Flink基于Apache%20Hudi+Alluxio的数据湖实践.md)
+* [Apache Hudi在LakeHouse趋势下的优势](bigdata/datalake/hudi/article/Apache%20Hudi在LakeHouse趋势下的优势.md)
 
 #### iceberg
 
