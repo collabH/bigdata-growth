@@ -78,6 +78,7 @@
 **配合官方文档和源码带从0到1学习hudi**
 
 * [Timeline](bigdata/datalake/hudi/docwithsource/timeline.md)
+* [TableType](bigdata/datalake/hudi/docwithsource/tabletype.md)
 
 ##### article
 
