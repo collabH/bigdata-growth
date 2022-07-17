@@ -30,8 +30,17 @@
 * 许多公司在NoSQL数据存储中存储了大量的事务性数据。大部分的更新会进入比较新的分区，少部分数据会进入旧分区。这种情况选择bloom index可以大幅度提升性能，此外，如果可以将键构造成具有一定的顺序，则通过范围修剪进一步减少要比较的文件的数量。Hudi构造了一个包含所有文件键范围的间隔树，并有效地过滤出与更新/删除记录中任何键范围不匹配的文件。
 * 有时候可能因为bloom filter的假阳性导致扫描的file大幅度增加可以通过`hoodie.bloom.index.filter.type=DYNAMIC_V0`配置动态根据文件大小去修改种子参数，从而降低bloom filter的假阳性。
 
+### 去重的新分区事件流场景
 
+* 这里如果使用k-v存储Hbase index会导致index存储线性增长，因为事实数据并且只新分区，使用带范围修剪的BLOOM索引是这里的最优解。我们可以利用时间来进行第一层过滤，并构造一个诸如event_ts + event_id这样的键，这样插入的记录具有单调递增的键。这可以通过在最新的表分区中修剪大量的文件来获得巨大的回报。
 
+### 随机修改场景
 
+* 这种场景涉及到很多分区的修改和删除因此不能通过范围去进行很好的剪枝，所以选择Hbase Index活Simple Index这类的k-v index更为合适。
 
 # Code
+
+## HoodieIndex
+
+* 索引底层抽象基础类，封装了通用的检索索引、更新索引等方法，其子类为`HBASE, INMEMORY, BLOOM, GLOBAL_BLOOM, SIMPLE, GLOBAL_SIMPLE, BUCKET, FLINK_STATE`索引类型的实现类。
+
