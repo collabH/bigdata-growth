@@ -44,3 +44,7 @@
 
 * 索引底层抽象基础类，封装了通用的检索索引、更新索引等方法，其子类为`HBASE, INMEMORY, BLOOM, GLOBAL_BLOOM, SIMPLE, GLOBAL_SIMPLE, BUCKET, FLINK_STATE`索引类型的实现类。
 
+### FlinkHoodieIndex
+
+* 将数据放入到List结构里，Flink内部使用的时候通过状态机制去进行共享存储。
+
