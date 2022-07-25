@@ -26,3 +26,7 @@ hs_err_pid*
 repository.iml
 bigdata/datalake/.DS_Store
 *.DS_Store
+.DS_Store
+bigdata/.DS_Store
+bigdata/engine/.DS_Store
+bigdata/engine/spark/.DS_Store
