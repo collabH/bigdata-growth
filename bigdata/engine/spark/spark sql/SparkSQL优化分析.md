@@ -1,8 +1,14 @@
 # AQE(Adaptive Query Execution )
 
-* 3.0.0之后特性，3.2.0默认开启，通过`spark.sql.adaptive.enabled`设置，默认优化合并shuffle write分区小文件、转换sort-merge join为broadcast join，join倾斜优化。
+* AQE作用于运行时执行计划优化阶段，如下图：
+
+![](../img/AQE.jpg)
+
+* 3.0.0之后特性，3.2.0默认开启，通过`spark.sql.adaptive.enabled`设置，默认优化合并shuffle write分区小文件、转换sort-merge join为broadcast join，join倾斜优化。可以基于运行期的统计信息，将Sort Merge Join 转换为Broadcast Hash Join;可以基于数据运行中间结果的统计信息，减少reducer数量，避免数据在shuffle期间的过量分区导致性能损失； 可以处理数据分布不均导致的skew join。 
 
 ## 合并shuffle后的分区
+
+![](../img/AQEcoalesce.jpg)
 
 * 通过设置`spark.sql.adaptive.enabled` 和`spark.sql.adaptive.coalescePartitions.enabled`为`true`开启shuffle分区合并，基于map端输出分析合并shuffle后的分区。不需要在通过`spark.shuffle.partition`设置特定的分区数，只需要设置`spark.sql.adaptive.coalescePartitions.initialPartitionNum`初始化分区配置spark就可以找到他合适的分区数。
 * 合并的分区为了保证IO顺序读写只会合并相邻的partition，并且spark提供个一个mapper可以读取多个分区的接口，保证读取多个合并的partition的时候只经过一次IO。
@@ -19,6 +25,10 @@
 
 * 当分析出运行时任何join方小于broadcast hash join设置的阈值则会转换为broadcast join。这不是表示broadcast hash join最高效，但是它优于sort-merge join，因为我们可以保证链接俩端排序并且能够本地读shuffle文件通过`spark.sql.adaptive.localShuffleReader.enabled`设置为`true`，`spark.sql.adaptive.autoBroadcastJoinThreshold`是转换为broadcast join的阈值，如果小于则可以将merge-sort join转换为broadcast join
 
+### sort-merge join转换broadcast join流程
+
+![image-20220815111414691](../img/AQEbroadcastjoin.jpg)
+
 ## 转换sort-merge join转换为shuffle hash join
 
 * 当shuffle分区数小于设置的阈值则会将sort-merge join转换为hash join,阈值通过` spark.sql.adaptive.maxShuffledHashJoinLocalMapThreshold`配置
@@ -29,6 +39,26 @@
 * `spark.sql.adaptive.skewJoin.enabled`当和`spark.sql.adaptive.enabled`同时为true时，spark会通过分裂(必要时复制)倾斜分区来动态处理sort-merge join的倾斜分区。
 * `spark.sql.adaptive.skewJoin.skewedPartitionFactor`，如果一个分区的大小大于这个因子乘以分区中值大小，并且大于`spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`，则认为该分区是倾斜的。
 * `spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes`,如果分区的字节大小大于这个阈值，并且大于`spark.sql.adaptive.skewJoin.skewedPartitionFactor`乘以分区大小中值，则认为分区是倾斜的。理想情况下，这个配置应该设置比`spark.sql.adaptive.advisoryPartitionSizeInBytes`大。
+
+# Join Hints
+
+* Spark3.x之后增加了Sort-Merge join、Shuffle hash join和Shuffle nested loop join需要根据对应的数据特点选择特定的Join方式。
+
+## Broadcast hash join
+
+* 适合一侧的数据集比较小的情况，没有shuffle、sort
+
+## Shuffle Hash Join
+
+* 需要shuffle的数据但是排序，可以处理大表，但是可能因为数据倾斜到时OOM
+
+## Sort-Merge Join
+
+* 稳定的。能够处理任何大小的数据量，需要shuffle和排序数据，在大多数情况下，当表大小很小时，速度会变慢
+
+## Shuffle Nested Loop Join
+
+* 不需要join key
 
 # RBO(Rule-base Optimization)
 
