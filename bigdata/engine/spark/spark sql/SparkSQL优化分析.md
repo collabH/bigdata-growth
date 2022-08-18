@@ -167,6 +167,15 @@ Cost = CostCPU * weight + CostIO * (1 - weight)
 - Join 树不再是 left-deep tree，因此 Join 3 与 Join 4 可并行进行，Join 5 与 Join 6 可并行进行
 - 最大的 Join 5 输出数据只有两百万条结果，Join 6 有 1.49 亿条结果，Join 7相当于小 Join
 
+## CBO的缺点
+
+* 统计信息过期或缺失导致估计错误
+* 收集统计信息代价较大(比如column histograms)
+* 某些谓词使用自定义UDF导致无法预估
+* 手动指定hint跟不上数据变化
+
+Spark3.x对这块进行了升级和修复，引用AQE完全基于精确的运行时统计信息进行优化，引入了一个基本的概念Query Stages，并且以Query Stage为粒度，进行运行时的优化。
+
 # 数据倾斜优化方案
 
 ## 不重复的key数据倾斜
