@@ -1,5 +1,3 @@
-
-
 # OverView
 
 * Flink On K8s Operator是Flink 1.15大版本推出的Flink On K8s方案，之前Flink社区提供的Flink Native K8s方式相对来说使用繁琐并且没有统一的容器管理方案，整体任务管理起来比较复杂。因此社区基于flink-kubernetes底层sdk开发基于operator的flink k8s方案，其提供更加成熟的容器管理方案。
@@ -65,5 +63,18 @@
   * Operator协调任何需要的更改并执行升级
 * 自定义资源能够在任何时间应用于集群中。Operator不断地根据期望状态进行调整，直到当前状态变为期望状态。在Operator中，所有生命周期管理操作都使用这个非常简单的原则来实现。
 
+## Flink资源生命周期
 
+* Operator管理者flink资源的生命周期，Flink资源的生命周期各个阶段如下图：
+
+![](../img/k8soperator资源生命周期.jpg)
+
+- CREATED : The resource was created in Kubernetes but not yet handled by the operator
+- SUSPENDED : The (job) resource has been suspended
+- UPGRADING : The resource is suspended before upgrading to a new spec
+- DEPLOYED : The resource is deployed/submitted to Kubernetes, but it’s not yet considered to be stable and might be rolled back in the future
+- STABLE : The resource deployment is considered to be stable and won’t be rolled back
+- ROLLING_BACK : The resource is being rolled back to the last stable spec
+- ROLLED_BACK : The resource is deployed with the last stable spec
+- FAILED : The job terminally failed
 
