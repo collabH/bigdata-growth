@@ -180,6 +180,12 @@
 * [StreamSource源解析](bigdata/engine/flink/sourcecode/StreamSource源解析.md)
 * [Flink状态管理与检查点机制](bigdata/engine/flink/sourcecode/Flink状态管理与检查点机制.xmind)
 
+##### devops
+###### Flink On K8s
+
+* [Flink On Native K8s实践](bigdata/engine/flink/devops/Flink%20On%20K8s.md)
+* [Flink On K8s Operator](bigdata/engine/flink/devops/Flink%20On%20K8s%20Operator.md)
+
 ##### Book
 
 ###### Flink内核原理与实现
@@ -204,7 +210,6 @@
 * [Flink踩坑指南](bigdata/engine/flink/practice/Flink踩坑.xmind)
 * [记录一次Flink反压问题](bigdata/engine/flink/practice/记录一次Flink反压问题.md)
 * [Flink SQL实践调优](bigdata/engine/flink/practice/Flink%20SQL调优.xmind)
-* [Flink On K8s实践](bigdata/engine/flink/practice/Flink%20On%20K8s.md)
 
 ##### Connector
 
