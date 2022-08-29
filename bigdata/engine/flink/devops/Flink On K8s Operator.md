@@ -84,10 +84,63 @@ helm install flink-kubernetes-operator flink-operator-repo/flink-kubernetes-oper
 * 根据官方提供的yaml配置提交一个flink job
 
 ```shell
+# 创建测试flink任务
 kubectl create -f https://raw.githubusercontent.com/apache/flink-kubernetes-operator/release-1.1/examples/basic.yaml
+# 查看容器日志
+kubectl logs -f deploy/basic-example
+# 暴露对应任务web port
+kubectl port-forward svc/basic-example-rest 8081
 ```
 
+* 通过localhost:8081就可以访问flink web dashboard，basic文件含义
 
+```yaml
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+apiVersion: flink.apache.org/v1beta1
+# 部署类型
+kind: FlinkDeployment
+metadata:
+  name: basic-example
+spec:
+  image: flink:1.15
+  flinkVersion: v1_15
+  flinkConfiguration:
+  # flink配置
+    taskmanager.numberOfTaskSlots: "2"
+  # flink service用户
+  serviceAccount: flink
+  # jm资源配置
+  jobManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  job:
+  # jar包地址
+    jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar
+    # 并行度
+    parallelism: 2
+    upgradeMode: stateless
+```
 
 # Architecture
 
@@ -121,3 +174,38 @@ kubectl create -f https://raw.githubusercontent.com/apache/flink-kubernetes-oper
 - ROLLED_BACK : The resource is deployed with the last stable spec
 - FAILED : The job terminally failed
 
+# Custom Resource
+
+* Flink Kubernetes操作员面向用户的核心API是FlinkDeployment和FlinkSessionJob自定义资源(CR)。自定义资源是k8s api的扩展和定义一个新的对象类型。FlinkDeployment CR(自定义资源)定义一个Flink Application和Session集群deployments。FlinkSessionJob的CR定义一个session任务在Session集群并且每个session集群可以运行多个FlinkSessionJob。
+* 一但Flink K8s Operator被安装和运行在k8s环境，它将会持续的监听FlinkDeployment和FlinkSessionJob对象，以检测新的CR和对现有CR的更改。
+* 俩种CR类型，FlinkDeployment和FlinkSessionJob
+  * Flink应用的管理通过FlinkDeployment
+  * 由FlinkDeployment管理的空Flink Session+由FlinkSessionJobs管理的多个作业。对会话任务的操作是相互独立的。
+
+## FlinkDeployment
+
+```yaml
+apiVersion: flink.apache.org/v1beta1
+# 部署类型
+kind: FlinkDeployment
+metadata:
+  namespace: namespace-of-my-deployment
+  name: my-deployment
+spec:
+  // Deployment specs of your Flink Session/Application
+```
+
+* 查看FlinkDeployment具体yaml配置
+
+```shell
+kubectl get flinkdeployment basic-example -o yaml
+```
+
+### FlinkDeployment spec描述
+
+* image:Docker用于运行Flink作业和任务管理器进程
+* flinkVersion:flink镜像的版本(v1_13,v1_14,v1_15)
+* serviceAccount:flink pod使用的k8s账户
+* taskManager，jobManager:job和task管理pod资源的描述(cpu、memory等)
+* flinkConfiguration:flink配置的字典，例如ck和ha配置
+* job:任务相关描述
