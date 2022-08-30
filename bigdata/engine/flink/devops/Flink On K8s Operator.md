@@ -209,3 +209,70 @@ kubectl get flinkdeployment basic-example -o yaml
 * taskManager，jobManager:job和task管理pod资源的描述(cpu、memory等)
 * flinkConfiguration:flink配置的字典，例如ck和ha配置
 * job:任务相关描述
+
+### Application Deployments
+
+* jarURI:任务jar包路径
+* parallelism: 任务并行度
+* upgradeMode: 作业的更新模式(stateless/savepoint/last-state)
+* state:任务的描述状态(运行/挂起)
+
+**创建一个新的namespace和serviceaccount**
+
+```shell
+# 创建namespace
+kubectl create namespace flink-operator
+# 创建serviceaccount
+kubectl create serviceaccount flink -n flink-operator
+# 赋予权限
+kubectl create clusterrolebinding flink-role-binding-flink-operator_flink \
+     --clusterrole=edit   --serviceaccount=flink-operator:flink
+clusterrolebinding.rbac.authorization.k8s.io/flink-role-binding-flink-operator_flink created
+```
+
+**FlinkDeployment模式flink job yaml**
+
+```yaml
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  namespace: flink-operator
+  name: flink-deployment-test
+spec:
+  image: flink:1.15
+  flinkVersion: v1_15
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+  serviceAccount: flink
+  jobManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  job:
+    jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar
+    parallelism: 2
+    upgradeMode: stateless
+    state: running
+```
+
+**启动对应flink任务**
+
+```shell
+kubectl apply -f your-deployment.yaml
+# 转发端口
+kubectl port-forward svc/flink-deployment-test-rest 8081 -n flink-operator
+
+## 如果遇到以下错误标识端口占用
+Unable to listen on port 8081: Listeners failed to create with the following errors: [unable to create listener: Error listen tcp4 127.0.0.1:8081: bind: address already in use unable to create listener: Error listen tcp6 [::1]:8081: bind: address already in use]
+error: unable to listen on any of the requested ports: [{8081 8081}]
+## 通过lsof kill对应应用
+lsof -i :8080
+kill -9 pid
+```
+
+* port-forward作用:https://kubernetes.io/zh-cn/docs/tasks/access-application-cluster/port-forward-access-application-cluster/
+
