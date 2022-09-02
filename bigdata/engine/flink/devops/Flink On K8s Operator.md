@@ -276,3 +276,128 @@ kill -9 pid
 
 * port-forward作用:https://kubernetes.io/zh-cn/docs/tasks/access-application-cluster/port-forward-access-application-cluster/
 
+## FlinkSessionJob
+
+* 整体的yaml文件的结构类似于FlinkDeployment
+
+```yaml
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkSessionJob
+metadata:
+  name: basic-session-job-example
+spec:
+  deploymentName: basic-session-cluster
+  job:
+    jarURI: https://repo1.maven.org/maven2/org/apache/flink/flink-examples-streaming_2.12/1.15.1/flink-examples-streaming_2.12-1.15.1-TopSpeedWindowing.jar
+    parallelism: 4
+    upgradeMode: stateless
+```
+
+### FlinkSessionJob spec描述
+
+* flink session的jar可以来着远程的资源，可以从不同的系统获取任务jar，例如支持从hadoop文件系统拉取jar需要改造原始flink operator打包新的镜像，如下：
+
+```dockerfile
+FROM apache/flink-kubernetes-operator
+ENV FLINK_PLUGINS_DIR=/opt/flink/plugins
+COPY flink-hadoop-fs-1.15-SNAPSHOT.jar $FLINK_PLUGINS_DIR/hadoop-fs/
+```
+
+### 限制
+
+* FlinkSessionJob目前还不支持`LastState`的升级模式
+
+### FlinkSessionJob Quick Start
+
+#### 启动一个Session Cluster
+
+* 基础yaml文件配置
+
+```yaml
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: basic-session-deployment-only-example
+spec:
+  image: flink:1.15
+  flinkVersion: v1_15
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+  serviceAccount: flink
+  jobManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+```
+
+* 部署deployment任务
+
+```shell
+kubectl apply -f basic-session-deployment-only-example.yaml
+```
+
+#### 添加任务至basic-session-deployment-only-example
+
+* 基础yaml文件配置
+
+```yaml
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+################################################################################
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkSessionJob
+metadata:
+  name: basic-session-job-only-example
+spec:
+# 部署的deployment名称
+  deploymentName: basic-session-deployment-only-example
+  job:
+    jarURI: https://repo1.maven.org/maven2/org/apache/flink/flink-examples-streaming_2.12/1.15.0/flink-examples-streaming_2.12-1.15.0-TopSpeedWindowing.jar
+    parallelism: 4
+    upgradeMode: stateless
+```
+
+* 添加任务运行
+
+```shell
+kubectl apply -f basic-session-job-only-example.yaml
+```
+
+
+
