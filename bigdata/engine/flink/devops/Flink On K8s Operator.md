@@ -399,5 +399,96 @@ spec:
 kubectl apply -f basic-session-job-only-example.yaml
 ```
 
+## 任务管理
 
+### Flink生命周期管理
+
+* flink operator的核心特性是如何去管理一个Flink应用程序的完整生命周期。
+  * 运行、挂起和删除应用
+  * 有状态和无状态的应用更新方式
+  * 触发和管理savepoint
+  * 处理错误，回滚损坏的升级
+* 以上特点都可以通过JobSpec来控制
+
+### 启动、挂起和删除应用
+
+* 取消/删除应用
+
+```shell
+kubectl delete flinkdeployment/flinksessionjob my-deployment
+```
+
+### 有状态和无状态应用升级
+
+* operator可以停止当前正在运行的作业(除非已经挂起或者redeploy)，并使用上次运行有状态应用程序时保留的最新spec和状态重新部署它。
+* 通过JobSpec的`upgradeMode`进行设置，支持以下值
+  * **stateless:**可以通过空状态来升级无状态应用
+  * **savepoint:**使用savepoint来升级。
+  * **last-state:**在任何应用程序状态下(即使作业失败)进行快速升级，都不需要健康的作业，因为它总是使用最后检查点信息。当HA元数据丢失时，可能需要手动恢复。
+
+|                        | Stateless               | Last State                                 | Savepoint                              |
+| ---------------------- | ----------------------- | ------------------------------------------ | -------------------------------------- |
+| Config Requirement     | None                    | Checkpointing & Kubernetes HA Enabled      | Checkpoint/Savepoint directory defined |
+| Job Status Requirement | None                    | HA metadata available                      | Job Running*                           |
+| Suspend Mechanism      | Cancel / Delete         | Delete Flink deployment (keep HA metadata) | Cancel with savepoint                  |
+| Restore Mechanism      | Deploy from empty state | Recover last state using HA metadata       | Restore From savepoint                 |
+| Production Use         | Not recommended         | Recommended                                | Recommended                            |
+
+#### last-state yaml配置
+
+```yaml
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: basic-checkpoint-ha-example
+spec:
+  image: flink:1.15
+  flinkVersion: v1_15
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+    state.savepoints.dir: file:///flink-data/savepoints
+    state.checkpoints.dir: file:///flink-data/checkpoints
+    high-availability: org.apache.flink.kubernetes.highavailability.KubernetesHaServicesFactory
+    high-availability.storageDir: file:///flink-data/ha
+  serviceAccount: flink
+  jobManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  podTemplate:
+    spec:
+      containers:
+        - name: flink-main-container
+          volumeMounts:
+            - mountPath: /flink-data
+              name: flink-volume
+      volumes:
+        - name: flink-volume
+          hostPath:
+            # directory location on host
+            path: /tmp/flink
+            # this field is optional
+            type: Directory
+  job:
+    jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar
+    parallelism: 2
+    upgradeMode: last-state
+    state: running
+```
+
+#### 应用重启没有spec变化
+
+* 在某些情况下，用户只是希望重启Flink部署来处理一些临时问题。可以通过restartNonce来配置重启次数
+
+```yaml
+ spec:
+    ...
+    restartNonce: 123
+```
+
+### savepoint管理
 
