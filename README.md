@@ -181,10 +181,12 @@
 * [Flink状态管理与检查点机制](bigdata/engine/flink/sourcecode/Flink状态管理与检查点机制.xmind)
 
 ##### devops
+
 ###### Flink On K8s
 
 * [Flink On Native K8s实践](bigdata/engine/flink/devops/Flink%20On%20K8s.md)
 * [Flink On K8s Operator](bigdata/engine/flink/devops/Flink%20On%20K8s%20Operator.md)
+* [Flink On K8s Operator Operations](bigdata/engine/flink/devops/Flink%20On%20K8s%20Operator%20Operation.md)
 
 ##### Book
 

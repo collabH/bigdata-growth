@@ -422,9 +422,9 @@ kubectl delete flinkdeployment/flinksessionjob my-deployment
 
 * operator可以停止当前正在运行的作业(除非已经挂起或者redeploy)，并使用上次运行有状态应用程序时保留的最新spec和状态重新部署它。
 * 通过JobSpec的`upgradeMode`进行设置，支持以下值
-  * **stateless:**可以通过空状态来升级无状态应用
-  * **savepoint:**使用savepoint来升级。
-  * **last-state:**在任何应用程序状态下(即使作业失败)进行快速升级，都不需要健康的作业，因为它总是使用最后检查点信息。当HA元数据丢失时，可能需要手动恢复。
+  * **stateless:** 可以通过空状态来升级无状态应用
+  * **savepoint:** 使用savepoint来升级。
+  * **last-state: **在任何应用程序状态下(即使作业失败)进行快速升级，都不需要健康的作业，因为它总是使用最后检查点信息。当HA元数据丢失时，可能需要手动恢复。
 
 |                        | Stateless               | Last State                                 | Savepoint                              |
 | ---------------------- | ----------------------- | ------------------------------------------ | -------------------------------------- |
@@ -491,4 +491,102 @@ spec:
 ```
 
 ### savepoint管理
+
+#### 手动savepoint触发
+
+* 通过`savepointTriggerNonce`来手动控制savepoint触发，改变`savepointTriggerNonce`的值将会触发一个新的savepoint
+
+```yaml
+job:
+    ...
+    savepointTriggerNonce: 123
+```
+
+#### 定期savepoint触发
+
+```yaml
+flinkConfiguration:
+    ...
+    kubernetes.operator.periodic.savepoint.interval: 6h
+```
+
+* 不能保证定期保存点的及时执行，因为不健康的作业状态或其他干扰用户操作可能会延迟它们的执行。
+
+#### savepoint history
+
+* operator可以动态跟踪由升级或手动保存点操作触发的保存点历史。
+
+```yaml
+flinkConfiguration:
+    ...
+		kubernetes.operator.savepoint.history.max.age: 24 h
+		kubernetes.operator.savepoint.history.max.count: 5
+```
+
+### Recovery of missing job deployments
+
+* 当启用Kubernetes HA时，操作员可以在用户或某些外部进程意外删除Flink集群部署的情况下恢复它。可以通过设置`kubernetes.operator.jm-deployment-recovery.enabled`在配置中关闭部署恢复。启用为false，但是建议保持该设置为默认的true值。
+
+## Pod Template
+
+* operator的CRD提供`flinkConfiguration`和`podTemplate`配置，pod template允许自定义Flink作业和任务管理器pod，例如指定卷安装，临时存储，sidecar容器等。
+* operator会合并job manager和task manger的通用和特定模板，以下为pod template demo
+
+```yaml
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  namespace: default
+  name: pod-template-example
+spec:
+  image: flink:1.15
+  flinkVersion: v1_15
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+  podTemplate:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: pod-template
+    spec:
+      serviceAccount: flink
+      containers:
+        # Do not change the main container name
+        - name: flink-main-container
+          volumeMounts:
+            - mountPath: /opt/flink/log
+              name: flink-logs
+        # Sample sidecar container
+        - name: fluentbit
+          image: fluent/fluent-bit:1.8.12-debug
+          command: [ 'sh','-c','/fluent-bit/bin/fluent-bit -i tail -p path=/flink-logs/*.log -p multiline.parser=java -o stdout' ]
+          volumeMounts:
+            - mountPath: /flink-logs
+              name: flink-logs
+      volumes:
+        - name: flink-logs
+          emptyDir: { }
+  jobManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+    podTemplate:
+      apiVersion: v1
+      kind: Pod
+      metadata:
+        name: task-manager-pod-template
+      spec:
+        initContainers:
+          # Sample sidecar container
+          - name: busybox
+            image: busybox:latest
+            command: [ 'sh','-c','echo hello from task manager' ]
+  job:
+    jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar
+    parallelism: 2
+```
 

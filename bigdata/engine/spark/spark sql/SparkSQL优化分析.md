@@ -355,3 +355,32 @@ public class SparkDataSkew {
 **劣势**
 
 * 需要将一个数据集整体扩大N倍，会增加资源消耗。
+
+# Spark ORC/Parquet和map task合并策略
+
+## Orc|Parquet读策略(小文件读取首先有基础参数要设置)
+
+```properties
+# 不开启读并发控制不生效
+spark.sql.hive.convertMetastoreOrc
+说明：设置为true，使用spark的reader和writer来处理orc表；设置为false，使用hive的serde处理
+默认：true
+spark.sql.hive.convertMetastoreParquet=true
+说明：设置为true，使用spark的reader和writer来处理orc表；设置为false，使用hive的serde处理
+默认：true
+```
+
+## 读并发控制
+
+```properties
+spark.sql.files.openCostInBytes
+说明：map读时小文件合并，降低map并发，小于该值的文件，将被合并
+默认值：4194304 (4 MB)
+spark.sql.files.maxPartitionBytes
+说明：map读时大文件拆分，提高map并发，超过该大小的文件，将被拆分
+默认值：134217728 (128 MB)
+spark.sql.files.minPartitionNum
+说明：map最小并行度
+默认值：无（等于spark.default.parallelism）
+```
+
