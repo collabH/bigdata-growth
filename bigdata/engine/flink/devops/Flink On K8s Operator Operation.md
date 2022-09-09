@@ -130,7 +130,7 @@ spec:
 * 安装自定义配置k8s operator
 
 ```shell
-helm install flink-kubernetes-operator helm/flink-kubernetes-operator -f examples/kustomize/values.yaml --post-renderer examples/kustomize/render
+helm install flink-kubernetes-operator flink-operator-repo/flink-kubernetes-operator -f examples/kustomize/sidecar/values.yaml --post-renderer examples/kustomize/sidecar/render
 ```
 
 * 具体kustomize使用方式可以查看https://github.com/kubernetes-sigs/kustomize
@@ -159,3 +159,83 @@ defaultConfiguration:
 
 * k8s operator支持通过operator ConfigMaps动态改变配置。动态operator配置默认是开启的，可以通过`kubernetes.operator.dynamic.config.enabled`设置为false关闭。时间线定期会校验动态配置是否改变，通过`kubernetes.operator.dynamic.config.check.interval`设置check间隔，默认为5分钟。
 * 通过`kubectl edit cm`或者`kubectl patch`修改configmap配置。
+
+# RBAC模型
+
+## Role-Based Access Control Model
+
+* 为了能够部署operator本身和Flink作业，我们定义了两个独立的Kubernetes角色。前者称为`flink-operator` 角色，用于管理flinkdeployment，为每个Flink作业和其他资源(如服务)创建和管理JobManager deployment。后者称为`flink`角色，作业的JobManagers使用它来创建和管理作业的TaskManagers和ConfigMaps。
+
+![](../img/rbac.jpg)
+
+* 这些service account和roles可以通过helm chart创建，默认情况下`flink-operator`角色是集群作用域(创建为`clusterrole`)，因此运行单个operator实例负责k8s的全部Flink deployments(jobs)，而不管它们部署到哪个`namespace`。某些环境的限制更严格，只允许使用namespace的角色，因此我们还通过`watchNamespaces`支持这个选项。
+* `flink`角色总是有namespace的，默认情况下它是在operator的namespace中创建的。当`watchNamespaces`被启用时，它将分别为所有被监视的namespace创建。
+
+## 在其他namesapce中运行作业的集群作用域Flink Operator
+
+* 切换运行是的namespace
+
+```shell
+kubectl config set-context --current --namespace=flink
+```
+
+* 创建service account、role和role binding
+
+```yaml
+kubectl apply -f - <<EOF
+# 创建flink ServiceAccount
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    app.kubernetes.io/name: flink-kubernetes-operator
+    app.kubernetes.io/version: 1.0.1
+  name: flink
+---
+# 创建role，角色名为flink
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/name: flink-kubernetes-operator
+    app.kubernetes.io/version: 1.0.1
+  name: flink
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - configmaps
+  verbs:
+  - '*'
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - '*'
+---
+# roleBinding，flink service account绑定flink role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: flink-kubernetes-operator
+    app.kubernetes.io/version: 1.0.1
+  name: flink-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flink
+subjects:
+- kind: ServiceAccount
+  name: flink
+EOF
+```
+
+* 运行对应任务
+
+```shell
+kubectl -f author_namespace_job.yaml
+```
+
