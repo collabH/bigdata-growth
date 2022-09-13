@@ -183,7 +183,6 @@ kubectl config set-context --current --namespace=flink
 
 ```yaml
 kubectl apply -f - <<EOF
-# 创建flink ServiceAccount
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -192,7 +191,6 @@ metadata:
     app.kubernetes.io/version: 1.0.1
   name: flink
 ---
-# 创建role，角色名为flink
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -215,7 +213,6 @@ rules:
   verbs:
   - '*'
 ---
-# roleBinding，flink service account绑定flink role
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -236,6 +233,62 @@ EOF
 * 运行对应任务
 
 ```shell
-kubectl -f author_namespace_job.yaml
+kubectl apply -f author_namespace_job.yaml
+```
+
+# Ingress
+
+## 访问Flink WebUI
+
+* 除了原生选项外，operator还支持创建ingress entries来使得外部访问UI，通过在`FlinkDeployment`的`ingress`字段可以定义相关配置
+
+## 配置ingress
+
+* 定义ingress class，通过配置`annotations`和`ingressClassName`可以通过`https://flink.k8s.io/flink/advanced-ingress/`来访问flink web ui。
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: advanced-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  namespace: flink
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: localhost
+  - http:
+      paths:
+      - path: /flink/advanced-ingress(/|$)(.*)
+        pathType: ImplementationSpecific
+        backend:
+          service:
+            name: advanced-ingress-rest
+            port:
+              number: 8081
+```
+
+* 配置nginx相关配置支持访问基本的url没有跟踪/可以重定向。当使用NGINX作为Ingress-controller时，这可以通过在Ingress定义中添加一个额外的annotations来实现:
+
+```yaml
+nginx.ingress.kubernetes.io/configuration-snippet: |
+if ($uri = "/default/advanced-ingress") {rewrite .* $1/default/advanced-ingress/ permanent;}
+```
+
+* 在`FlinkDeployment`中添加ingress配置
+
+```yaml
+metadata:
+  namespace: default
+  name: advanced-ingress
+spec:
+  image: flink:1.15
+  flinkVersion: v1_15
+  ingress:
+    template: "flink.k8s.io/{{namespace}}/{{name}}(/|$)(.*)"
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/rewrite-target: "/$2"
 ```
 
