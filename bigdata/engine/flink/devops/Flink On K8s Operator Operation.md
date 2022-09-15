@@ -238,6 +238,16 @@ kubectl apply -f author_namespace_job.yaml
 
 # Ingress
 
+## 基础环境
+
+* 安装ingress-controller
+
+```shell
+helm upgrade --install ingress-nginx ingress-nginx \
+  --repo https://kubernetes.github.io/ingress-nginx \
+  --namespace ingress-nginx --create-namespace
+```
+
 ## 访问Flink WebUI
 
 * 除了原生选项外，operator还支持创建ingress entries来使得外部访问UI，通过在`FlinkDeployment`的`ingress`字段可以定义相关配置
