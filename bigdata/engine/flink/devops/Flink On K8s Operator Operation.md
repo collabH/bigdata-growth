@@ -302,3 +302,74 @@ spec:
       nginx.ingress.kubernetes.io/rewrite-target: "/$2"
 ```
 
+# Operator升级
+
+## 正常的升级流程
+
+* 升级自定义资源Deployments(CRD)
+* 升级helm deployment
+
+### 升级CRD
+
+* 升级用于`FlinkDeployment和FlinkSessionJob`资源的crd
+
+```shell
+kubectl replace -f helm/flink-kubernetes-operator/crds/flinkdeployments.flink.apache.org-v1.yml
+kubectl replace -f helm/flink-kubernetes-operator/crds/flinksessionjobs.flink.apache.org-v1.yml
+```
+
+### 升级helm deployment
+
+```shell
+# Uninstall running Helm deployment
+helm uninstall flink-kubernetes-operator
+helm install ...
+```
+
+## 升级版本v1alpha1 -> v1beta1
+
+### 升级没有创建的FlinkDeployments
+
+```shell
+helm uninstall flink-kubernetes-operator
+kubectl delete crd flinkdeployments.flink.apache.org
+```
+
+### 升级已经存在的FlinkDeployments
+
+* 停止job并创建savepoint，前提任务配置要指定savepoint location
+
+```shell
+kubectl patch flinkdeployment/savepoint-job --type=merge -p '{"spec": {"job": {"state": "suspended", "upgradeMode": "savepoint"}}}'
+```
+
+* 删除job
+
+```shell
+kubectl delete flinkdeployment/savepoint-job
+```
+
+* 卸载旧的operator和crd
+
+```shell
+helm uninstall flink-kubernetes-operator
+kubectl delete crd flinkdeployments.flink.apache.org
+```
+
+* 安装新的operator和crd
+
+```shell
+helm repo update flink-operator-repo
+helm install flink-kubernetes-operator flink-operator-repo/flink-kubernetes-operator
+```
+
+* 重启任务,指定初始化savepoint路径
+
+```yaml
+spec:
+  ...
+  job:
+    initialSavepointPath: /flink-data/savepoints/savepoint-000000-aec3dd08e76d/_metadata
+  ...
+```
+
