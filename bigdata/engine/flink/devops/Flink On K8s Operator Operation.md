@@ -373,3 +373,9 @@ spec:
   ...
 ```
 
+* 加载savepoint成功标识
+
+```
+Starting job 00000000000000000000000000000000 from savepoint /flink-data/savepoints/savepoint-000000-2f40a9c8e4b9/_metadat
+```
+
