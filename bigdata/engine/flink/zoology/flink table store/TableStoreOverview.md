@@ -109,11 +109,11 @@ SELECT `interval`, COUNT(*) AS interval_cnt FROM
 
 ![](../../img/tablestore架构.jpg)
 
-* **读/写：**Table Store支持读写数据和执行OLAP查询的通用方法。
+* **读/写： ** Table Store支持读写数据和执行OLAP查询的通用方法。
   * 对于读，它支持读取数据来自1.历史快照(batch mode) 2.来自最新的offset(streaming mode) 3.混合方式读取增量快照数据
   * 对于写，支持从数据库的变更日志(CDC)的流同步或从离线数据的批量插入/覆盖。
-* **外部生态系统:**除了支持Flink以外，Table Store还支持通过其他计算引擎来读取例如Hive/Spark/Trino。
-* **内部原理:**Table Store使用混合存储体系结构，使用湖格式存储历史数据，使用消息队列系统存储增量数据。前者将列存文件存储在文件系统/对象存储中，并使用LSM树结构支持大量数据更新和高性能查询。后者使用Apache Kafka实时捕获数据。
+* **外部生态系统:**  除了支持Flink以外，Table Store还支持通过其他计算引擎来读取例如Hive/Spark/Trino。
+* **内部原理:**  Table Store使用混合存储体系结构，使用湖格式存储历史数据，使用消息队列系统存储增量数据。前者将列存文件存储在文件系统/对象存储中，并使用LSM树结构支持大量数据更新和高性能查询。后者使用Apache Kafka实时捕获数据。
 
 ## 统一的存储
 
@@ -233,3 +233,4 @@ CREATE TABLE MyTable (
 
 * Bucket key不能在表创建后更改。ALTER TABLE SET ('bucket-key' =…)或ALTER TABLE RESET ('bucket-key')将抛出异常。
 * Bucket的数量非常重要，因为它决定了最坏情况下的最大处理并行度。但不能太大，否则，系统会创建很多小文件。一般情况下，要求的文件大小为**128mb**，建议每个子桶保存在磁盘上的**数据大小为1gb左右**。
+
