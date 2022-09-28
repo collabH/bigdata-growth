@@ -183,7 +183,7 @@
 ##### zoology
 ###### Flink Table Store
 
-* [TableStoreOverView](./bigdata/engine/flink/zoology/flink%20table%20store/TableStoreOverview.md)
+* [TableStoreOverView](bigdata/engine/flink/zoology/flink%20table%20store/TableStoreOverview.md)
 
 ###### Flink CDC Connector
 
