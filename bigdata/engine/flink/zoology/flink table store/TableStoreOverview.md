@@ -234,3 +234,98 @@ CREATE TABLE MyTable (
 * Bucket key不能在表创建后更改。ALTER TABLE SET ('bucket-key' =…)或ALTER TABLE RESET ('bucket-key')将抛出异常。
 * Bucket的数量非常重要，因为它决定了最坏情况下的最大处理并行度。但不能太大，否则，系统会创建很多小文件。一般情况下，要求的文件大小为**128mb**，建议每个子桶保存在磁盘上的**数据大小为1gb左右**。
 
+## Primary Key
+
+* 主键是唯一的，并且被索引。Flink Table Store对数据进行了排序，这意味着系统将对每个bucket中的主键进行排序。如果没有定义主键，将使用所有字段进行排序。使用此特性，可以通过在主键上添加筛选条件来实现高性能查询。在设置复合主键时。一个经验法则是把最常查询的字段放在前面。
+
+## Partial Update
+
+* 通过`merge-engine`配置部分更新
+
+```sql
+CREATE TABLE MyTable (
+  product_id BIGINT,
+  price DOUBLE,
+  number BIGINT,
+  detail STRING,
+  PRIMARY KEY (product_id) NOT ENFORCED
+) WITH (
+  'merge-engine' = 'partial-update'
+);
+
+INSERT INTO MyTable
+SELECT product_id, price, number, CAST(NULL AS STRING) FROM Src1 UNION ALL
+SELECT product_id, CAST(NULL AS DOUBLE), CAST(NULL AS BIGINT), detail FROM Src2;
+```
+
+* 值字段在相同的主键下逐个更新为最新的数据，空值不覆盖数据。
+
+* For example, the inputs:
+
+  - <1, 23.0, 10, NULL>
+  - <1, NULL, NULL, ‘This is a book’>
+  - <1, 25.2, NULL, NULL>
+
+  Output:
+
+  - <1, 25.2, 10, ‘This is a book’>
+
+* 部分修改仅支持有主键的表、不支持streaming消费。
+
+## Pre-aggregate
+
+* `pre-aggregate`可以为每个字段设置聚合规则
+
+```sql
+-- 取price的最大值，取sales的总和
+CREATE TABLE MyTable (
+  product_id BIGINT,
+  price DOUBLE,
+  sales BIGINT,
+  PRIMARY KEY (product_id) NOT ENFORCED
+) WITH (
+  'merge-engine' = 'aggregation',
+  'fields.price.aggregate-function'='max',
+  'fields.sales.aggregate-function'='sum'
+);
+```
+
+### 支持的聚合函数和对应的数据类型
+
+* 支持`sum`, `max/min`, `last_non_null_value`, `last_value`, `listagg`, `bool_or/bool_and`
+  * `sum` supports DECIMAL, TINYINT, SMALLINT, INTEGER, BIGINT, FLOAT, DOUBLE data types.
+  * `max/min` support DECIMAL, TINYINT, SMALLINT, INTEGER, BIGINT, FLOAT, DOUBLE, DATE, TIME, TIMESTAMP, TIMESTAMP_LTZ data types.
+  * `last_non_null_value/last_value` support all data types.
+  * `listagg` supports STRING data types.
+  * `bool_and/bool_or` support BOOLEAN data type.
+
+> pre-aggregate仅支持有主键的表
+>
+> pre-aggregate不支持流式读取表
+>
+> pre-aggregate当前仅支持INSERT的改变
+
+## Append-only Table
+
+* 性能相比于支持update和去重的方式高很多，仅支持`INSERT_ONLY`数据
+
+### 创建Append-only Table
+
+* 通过`write-mode`设置为`append-only`来创建append-only表
+
+```sql
+CREATE TABLE IF NOT EXISTS T1 (
+    f0 INT,
+    f1 DOUBLE,
+    f2 STRING
+) WITH (
+    'write-mode' = 'append-only',
+    'bucket' = '1' --specify the total number of buckets
+)
+```
+
+* append-only表不能定义主键，与不定义主键的更改日志表不同。对于后者，可以更新或删除整个行，尽管没有主键。
+
+## 支持的flink数据类型
+
+* `MULTISET`不支持全部的`write-mode`,`MAP`仅支持非主键字段在一个主键表里。
