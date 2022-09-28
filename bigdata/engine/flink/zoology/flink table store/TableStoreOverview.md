@@ -109,7 +109,7 @@ SELECT `interval`, COUNT(*) AS interval_cnt FROM
 
 ![](../../img/tablestore架构.jpg)
 
-* **读/写： ** Table Store支持读写数据和执行OLAP查询的通用方法。
+* **读/写:**  Table Store支持读写数据和执行OLAP查询的通用方法。
   * 对于读，它支持读取数据来自1.历史快照(batch mode) 2.来自最新的offset(streaming mode) 3.混合方式读取增量快照数据
   * 对于写，支持从数据库的变更日志(CDC)的流同步或从离线数据的批量插入/覆盖。
 * **外部生态系统:**  除了支持Flink以外，Table Store还支持通过其他计算引擎来读取例如Hive/Spark/Trino。
