@@ -395,3 +395,90 @@ column_list:
   * compaction过程中读取文件所占用的内存，通过`num-sorted-run.compaction-trigger`可以调整最大多少个文件被合并。
   * 写入列式存储文件占用的内存，不能手动调整。
 
+# Query Table
+
+```sql
+-- 设置batch mode读取最新的快照
+SET 'execution.runtime-mode' = 'batch';
+SELECT * FROM MyTable;
+```
+
+## Query Engines
+
+* Table Stroe不仅支持原生的Flink SQL客户端也支持其它的主流引擎，如Trino、Hive等
+
+## 查询优化
+
+* 推荐指定分区和主键来进行查询，这样可以过滤掉大量数据（data-skipping）。
+* 下列函数可以加快数据过滤
+  * `=`
+  * `<`
+  * `<=`
+  * `>`
+  * `>=`
+  * `IN (...)`
+  * `LIKE 'abc%'`
+  * `IS NULL`
+* Table Store将按主键对数据进行排序，这加快了点查询和范围查询的速度。当使用复合主键时，查询过滤器最好在主键的最左边形成一个前缀，以获得良好的加速效果。
+
+## Streaming Query
+
+* Table支持Flink流式查询，Table Stroe是流批一体，可以根据`execution.runtime-mode`配置来查询全量或者增量数据
+
+```sql
+-- Batch mode, 读取最新的快照
+SET 'execution.runtime-mode' = 'batch';
+SELECT * FROM MyTable;
+
+-- Streaming mode, streaming reading, read incremental snapshot, read the snapshot first, then read the incremental
+SET 'execution.runtime-mode' = 'streaming';
+SELECT * FROM MyTable;
+
+-- Streaming mode, streaming reading, read latest incremental
+SET 'execution.runtime-mode' = 'streaming';
+SELECT * FROM MyTable /*+ OPTIONS ('log.scan'='latest') */;
+```
+
+* 不同的`log.scan`模式将结果呈现不同的消费模式
+
+| Scan Mode | Default | Description                                                  |
+| :-------- | :------ | :----------------------------------------------------------- |
+| FULL      | Yes     | FULL scan mode performs a hybrid reading with a snapshot scan and the streaming incremental scan.读取快照和增量数据，全量+增量 |
+| LATEST    | No      | LATEST scan mode only reads incremental data from the latest offset.只读取增量数据 |
+
+## Streaming Query on files
+
+* 你可以直接选择消费增量变化的湖存储文件通过streaming mode。与Kafka相比，这种模式的成本较低，但延迟较高，这取决于写入作业的检查点间隔。
+* 默认情况下，下行流消费是无序的(在键内有序)upsert数据流。如果期待一个有序的CDC流，并删除下游变更的日志数据，可以通过下列配置来实现：
+
+```sql
+CREATE TABLE T (...)
+WITH (
+    'changelog-producer' = 'input'
+)
+```
+
+* changelog-producer(none)和changelog-producer(input)的区别如下图所示:
+
+![](../../img/tablestroereadfilenone.jpg)
+
+* 当changelog-producer为none时，因为存储只保留upsert数据，而没有包含update_before的完整的更改日志数据，因此下游消费作业需要使用规范化节点来生成完整的更改日志。
+
+![](../../img/tablestroereadfileinput.jpg)
+
+* 当` changelog-producer`为input时，存储相信输入数据是一个完整的变更日志，以便下游消费也可以读取完整的变更日志。
+
+## Streaming Query on Kafka
+
+* 表可以配置一个日志系统例如kafka，数据可以双写文件存储和kafka topic在流模式智商。对于查询，将来可以通过混合读取来增量读取。
+
+```sql
+CREATE TABLE T (...)
+WITH (
+    'log.system' = 'kafka',
+    'kafka.bootstrap.servers' = '...',
+    'kafka.topic' = '...'
+)
+```
+
+* kafka topic的分区数需要和bucket的数量一致，默认情况下，数据只在检查点之后可见，这意味着流读取具有事务一致性。中间结果的可见性可以通过`log.consistency` = `eventual`.配置。
