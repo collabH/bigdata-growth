@@ -329,3 +329,69 @@ CREATE TABLE IF NOT EXISTS T1 (
 ## 支持的flink数据类型
 
 * `MULTISET`不支持全部的`write-mode`,`MAP`仅支持非主键字段在一个主键表里。
+
+# Write Table
+
+```sql
+INSERT { INTO | OVERWRITE } [catalog_name.][db_name.]table_name
+  [PARTITION part_spec] [column_list] select_statement
+
+part_spec:
+  (part_col_name1=val1 [, part_col_name2=val2, ...])
+
+column_list:
+  (col_name1 [, column_name2, ...])
+```
+
+* `STREAMING`mode写入需要开启checkpoint
+* `execution.checkpointing.unaligned=true` 不支持table store写`STREAMING`表
+* `execution.checkpointing.mode=AT_LEAST_ONCE` 不支持table store写`STREAMING`表
+
+## Parallelism
+
+* 推荐并行度小于buckets的数量，最好和bucket数量相等。
+
+| Option           | Required | Default | Type    | Description                                                  |
+| :--------------- | :------- | :------ | :------ | :----------------------------------------------------------- |
+| sink.parallelism | No       | (none)  | Integer | 定义sink operator的并行度，默认并行度通过上游算子的并行度来决定 |
+
+## Expiring Snapshot
+
+* Table Store生成1或2个快照预提交，为了防止过多的快照造成大量的小文件和冗余存储，Table Store写入默认值以消除过期的快照:
+
+| Option                    | Required | Default           | Type     | Description              |
+| :------------------------ | :------- | :---------------- | :------- | :----------------------- |
+| snapshot.time-retained    | No       | 1 h               | Duration | 完成的快照的最大保留时间 |
+| snapshot.num-retained.min | No       | 10                | Integer  | 完成的快照保存的最小数量 |
+| snapshot.num-retained.max | No       | Integer.MAX_VALUE | Integer  | 完成的快照保存的最大数量 |
+
+## Performance
+
+* TAble Store使用LSM数据结构，它本身支持大数据量的更新。更新的性能和查询的性能需要一个权衡，可以通过以下参数来配置：
+
+| Option                            | Required | Default | Type    | Description                                                  |
+| :-------------------------------- | :------- | :------ | :------ | :----------------------------------------------------------- |
+| num-sorted-run.compaction-trigger | No       | 5       | Integer | The sorted run number to trigger compaction. Includes level0 files (one file one sorted run) and high-level runs (one level one sorted run). |
+
+* compaction-trigger决定了compaction的频率。sorted-run配置的越小，compaction越多，反之越少。
+  * `num-sorted-run.compaction-trigger`越大，更新数据时的合并成本就越低，这可以避免许多无效的合并。但是，如果这个值太大，在合并文件时将需要更多的内存，因为每个FileReader将占用大量内存。
+  * `num-sorted-run.compaction-trigger`越小，查询的性能发越好，小文件将会被合并。
+
+## Write Stalls
+
+* 写入自动管理LSM的结构，这意味着会有异步线程不断地compaction，但如果写速度比compaction速度快，就可能发生写停顿。写将会停止。
+* 如果不限制写的速度，会存在以下问题：
+  * 磁盘空间会耗尽
+  * 增加读放大，极大程度降低读的性能
+
+| Option                      | Required | Default | Type    | Description                                                  |
+| :-------------------------- | :------- | :------ | :------ | :----------------------------------------------------------- |
+| num-sorted-run.stop-trigger | No       | 10      | Integer | The number of sorted-runs that trigger the stopping of writes.sorted-runs的数量触发写停止。 |
+
+## Memory
+
+* 在Table Store的sink写入器中，占用内存的主要位置有三个:
+  * MemTable的写入buffer，单个任务的全部写入器共享和抢占内存。内存的配置可以通过`write-buffer-size`来控制。
+  * compaction过程中读取文件所占用的内存，通过`num-sorted-run.compaction-trigger`可以调整最大多少个文件被合并。
+  * 写入列式存储文件占用的内存，不能手动调整。
+
