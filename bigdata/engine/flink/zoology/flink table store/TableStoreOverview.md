@@ -482,3 +482,87 @@ WITH (
 ```
 
 * kafka topic的分区数需要和bucket的数量一致，默认情况下，数据只在检查点之后可见，这意味着流读取具有事务一致性。中间结果的可见性可以通过`log.consistency` = `eventual`.配置。
+
+#  Lookup Join
+
+* Table Store支持lookup join，流数据join table store数据可以通过版本来获取不同时间点的数据。
+
+```sqlite
+-- Create a table store catalog
+CREATE CATALOG my_catalog WITH (
+  'type'='table-store',
+  'warehouse'='hdfs://nn:8020/warehouse/path' -- or 'file://tmp/foo/bar'
+);
+
+USE CATALOG my_catalog;
+
+-- Create a table in table-store catalog
+CREATE TABLE customers (
+  id INT PRIMARY KEY NOT ENFORCED,
+  name STRING,
+  country STRING,
+  zip STRING
+);
+
+-- Launch a streaming job to update customers table
+INSERT INTO customers ...
+
+-- 每次查询最新的数据
+-- enrich each order with customer information
+SELECT o.order_id, o.total, c.country, c.zip
+FROM Orders AS o
+         JOIN customers FOR SYSTEM_TIME AS OF o.proc_time AS c
+              ON o.customer_id = c.id;
+```
+
+* lookup join节点将会维护rocksdb缓存到本地并且拉取最新的表实时更新的数据，只拉取有意义的数据，因此过滤条件作用很大。
+* 为了避免过度使用本地磁盘，查找lookup join特性只适用于数千万以下数据量的表。
+
+## RocksDBOptions
+
+* 可以通过SQL Hints来指定不同的RocksDB配置
+
+```sql
+SELECT o.order_id, o.total, c.country, c.zip
+  FROM Orders AS o JOIN customers /*+ OPTIONS('lookup.cache-rows'='20000') */
+  FOR SYSTEM_TIME AS OF o.proc_time AS c ON o.customer_id = c.id;
+```
+
+# Rescale Bucket
+
+* 由于桶的总数会极大地影响性能，Table Store允许用户通过ALTER Table命令调优桶的数量，并通过INSERT OVERWRITE重新组织数据布局，而无需重新创建表/分区。当执行覆盖作业时，框架将自动扫描具有旧桶号的数据，并根据当前桶号哈希记录。
+
+## Rescale Overwrite
+
+```sql
+-- rescale number of total buckets
+ALTER TABLE table_identifier SET ('bucket' = '...')
+
+-- reorganize data layout of table/partition
+INSERT OVERWRITE table_identifier [PARTITION (part_spec)]
+SELECT ... 
+FROM table_identifier
+[WHERE part_spec]
+```
+
+* alter table只修改表的元数据不回重新组织已经存在的数据。重新组织已经存在的数据必须通过`INSERT  OVERWRITE`
+* rescale bucket number不影响正在运行的读写任务。
+* 一但bucket number被改变，新的`INSERT INTO`作业(写入未重组的现有表/分区)将抛出一个TableException，消息类似于
+
+>Try to write table/partition ... with a new bucket num ..., 
+>but the previous bucket num is ... Please switch to batch mode, 
+>and perform INSERT OVERWRITE to rescale current data layout first.
+
+* 对于分区表，不同的分区可能有不同的桶号。如:
+
+```sql
+ALTER TABLE my_table SET ('bucket' = '4');
+INSERT OVERWRITE my_table PARTITION (dt = '2022-01-01')
+SELECT * FROM ...;
+  
+ALTER TABLE my_table SET ('bucket' = '8');
+INSERT OVERWRITE my_table PARTITION (dt = '2022-01-02')
+SELECT * FROM ...;
+```
+
+* 在覆盖期间，确保没有其他作业写同一个表/分区。
