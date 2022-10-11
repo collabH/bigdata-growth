@@ -423,6 +423,12 @@
 
 * [数据中台读书笔记](datawarehouse/数据中台读书笔记.md)
 
+## books
+**数据笔记相关**
+### DDIA读书笔记
+
+* [数据系统基础](books/ddia/1.数据系统基础.md)
+
 ## devops
 
 * [shell命令](devops/Shell学习.xmind)
