@@ -23,6 +23,8 @@ bash sql-client.sh embedded -j ~/Downloads/hudi-flink-bundle_2.11-0.9.0.jar shel
 
 ## Insert Data
 
+* Flink sql
+
 ```sql
 -- sets up the result mode to tableau to show the results directly in the CLI
 set execution.result-mode=tableau;
@@ -51,6 +53,40 @@ INSERT INTO t1 VALUES
   ('id6','Emma',20,TIMESTAMP '1970-01-01 00:00:06','par3'),
   ('id7','Bob',44,TIMESTAMP '1970-01-01 00:00:07','par4'),
   ('id8','Han',56,TIMESTAMP '1970-01-01 00:00:08','par4');
+```
+
+* dataStream
+
+```java
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.data.RowData;
+import org.apache.hudi.common.model.HoodieTableType;
+import org.apache.hudi.configuration.FlinkOptions;
+import org.apache.hudi.util.HoodiePipeline;
+
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+String targetTable = "t1";
+String basePath = "file:///tmp/t1";
+
+Map<String, String> options = new HashMap<>();
+options.put(FlinkOptions.PATH.key(), basePath);
+options.put(FlinkOptions.TABLE_TYPE.key(), HoodieTableType.MERGE_ON_READ.name());
+options.put(FlinkOptions.PRECOMBINE_FIELD.key(), "ts");
+
+DataStream<RowData> dataStream = env.addSource(...);
+HoodiePipeline.Builder builder = HoodiePipeline.builder(targetTable)
+    .column("uuid VARCHAR(20)")
+    .column("name VARCHAR(10)")
+    .column("age INT")
+    .column("ts TIMESTAMP(3)")
+    .column("`partition` VARCHAR(20)")
+    .pk("uuid")
+    .partition("partition")
+    .options(options);
+
+builder.sink(dataStream, false); // The second parameter indicating whether the input data stream is bounded
+env.execute("Api_Sink");
 ```
 
 ## Update data
