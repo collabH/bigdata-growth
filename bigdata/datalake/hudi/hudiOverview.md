@@ -551,8 +551,8 @@ hoodie.write.lock.hivemetastore.table
 * 如果表名是`test`,表类型是`COW`
   * 通过`HoodieParquetInputFormat`格式支持`snapshot query和incremental query`，暴露完整的`columnar data`。
 * 如果表名是`test`,表类型是`MOR`
-  * 支持对`HoodieParquetRealtimeInputFormat`支持的表进行快照查询和增量查询(提供近实时数据)，公开base数据和delta file数据的合并视图。
-  * 支持对`HoodieParquetInputFormat`支持的表进行` read optimized query`，公开存储在base文件中的纯`columnar data`。
+  * 支持对`HoodieParquetRealtimeInputFormat`格式支持`snapshot query和incremental query`，(提供近实时数据)，可以读取base数据和delta file数据的合并视图。
+  * 支持对`HoodieParquetInputFormat`支持的表进行` read optimized query`，读取存储在base文件中的纯`columnar data`。
 
 ## 支持的能力
 
@@ -614,7 +614,7 @@ hoodie.write.lock.hivemetastore.table
 
 ## Spark SQL
 
-* 一旦Hudi表注册在hive的元数据说，它就可以通过Spark-Hive进行查询。它支持所有查询类型跨两种Hudi表类型，依赖于自定义Hudi输入格式。用户可以通过Spark-sql查询hudi表再启动的时候指定`--jars`或`--packages`为`hudi-spark-bundle`即可。
+* 一旦Hudi表注册在hive的元数据中，它就可以通过Spark-Hive进行查询。它支持所有查询类型跨两种Hudi表类型，依赖于自定义Hudi输入格式。用户可以通过Spark-sql查询hudi表再启动的时候指定`--jars`或`--packages`为`hudi-spark-bundle`即可。
 
 ### MERGE_ON_READ
 
@@ -682,7 +682,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ###  FileGroup
 
-* 通常根据存储的数据量，可能会有很多数据文件。每个数据文件及其对应的增量日志文件形成一个file group。在 COW 的情况下，它要简单得多，因为只有基本文件。
+* 通常根据存储的数据量，可能会有很多数据文件。每个data file及其对应的delta log file形成一个file group。在 COW 的情况下，它要简单得多，因为只有base file。
 
 ![](./img/filegroup.jpg)
 
@@ -694,7 +694,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ### FileSlice（一个切片是一个版本）
 
-* 对于每个file group，可能有不同的文件版本。因此文件切片由特定版本的数据文件及其增量日志文件组成。对于 COW，最新的文件切片是指所有文件组的最新数据/基础文件。对于 MOR，最新文件切片是指所有文件组的最新数据/基础文件及其关联的增量日志文件。
+* 对于每个file group，可能有不同的文件版本。因此file slice由特定版本的data file及其delta log file组成。对于 COW，最新的file slice是指所有file group的最新数据/基础文件。对于 MOR，最新file slice是指所有file group的最新数据/基础文件及其关联的增量日志文件。
 
 ## COW
 
@@ -708,7 +708,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ![](./img/cowfilegroup1.jpg)
 
-* 因此data_file1 和 data_file2 都将创建更新的版本，数据文件 1 V2 是数据文件 1 V1 的内容与数据文件 1 中传入批次匹配记录的记录合并。
+* 因此data_file1 和 data_file2 都将创建更新的版本，**data_file1 V2 是data_file1 V1 的内容与datafile1 中传入批次匹配记录的记录合并。**
 
   由于在写入期间进行合并，COW 会产生一些写入延迟。但是COW 的优势在于它的简单性，不需要其他表服务（如压缩）。
 
@@ -718,7 +718,7 @@ spark.sql("select `_hoodie_commit_time`, fare, begin_lon, begin_lat, ts from  hu
 
 ![](./img/morfilegroup.jpg)
 
-* 读取端将实时合并基本文件及其各自的增量日志文件。你可能会想到这种方式，每次的读取延迟都比较高（因为查询时进行合并），所以 Hudi 使用压缩机制来将数据文件和日志文件合并在一起并创建更新版本的数据文件。
+* 读取端将实时合并base file及其各自的delta log file。你可能会想到这种方式，每次的读取延迟都比较高（因为查询时进行合并），所以 Hudi 使用压缩机制来将base file和delta log file合并在一起并创建更新版本的数据文件。
 
 ![](./img/morfilegroup1.jpg)
 
