@@ -7,21 +7,21 @@
 1. `开始提交`：判断上次任务是否失败，如果失败会`触发回滚`操作。然后会根据当前时间生成一个事务开始的请求标识元数据。
 2. `构造HoodieRecord Rdd对象`：Hudi 会根据元数据信息构造HoodieRecord Rdd 对象，方便后续数据去重和数据合并。
 3. `数据去重`:一批增量数据中可能会有重复的数据，Hudi会根据主键对数据进行去重避免重复数据写入Hudi 表。
-4. `数据fileId位置信息获取`:在修改记录中可以根据索引获取当前记录所属文件的fileid，在数据合并时需要知道数据update操作向那个fileId文件写入新的快照文件。
+4. `数据文件fileId位置信息获取`:在修改记录中可以根据索引获取当前记录所属文件的fileid，在数据合并时需要知道数据update操作向那个fileId文件写入新的快照文件。
 5. `数据合并`：Hudi 有两种模式cow和mor。在cow模式中会`重写索引命中的fileId快照文件`；在mor 模式中根据fileId 追加到分区中的log 文件。
-6. `完成提交`：在元数据中生成`xxxx.commit`文件，只有生成commit 元数据文件，查询引擎才能根据元数据查询到刚刚upsert 后的数据。
-7. `compaction压缩`：主要是mor 模式中才会有，他会将mor模式中的xxx.log 数据合并到xxx.parquet 快照文件中去。
+6. `完成提交`：在元数据中生成`xxxx.commit`文件，只有生成commit 元数据文件，查询引擎才能根据元数据查询到刚刚写入的数据。
+7. `compaction`：主要是mor 模式中才会有，他会将mor模式中的xxx.log 数据合并到xxx.parquet base文件中去。
 8. `hive元数据同步`：hive 的元素数据同步这个步骤需要配置非必需操作，主要是对于hive 和presto 等查询引擎，需要依赖hive 元数据才能进行查询，所以hive元数据同步就是构造外表提供查询。
 
 **COW模式base data file文件生成过程**
 
 ![](./img/upsert执行流程1.jpg)
 
-* 对于Hudi 每次修改都是会在文件级别重新写入数据快照。查询的时候就会根据最后一次快照元数据加载每个分区小于等于当前的元数据的parquet文件。Hudi事务的原理就是通过元数据mvcc多版本控制写入新的快照文件，在每个时间阶段根据最近的元数据查找快照文件。因为是重写数据所以同一时间只能保证一个事务去重写parquet 文件。不过当前Hudi版本加入了并发写机制(OCC)，原理是`Zookeeper分布锁控制或者HMS提供锁的方式`， 会保证同一个文件的修改只有一个事务会写入成功。
+* **COW表:**Hudi 每次修改都是会在文件级别重新写入数据快照。查询的时候就会根据最后一次快照元数据加载每个分区`小于等于`当前的元数据的parquet文件。Hudi事务的原理就是通过元数据mvcc多版本控制写入新的快照文件，在每个时间阶段根据最近的元数据查找快照文件。因为是重写数据所以同一时间只能保证一个事务去重写parquet 文件。不过当前Hudi版本加入了并发写机制(OCC)，原理是`Zookeeper分布锁控制或者HMS提供锁的方式`， 会保证同一个文件的修改只有一个事务会写入成功。
 
 ## 开始提交&数据回滚
 
-* 在构造好spark 的rdd 后会调用 `df.write.format("hudi")` 方法执行数据的写入，实际会调用Hudi源码中的`HoodieSparkSqlWriter#write`方法实现。在执行任务前Hudi 会创建HoodieWriteClient 对象，并构造`HoodieTableMetaClient`调用`startCommitWithTime`方法开始一次事务。在开始提交前会获取hoodie 目录下的元数据信息，判断上一次写入操作是否成功，判断的标准是上次任务的快照元数据有xxx.commit后缀的元数据文件。如果不存在那么Hudi 会触发回滚机制，回滚是`将不完整的事务元数据文件删除，并新建xxx.rollback元数据文件。如果有数据写入到快照parquet 文件中也会一起删除`。
+* 在构造好spark的rdd 后会调用 `df.write.format("hudi")` 方法执行数据的写入，实际会调用Hudi源码中的`HoodieSparkSqlWriter#write`方法实现。在执行任务前Hudi 会创建HoodieWriteClient 对象，并构造`HoodieTableMetaClient`调用`startCommitWithTime`方法开始一次事务。在开始提交前会获取`.hoodie`目录下的元数据信息，判断上一次写入操作是否成功，判断的标准是上次任务的快照元数据是否有`xxx.commit`后缀的元数据文件。如果不存在那么Hudi 会触发回滚机制，回滚是`将不完整的事务元数据文件删除，并新建xxx.rollback元数据文件。如果有数据写入到base file parquet文件中也会一起删除`。
 
 ![](./img/开始提交.jpg)
 
