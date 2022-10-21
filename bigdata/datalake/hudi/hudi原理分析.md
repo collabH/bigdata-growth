@@ -122,7 +122,7 @@ hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启�
 
 2. 统计完成后会将结果写入到workLoadProfile 对象的map 中，这个时候已经完成合并数据的前置条件。Hudi会调用saveWorkloadProfileMetadataToInfilght 方法写入infight标识文件到.hoodie元数据目录中。在workLoadProfile的统计信息中套用的是类似双层map数据结构， 统计是到fileid 文件级别。
 
-3. 根据workLoadProfile统计信息生成自定义分区 ，这个步骤就是分桶的过程。首先会对更新的数据做分桶，因为是更新数据在合并时要么覆盖老数据要么丢弃，所以不存在parquet文件过于膨胀，这个过程会给将要发生修改的fileId都会添加一个桶。然后会对新增数据分配桶，新增数据分桶先获取分区路径下所有的fileid 文件， 判断数据是否小于100兆。小于100兆会被认为是小文件后续新增数据会被分配到这个文件桶中，大于100兆的文件将不会被分配桶。获取到小文件后会计算每个fileid 文件还能存少数据然后分配一个桶。如果小文件fileId 的桶都分配完了还不够会根据数据量大小分配n个新增桶。最后分好桶后会将桶信息存入一个map 集合中，当调用自定义实现`getpartition`方法时直接向map 中获取。所以spark在运行的时候一个桶会对应一个分区的合并计算。
+3. 根据workLoadProfile统计信息生成自定义分区 ，这个步骤就是分桶的过程。首先会对更新的数据做分桶，因为是更新数据在合并时要么覆盖老数据要么丢弃，所以不存在parquet文件过于膨胀，这个过程会给将要发生修改的fileId都会添加一个桶。然后会对新增数据分配桶，新增数据分桶先获取分区路径下所有的fileid 文件， 判断数据是否小于100MB。小于100MB会被认为是小文件后续新增数据会被分配到这个文件桶中，大于100MB的文件将不会被分配桶。获取到小文件后会计算每个fileid 文件还能存多少数据然后分配一个桶。如果小文件fileId 的桶都分配完了还不够会根据数据量大小分配n个新增桶。最后分好桶后会将桶信息存入一个map 集合中，当调用自定义实现`getpartition`方法时直接向map 中获取。所以spark在运行的时候一个桶会对应一个分区的合并计算。
 
    **分桶参数**
 
@@ -135,7 +135,7 @@ hoodie.copyonwrite.insert.split.size   默认500000 ：精确控制一个fileid�
 hoodie.copyonwrite.insert.auto.split   默认true : 是否开启自动分桶。
 ```
 
-4.分桶结束后调用handleUpsertPartition合并数据。首先会获取map 集合中的桶信息，桶类型有两种`新增和修改`两种。如果桶fileid文件只有新增数据操作，直接追加文件或新建parquet文件写入就好，这里会调用`handleInsert`方法。如果桶fileid文件既`有新增又有修改或只有修改一定会走handUpdate方法`。这里设计的非常的巧妙`对于新增多修改改少的场景大部分的数据直接可以走新增的逻辑可以很好的提升性能`。对于handUpdate方法的处理会先构造HoodieMergeHandle对象初始化一个map集合，这个map集合很特殊拥有存在内存的map集合和存在磁盘的map 集合，这个map集合是用来存放所有需要update数据的集合用来遍历fileid旧文件时查询文件是否存在要不要覆盖旧数据。这里使用内存加磁盘为了避免update桶中数据特别大情况可以将一部分存磁盘避免jvm oom。update 数据会优先存放到内存map如果内存map不够才会存在磁盘map，而内存Map默认大小是1g 。DiskBasedMap 存储是key信息存放的还是record key ,value 信息存放value 的值存放到那个文件上，偏移量是多少、存放大小和时间。这样如果命中了磁盘上map就可以根据value存放的信息去获取hoodieRecord了。
+4.分桶结束后调用handleUpsertPartition合并数据。首先会获取map 集合中的桶信息，桶类型有两种`新增和修改`两种。如果桶fileid文件只有新增数据操作，直接追加文件或新建parquet文件写入就好，这里会调用`handleInsert`方法。如果桶fileid文件既`有新增又有修改或只有修改一定会走handUpdate方法`。这里设计的非常的巧妙`对于新增多修改改少的场景大部分的数据直接可以走新增的逻辑可以很好的提升性能`。对于handUpdate方法的处理会先构造HoodieMergeHandle对象初始化一个map集合，这个map集合很特殊拥有存在内存的map集合和存在磁盘的map 集合，这个map集合是用来存放所有需要update数据的集合用来遍历fileid旧文件时查询文件是否存在要不要覆盖旧数据。这里使用内存加磁盘为了避免update桶中数据特别大情况可以将一部分`存磁盘`避免jvm oom。update 数据会优先存放到内存map如果内存map不够才会存在磁盘map，而内存Map默认大小是1g 。DiskBasedMap 存储是key信息存放的还是record key ,value 信息存放value 的值存放到那个文件上，偏移量是多少、存放大小和时间。这样如果命中了磁盘上map就可以根据value存放的信息去获取hoodieRecord了。
 
 ```properties
 hoodie.memory.spillable.map.path   默认值 /tmp/ ： 存放DiskBasedMap的路径
@@ -159,16 +159,16 @@ hoodie.logfile.data.block.max.size  默认值：256 * 1024 * 1024（256兆） �
 
 ![](./img/索引更新.jpg)
 
-* 数据写入到log文件或者是parquet 文件，这个时候需要更新索引。简易索引和布隆索引对于他们来说索引在parquet文件中是不需要去更新索引的。这里索引更新只有HBase索引和内存索引需要更新。内存索引是更新通过map 算子写入到内存map上，HBase索引通过map算子put到HBase上。
+* 数据写入到log文件或者是parquet 文件，这个时候需要更新索引。`简易索引和布隆索引`对于他们来说索引在parquet文件中是不需要去更新索引的。这里索引更新只有`HBase索引和内存索引`需要更新。内存索引是更新通过map 算子写入到内存map上，HBase索引通过map算子put到HBase上。
 
 ## 完成提交
 
 ### 提交&元数据归档
 
-* 上述操作如果都成功且写入时writeStatus中没有任何错误记录，Hudi 会进行完成事务的提交和元数据归档操作，步骤如下
+* 上述操作如果都成功且写入时writeStatus中没有任何错误记录，Hudi 会进行完成事务的提交和元数据归档操作，步骤如下：
+  * sparkRddWriteClient 调用commit 方法，首先会向Hdfs 上提交一个.commit 后缀的文件，里面记录的是writeStatus的信息包括写入多少条数据、fileID快照的信息、Schema结构等等。当commit 文件写入成功就意味着一次upsert 已经成功，Hudi 内的数据就可以查询到。
+  * 为了不让元数据一直增长下去需要对元数据做归档操作。元数据归档会先创建HoodieTimelineArchiveLog对象，通过HoodieTableMetaClient 获取.hoodie目录下所有的元数据信息，根据这些元数据信息来判断是否达到归档条件。如果达到条件构造HooieLogFormatWrite对象对archived文件进行追加。每个元数据文件会封装成 HoodieLogBlock 对象批量写入。**归档参数**
 
-1. sparkRddWriteClient 调用commit 方法，首先会向Hdfs 上提交一个.commit 后缀的文件，里面记录的是writeStatus的信息包括写入多少条数据、fileID快照的信息、Schema结构等等。当commit 文件写入成功就意味着一次upsert 已经成功，Hudi 内的数据就可以查询到。
-2. 为了不让元数据一直增长下去需要对元数据做归档操作。元数据归档会先创建HoodieTimelineArchiveLog对象，通过HoodieTableMetaClient 获取.hoodie目录下所有的元数据信息，根据这些元数据信息来判断是否达到归档条件。如果达到条件构造HooieLogFormatWrite对象对archived文件进行追加。每个元数据文件会封装成 HoodieLogBlock 对象批量写入。**归档参数**
 
 ```properties
 hoodie.keep.max.commits   默认30：最多保留多少个commit元数据，默认会在第31个commit的时候会触发一次元数据归档操作，由这个参数来控制元数据归档时机。
@@ -197,8 +197,8 @@ hoodie.cleaner.fileversions.retained  默认3 :在KEEP_LATEST_FILE_VERSIONS策�
 
 ### 数据compaction
 
-* 数据compaction是mor模式才会有的操作，目的是让log文件合并到新的field快照(data file)文件中。因为数据压缩也是spark 任务完成的，所以在运行时也对应的`xxx.compaction.requet`、`xxx.compaction.inflight`、`xxx.compaction`元数据生成记录每个阶段。数据压缩实现步骤如下：
-  * sparkRDDwirteClient 调用compaction方法构造BaseScheduleCompationActionExecutor对象并调用scheduleCompaction方法，计算是否满足数据压缩条件生成HoodieCompactionPlan执行计划元数据。如果满足条件会向hdfs 写入xxx.compation.request元数据标识请求提交spark任务。
+* 数据compaction是mor模式才会有的操作，目的是让log文件合并到新的field快照(data file)文件中。因为数据压缩也是spark任务完成的，所以在运行时也对应的`xxx.compaction.requet`、`xxx.compaction.inflight`、`xxx.compaction`元数据生成记录每个阶段。数据压缩实现步骤如下：
+  * sparkRDDwirteClient 调用compaction方法构造BaseScheduleCompationActionExecutor对象并调用scheduleCompaction方法，计算是否满足数据压缩条件生成HoodieCompactionPlan执行计划元数据。如果满足条件会向hdfs写入xxx.compation.request元数据标识请求提交spark任务。
   * BaseScheduleCompationActionExecutor会调用继承类SparkRunCompactionExecutor类并调用compact方法构造HoodieSparkMergeOnReadTableCompactor 对象来实现压缩逻辑，完成一切准备操作后向hdfs写入xxx.compation.inflight标识。
   * spark任务执行parallelize加载HooideCompactionPlan 的执行计划,然后调用compact迭代执行每个分区中log的合并逻辑。在 compact会构造HoodieMergelogRecordScanner 扫描文件对象，加载分区中的log构造迭代器遍历log中的数据写入ExtemalSpillableMap。这个ExtemalSpillableMap和cow 模式中内存加载磁盘的map 是一样的。至于合并逻辑是和cow模式的合并逻辑是一样的，这里不重复阐述都是调用cow模式的handleUpdate方法。
   * 完成合并操作会构造writeStatus结果信息，并写入xxx.compaction标识到hdfs中完成合并操作。
