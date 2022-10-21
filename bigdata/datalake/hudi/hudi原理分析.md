@@ -33,7 +33,7 @@
 
 * **currentLocation 当前数据位置信息**：只有数据在当前Hudi表中存在才会有，主要存放parquet文件的fileId，构造时默认为空，在查找索引位置信息时被赋予数据。
 * **newLocation 数据新位置信息**：与currentLocation不同不管是否存在都会被赋值，newLocation是存放当前数据需要被写入到那个fileID文件中的位置信息，构造时默认为空，在merge阶段会被赋予位置信息。
-* **HoodieKey 主键信息**：主要包含recordKey 和patitionPath 。recordkey 是由`hoodie.datasource.write.recordkey.field` 配置项根据列名从记录中获取的主键值。patitionPath 是分区路径。Hudi 会根据`hoodie.datasource.write.partitionpath.field` 配置项的列名从记录中获取的值作为分区路径。
+* **HoodieKey 主键信息**：主要包含recordKey和patitionPath 。recordkey是由`hoodie.datasource.write.recordkey.field` 配置项根据列名从记录中获取的主键值。patitionPath 是分区路径。Hudi 会根据`hoodie.datasource.write.partitionpath.field` 配置项的列名从记录中获取的值作为分区路径。
 * **data 数据**：data是一个泛型对象，泛型对象需要实现HoodieRecordPayload类，主要是实现合并方法和比较方法。默认实现OverwriteWithLatestAvroPayload类，需要配置`hoodie.datasource.write.precombine.field`配置项获取记录中列的值用于比较数据大小，去重和合并都是需要保留值最大的数据。
 
 ## 数据去重
@@ -43,7 +43,7 @@
 ![](./img/数据去重.jpg)
 
 * 在Spark client调用upsert 操作是Hudi会创建HoodieTable对象，并且调用upsert 方法。对于HooideTable 的实现分别有COW和MOR两种模式的实现。但是在数据去重阶段和索引查找阶段的操作都是一样的。调用`HoodieTable#upsert`方法底层的实现都是`SparkWriteHelper`。
-* 在去重操作中，会先使用map 算子提取`HoodieRecord中的HoodieatestAvroPayload的实现是保留时间戳最大的记录`。**这里要注意如果我们配置的是全局类型的索引，map 中的key 值是 HoodieKey 对象中的recordKey。**因为全局索引是需要保证所有分区中的主键都是唯一的，避免不同分区数据重复。当然如果是非分区表，没有必要使用全局索引。
+* 在去重操作中，会先使用map算子提取`HoodieRecord中的HoodieatestAvroPayload的实现是保留时间戳最大的记录`。**这里要注意如果我们配置的是全局类型的索引，map 中的key 值是 HoodieKey 对象中的recordKey。**因为全局索引是需要保证所有分区中的主键都是唯一的，避免不同分区数据重复。当然如果是非分区表，没有必要使用全局索引。
 
 ## 数据位置信息索引查找
 
@@ -69,7 +69,7 @@
 ![](./img/简易索引.jpg)
 
 1. 提取所有的分区路径和主键值。
-2. 根据分区路径加载所有涉及分区路径的parquet文件的数据主要是HooieKey和fileID两列的数据，构造<HoodieKey,HoodieRecordLocation> Rdd 对象。
+2. 根据分区路径加载所有涉及分区路径的parquet文件的数据主要是HooieKey和fileid两列的数据，构造<HoodieKey,HoodieRecordLocation> Rdd 对象。
 3. 同布隆索引一样以 Rdd 为左表和<HoodieKey,HoodieRecordLocation>Rdd 做左关联，提取HoodieRecordLocation位置信息赋值到HoodieRecord 的currentLocation变量上,最后得到新的HoodieRecord Rdd
 
 * 简易全局索引（GlobalSimpleIndex）
@@ -80,7 +80,7 @@
 
 1. 连接hbase 数据库
 2. 批量请求hbase 数据库
-3. 检查get 获取的数据是否为有效索引，这时Hudi 会连接元数据检查commit时间是否有效，如果无效currentLocation将不会被赋值。检查是否为有效索引的目的是当索引更新一半hbase 宕机导致任务失败，保证不会加载过期索引。避免hbase 索引和数据不一致导致数据进入错误的分区。
+3. 检查get 获取的数据是否为有效索引，这时Hudi 会连接元数据检查commit时间是否有效，如果无效currentLocation将不会被赋值。检查是否为有效索引的目的是**当索引更新一半hbase 宕机导致任务失败，保证不会加载过期索引。避免hbase 索引和数据不一致导致数据进入错误的分区**。
 4. 检查是否开启允许分区变更，这里的做法和全局布隆索引、全局简易索引的实现方式一样。
 
 ```properties
@@ -101,7 +101,7 @@ hoodie.index.hbase.rollback.sync   默认值false：rollback阶段是否开启�
 
 * **普通索引**：主要用于非分区表和分区不会发生分区列值变更的表。当然如果你不关心多分区主键重复的情况也是可以使用。他的优势是只会加载upsert数据中的分区下的每个文件中的索引，相对于全局索引需要扫描的文件少。并且索引只会命中当前分区的fileid 文件，需要重写的快照也少相对全局索引高效。但是某些情况下我们的设置的分区列的值就是会变那么必须要使用全局索引保证数据不重复，这样upsert 写入速度就会慢一些。其实对于非分区表他就是个分区列值不会变且只有一个分区的表，很适合普通索引，如果非分区表硬要用全局索引其实和普通索引性能和效果是一样的。
 * **全局索引**：分区表场景要考虑分区值变更，需要加载所有分区文件的索引比普通索引慢。
-* **布隆索引**：加载fileid 文件footer布隆过滤器，加载少量数据数据就能判断数据是否在文件存在。缺点是有一定的误判，但是merge机制可以避免重复数据写入。parquet文件多会影响索引加载速度。适合没有分区变更和非分区表。主键如果是类似自增的主键布隆索引可以提供更高的性能，因为布隆索引记录的有最大key和最小key加速索引查找。Hudi支持动态布隆过滤器（设置`hoodie.bloom.index.filter.type=DYNAMIC_V0`）。它可以根据文件里存放的记录数量来调整大小从而达到设定的伪正率。
+* **布隆索引**：加载fileid parquet文件footer布隆过滤器，加载少量数据数据就能判断数据是否在文件存在。缺点是有一定的误判，但是merge机制可以避免重复数据写入。parquet文件多会影响索引加载速度。适合没有分区变更和非分区表。主键如果是类似自增的主键布隆索引可以提供更高的性能，因为布隆索引记录的有最大key和最小key加速索引查找。Hudi支持动态布隆过滤器（设置`hoodie.bloom.index.filter.type=DYNAMIC_V0`）。它可以根据文件里存放的记录数量来调整大小从而达到设定的伪正率。
 * **全局布隆索引**：解决分区变更场景，原理和布隆索引一样，在分区表中比普通布隆索引慢。
 * **简易索引**：直接加载文件里的数据不会像布隆索引一样误判，但是加载的数据要比布隆索引要多，left join 关联的条数也要比布隆索引多。大多数场景没布隆索引高效，但是极端情况命中所有的parquet文件，那么此时还不如使用简易索引加载所有文件里的数据进行判断。
 * **全局简易索引**：解决分区变更场景，原理和简易索引一样，在分区表中比普通简易索引慢。建议优先使用全局布隆索引。
