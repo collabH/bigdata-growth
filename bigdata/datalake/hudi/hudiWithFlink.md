@@ -123,6 +123,37 @@ WITH (
 select * from t1;
 ```
 
+# Global Conguration
+
+* 全局配置可以通过修改`$FLINK_HOME/conf/flink-conf.yaml`来配置
+
+## Parallelism
+
+* 并行度相关
+
+| Option Name                     | Default | Type      | Description                                                  |
+| ------------------------------- | ------- | --------- | ------------------------------------------------------------ |
+| `taskmanager.numberOfTaskSlots` | `1`     | `Integer` | 单个TaskManager可以运行的并行operator或用户函数实例的数量。建议设置为> 4，实际值需根据数据量设置。会影响taskmanager的个数，如果最大并行度为4，改参数为1，则会生产4个tm，从而导致数据存在跨tm直接的传输。 |
+| `parallelism.default`           | `1`     | `Integer` | write.bucket_assign.tasks如果没有设置使用该值                |
+
+## Memory
+
+| Option Name                         | Default  | Type         | Description                                                  |
+| ----------------------------------- | -------- | ------------ | ------------------------------------------------------------ |
+| `jobmanager.memory.process.size`    | `(none)` | `MemorySize` | obManager的总进程内存大小。这包括JobManager JVM进程消耗的所有内存，包括总Flink内存、JVM元空间和JVM开销 |
+| `taskmanager.memory.task.heap.size` | `(none)` | `MemorySize` | taskexecutor的任务堆内存大小。这是预留给写缓存的JVM堆内存的大小 |
+| `taskmanager.memory.managed.size`   | `(none)` | `MemorySize` | taskexecutor的托管内存大小。这是由内存管理器管理的堆外内存的大小，预留给排序和RocksDB状态后端。如果选择RocksDB作为状态后端，则需要设置此内存 |
+
+## Checkpoint
+
+| Option Name                        | Default  | Type       | Description                                                  |
+| ---------------------------------- | -------- | ---------- | ------------------------------------------------------------ |
+| `execution.checkpointing.interval` | `(none)` | `Duration` | Setting this value as `execution.checkpointing.interval = 150000ms`, 150000ms = 2.5min. Configuring this parameter is equivalent to enabling the checkpoint |
+| `state.backend`                    | `(none)` | `String`   | The state backend to be used to store state. We recommend setting store state as `rocksdb` : `state.backend: rocksdb` |
+| `state.backend.rocksdb.localdir`   | `(none)` | `String`   | The local directory (on the TaskManager) where RocksDB puts its files |
+| `state.checkpoints.dir`            | `(none)` | `String`   | The default directory used for storing the data files and meta data of checkpoints in a Flink supported filesystem. The storage path must be accessible from all participating processes/nodes(i.e. all TaskManagers and JobManagers), like hdfs and oss path |
+| `state.backend.incremental`        | `false`  | `Boolean`  | Option whether the state backend should create incremental checkpoints, if possible. For an incremental checkpoint, only a diff from the previous checkpoint is stored, rather than the complete checkpoint state. If store state is setting as `rocksdb`, recommending to turn on |
+
 # Table Option
 
 * 通过Flink SQL WITH配置的表配置
@@ -143,7 +174,7 @@ select * from t1;
 | ---------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | `write.tasks`                | 写入器任务的并行度，每个写任务依次向1到N个桶写。默认的4      | `4`                                                          | 增加并行度对小文件的数量没有影响                             |
 | `write.bucket_assign.tasks`  | 桶分配操作符的并行性。无默认值，使用Flink parallelism.default | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 增加并行度也会增加桶的数量，从而增加小文件(小桶)的数量。     |
-| `write.index_boostrap.tasks` | index bootstrap的并行度，增加并行度可以提高bootstarp阶段的效率。因此，需要设置更多的检查点容错时间。默认使用Flink并行度 | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 只有当index. bootstrap .enabled为true时才生效                |
+| `write.index_boostrap.tasks` | index bootstrap的并行度，增加并行度可以提高bootstarp阶段的效率。因此，需要设置更多的检查点容错时间。默认使用Flink并行度 | [`parallelism.default`](https://hudi.apache.org/docs/flink-quick-start-guide#parallelism) | 只有当index.bootstrap .enabled为true时才生效                 |
 | `read.tasks`                 | Default `4`读操作的并行度(批和流)                            | `4`                                                          |                                                              |
 | `compaction.tasks`           | 实时compaction的并行度，默认为10                             | `10`                                                         | `Online compaction` 会占用写任务的资源，推荐使用offline compaction`](https://hudi.apache.org/docs/flink-quick-start-guide#offline-compaction) |
 
@@ -180,8 +211,8 @@ select * from t1;
 # Bulk Insert
 
 * 用于快照数据导入。如果快照数据来自其他数据源，可以使用bulk_insert模式将快照数据快速导入到Hudi中。
-* Bulk_insert消除了序列化和数据合并。用户`无需重复数据删除`，因此需要`保证数据的唯一性`。
-* Bulk_insert在批处理执行模式下效率更高。默认情况下，批处理执行方式根据分区路径对输入记录进行排序，并将这些记录写入Hudi，避免了频繁切换文件句柄导致的写性能下降。有序写入一个分区中不会频繁写换对应的数据分区
+* bulk_insert消除了序列化和数据合并。用户`无需重复数据删除`，因此需要`保证数据的唯一性`。
+* bulk_insert在批处理执行模式下效率更高。默认情况下，批处理执行方式根据分区路径对输入记录进行排序，并将这些记录写入Hudi，避免了频繁切换文件句柄导致的写性能下降。有序写入一个分区中不会频繁写换对应的数据分区
 * bulk_insert的并行度由`write.tasks`指定。并行度会影响小文件的数量。从理论上讲，bulk_insert的并行性是bucket的数量(特别是，当每个bucket写到最大文件大小时，它将转到新的文件句柄。最后，文件的数量>=` write.bucket_assign.tasks`)。
 
 | Option Name                              | Required | Default  | Remarks                                                      |
@@ -225,7 +256,7 @@ select * from t1;
 # Insert Mode
 
 * 默认情况下，Hudi对插入模式采用小文件策略:MOR将增量记录追加到日志文件中，COW合并 base parquet文件(增量数据集将被重复数据删除)。这种策略会导致性能下降。
-* 如果要禁止文件合并行为，可将`write.insert.deduplicate`设置为`false`，则跳过重复数据删除。每次刷新行为直接写入一个`now parquet`文件(MOR表也直接写入parquet文件)。
+* 如果要禁止文件合并行为，可将`write.insert.deduplicate`设置为`false`，则跳过重复数据删除。每次刷新行为直接写入一个`new parquet`文件(MOR表也直接写入parquet文件)。
 * 适用于能否在外部保证写入hudi cow表的数据是单调递增的或者可以不在乎重复数据的情况，但是可能会存在小文件问题。
 
 | Option Name                | Required | Default | Remarks                                                      |
