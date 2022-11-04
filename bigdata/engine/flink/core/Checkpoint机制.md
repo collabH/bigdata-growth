@@ -22,7 +22,7 @@
 
 * Flink实现方式
 
-    * 基于Chandy-Lamport算法的分布式快照
+    * 基于`Chandy-Lamport`算法的分布式快照
     * 将检查点的保存和数据处理分离开，不暂停整个应用，对Source进行`checkpoint barrier`控制
 
 * 检查点屏障(Checkpoint Barrier)
