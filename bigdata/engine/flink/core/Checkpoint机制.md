@@ -215,12 +215,12 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 
 ##### 定时器存储在RocksDB或JVM堆
 
-* 默认情况下timers存储在rocksDB中，这是更健壮和可扩展的选择。当性能调优只有少量计时器(没有窗口，在ProcessFunction中不使用计时器)的任务时，将这些计时器放在堆中可以提高性能。要小心使用此特性，因为基于堆的计时器可能会增加检查点时间，而且自然不能扩展到内存之外。
+* 默认情况下timers存储在rocksDB中，这是更健壮和可扩展的选择。当性能调优只有少量计时器(没有窗口，在ProcessFunction中不使用计时器)的任务时，将这些计时器放在`jvm heap`中可以提高性能。要小心使用此特性，因为基于堆的计时器可能会增加检查点时间，而且自然不能扩展到内存之外。
 
 ##### 优化RocksDB内存
 
 * 默认情况下RocksDB状态后端使用Flink管理的RocksDBs缓冲区和缓存的内存预算`state.backend.rocksdb.memory.managed: true`
-* 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率
+* 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率，writebuffer占用总内存的比例，有助于state写入的性能
 
 ## 状态一致性剖析
 
@@ -232,7 +232,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 ### 一致性分类
 
 * AT-MOST-ONCE 最多一次
-    * 当任务故障时，最简单的做法是什么都不敢，即不恢复丢失的状态，也不重播丢失的数据。
+    * 当任务故障时，最简单的做法是什么都不干，即不恢复丢失的状态，也不重播丢失的数据。
 * AT-LEAST-ONCE 至少一次
 * EXACTLY-ONCE 精准一次
 
@@ -259,7 +259,7 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 ### sink端
 
 * 从故障恢复时，数据不会重复写入外部系统
-* 幂等写入
+* 幂等写入，依赖下游主键或其他方式
 * 事务写入
     * Write-Ahead-Log WAL
         * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性写入sink系统
