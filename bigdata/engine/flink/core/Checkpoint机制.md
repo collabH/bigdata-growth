@@ -75,6 +75,11 @@ env.getCheckpointConfig().enableExternalizedCheckpoints(ExternalizedCheckpointCl
 
 // 允许在有更近 savepoint 时回退到 checkpoint
 env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
+
+// 部分任务结束后的 Checkpoint 
+Configuration config = new Configuration();
+config.set(ExecutionCheckpointingOptions.ENABLE_CHECKPOINTS_AFTER_TASKS_FINISH, false);
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
 ```
 
 * **设置重启策略**
