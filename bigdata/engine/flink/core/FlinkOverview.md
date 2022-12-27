@@ -28,7 +28,7 @@
   * spark采用RDD模型，spark Streaming的DStream相当于对RDD序列的操作，是一小批一小批的RDD集合统称为DStream(离散流)
   * flink基本数据模型是数据流，以及事件序列。
 * 运行时架构
-  * spark是批计算，将DAG划分为不同的stage，一个stage完成后才可以计算下一个，通过BFS方式进行调度。
+  * spark是批计算，将DAG划分为不同的stage，一个stage完成后才可以计算下一个，通过BFS（宽度优先搜索）方式进行调度。
   * flink是标准的流执行模式，一个事件在一个节点处理完后可以直接发往下一个节点进行处理，operator粒度
 
 # Flink集群架构
@@ -42,7 +42,7 @@
 - **Dispatcher**：负责接收客户端提交的执行程序，并传递给 JobManager 。除此之外，它还提供了一个 WEB UI 界面，用于监控作业的执行情况。
 - **ResourceManager** ：负责管理 slots 并协调集群资源。ResourceManager 接收来自 JobManager 的资源请求，并将存在空闲 slots 的 TaskManagers 分配给 JobManager 执行任务。Flink 基于不同的部署平台，如 YARN , Mesos，K8s 等提供了不同的资源管理器，当 TaskManagers 没有足够的 slots 来执行任务时，它会向第三方平台发起会话来请求额外的资源。
 
-<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-application-submission.png"/> </div>
+![flinkRuntimeComponet](../img/flinkRuntimeComponet.jpg)
 
 ## Task & SubTask
 
@@ -50,7 +50,7 @@
 
 * 在执行分布式计算时，Flink 将可以链接的算子 (operators) 链接到一起，这就是 Task。之所以这样做， 是为了减少线程间切换和缓冲而导致的开销，在降低延迟的同时可以提高整体的吞吐量。 但不是所有的 operator 都可以被链接，如下 keyBy 等操作会导致网络 shuffle 和重分区（类似于Spark根据宽窄依赖区分Stage），因此其就不能被链接，只能被单独作为一个 Task。  简单来说，一个 Task 就是一个可以链接的最小的操作链 (Operator Chains) 。如下图，source 和 map 算子被链接到一块，因此整个作业就只有三个 Task：
 
-<div align="center"> <img src="https://gitee.com/heibaiying/BigData-Notes/raw/master/pictures/flink-task-subtask.png"/> </div>
+  ![taskMangerRuntime](../img/taskMangerRuntime.jpg)
 
 * 解释完 Task ，我们在解释一下什么是 SubTask，其准确的翻译是： *A subtask is one parallel slice of a task*，即一个 Task 可以按照其并行度拆分为多个 SubTask。如上图，source & map 具有两个并行度，KeyBy 具有两个并行度，Sink 具有一个并行度，因此整个虽然只有 3 个 Task，但是却有 5 个 SubTask。Jobmanager 负责定义和拆分这些 SubTask，并将其交给 Taskmanagers 来执行，每个 SubTask 都是一个单独的线程。
 
