@@ -143,16 +143,23 @@ export HADOOP_CLASSPATH=/Users/babywang/Documents/reserch/studySummary/module/ha
 yarn-session.sh
 Usage:
    Optional
-     -D <arg>                        Dynamic properties 动态参数
-     -d,--detached                   Start detached # 后台进程
-     -jm,--jobManagerMemory <arg>    Memory for JobManager Container with optional unit (default: MB) 
-     -nm,--name                      Set a custom name for the application on YARN 自定义applicationName
-     -at,--applicationType           Set a custom application type on YARN 自定义Yarn的应用类型
-     -q,--query                      Display available YARN resources (memory, cores) 查看可用YARN的资源
-     -qu,--queue <arg>               Specify YARN queue. 指定YARN队列
-     -s,--slots <arg>                Number of slots per TaskManager 指定TaskManager可用的slot数
-     -tm,--taskManagerMemory <arg>   Memory per TaskManager Container with optional unit (default: MB)
-     -z,--zookeeperNamespace <arg>   Namespace to create the Zookeeper sub-paths for HA mode 高可用zookeeper的ZNODE名称
+     -at,--applicationType <arg>     设置yarn自定义applicationType
+     -D <property=value>             use value for given property
+     -d,--detached                   后台运行模式
+     -h,--help                       Help for the Yarn session CLI.
+     -id,--applicationId <arg>       Attach to running YARN session
+     -j,--jar <arg>                  flink jar路径
+     -jm,--jobManagerMemory <arg>    jm大小，单位mb
+     -m,--jobmanager <arg>           Set to yarn-cluster to use YARN execution mode.
+     -nl,--nodeLabel <arg>           指定yarn nodeLabel
+     -nm,--name <arg>                设置自定义yarn applicationName
+     -q,--query                      Display available YARN resources (memory, cores)
+     -qu,--queue <arg>               指定运行队列
+     -s,--slots <arg>                指定taskManager slot个数
+     -t,--ship <arg>                 Ship files in the specified directory (t for transfer)
+     -tm,--taskManagerMemory <arg>   设置tm大小，单位mb
+     -yd,--yarndetached              If present, runs the job in detached mode (deprecated; use non-YARN specific option instead)
+     -z,--zookeeperNamespace <arg>   Namespace to create the Zookeeper sub-paths for high availability mode
      
 # 通过—D动态参数方式覆盖flink-conf.yaml中的默认值
 yarn-session.sh -Dfs.overwrite-files=true -Dtaskmanager.memory.network.min=536346624.
@@ -176,7 +183,7 @@ flink run
 ### Pre-Job-Cluster模式
 
 * 整个Job会对应一个集群，每提交一个作业会根据自身的情况，都会单独向yarn申请资源，直到作业执行完成，一个作业的失败与否不会影响下一个作业的正常提交和运行。
-* 独享Dispatcher和RM，按需接受资源申请，适合规模大长时间运行的作业。
+* **独享Dispatcher和RM**，按需接受资源申请，适合规模大长时间运行的作业。
 
 ```shell
 flink run -t yarn-per-job -c dev.learn.flink.base.StreamingJob -d -yat flink -yjm 1024m -ytm 2048m -ynm test -ys 10 -p 2 -n flink-learn-1.0-SNAPSHOT.jar 
@@ -189,7 +196,7 @@ flink run -t yarn-per-job -c dev.learn.flink.base.StreamingJob -d -yat flink -yj
 flink run-application -t yarn-application -Djobmanager.memory.process.size=2048m -Dtaskmanager.memory.process.size=4096m  ./examples/batch/WordCount.jar
 ```
 
-* `yarn.provided.lib.dirs`提前在应用运行前提交的jar包
+* `yarn.provided.lib.dirs`flink classpath jars
 
 ```shell
 flink run-application -t yarn-application \
@@ -264,15 +271,15 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 * JobManager
   * 控制应用程序的主进程，每个应用程序会被一个不同的JobManager所控制执行。
   * JobManger会先接收到执行的应用程序，这个应用程序包含：作业图(JobGrap)、逻辑数据流图(logic dataflow graph)和打包了所有的类、库和其他资源的jar包。
-  * jobManager会把JobGraph转换成一个物理层面的数据流图，这个图被叫做“执行图”（ExecutionGraph），包含了所有可以并行执行的任务。
-  * JobManager会向RM请求执行任务必要的资源，就是tm所需的slot。一旦获取足够的资源，就会将执行图分发到真正运行它们的tm上。运行过程中，Jm负责所需要中央协调的操作，比如checkpoint、savepoint的元数据存储等。
+  * jobManager会把JobGraph转换成一个物理层面的数据流图，这个图被叫做“执行图”（ExecutionGraph），转换成可以并行执行的任务。
+  * JobManager会向ResourceManager请求执行任务必要的资源，就是TaskManager所需的slot。一旦获取足够的资源，就会将执行图分发到真正运行它们的TaskManager上。运行过程中，JobManager负责所需要中央协调的操作，比如checkpoint、savepoint的元数据存储等。
 * TaskManager
-  * 任务管理器中资源调度的最小单元是taskSlot。taskManager中的taskSlot数表示并发处理任务的数量。
-  * flink的工作进程存在多个，每个存在多个slot，slot的个数限制了tm执行任务的数量。
-  * 启动后tm向rm注册它的slot，收到rm的指令后，tm会将一个或多个slot提供给jm调用。jm可以向slot分配tasks来执行。
-  * 执行的过程中，一个tm可以跟其他运行同一个应用程序的tm交换数据。
+  * 任务管理器中资源调度的最小单元是taskSlot。TaskManager中的taskSlot数表示并发处理任务的数量。
+  * flink的工作进程存在多个，每个存在多个slot，slot的个数限制了TaskManager并发执行任务的数量。
+  * 启动后TaskManager向ResourceManager注册它的slot，收到ResourceManager的指令后，TaskManager会将一个或多个slot提供给JobManager调用。JobManager可以向slot分配tasks来执行。
+  * 执行的过程中，一个TaskManager可以跟其他运行同一个应用程序的TaskManager交换数据。（跨TaskManger网络传输）
 * ResourceManager
-  * ResourceManager负责Flink集群中的资源取消/分配和供应-它管理任务插槽，这些任务插槽是Flink集群中资源调度的单位（请参阅TaskManagers）。 Flink为不同的环境和资源提供者（例如YARN，Mesos，Kubernetes和独立部署）实现了多个ResourceManager。 在独立设置中，ResourceManager只能分配可用TaskManager的插槽，而不能自行启动新的TaskManager。
+  * ResourceManager负责Flink集群中的资源取消/分配和供应-它管理taskslot，这些taskslot是Flink集群中资源调度的单位。 Flink为不同的环境（例如YARN，Mesos，Kubernetes和Standalone）实现了多个ResourceManager。 在独立设置中，ResourceManager只能分配可用TaskManager的插槽，而不能自行启动新的TaskManager。
 * Dispatcher
   * 可以跨作业运行，它为应用提交提供了REST接口。
   * 当一个应用被提交执行时，分发器就会启动并将应用移交给一个JM。
@@ -282,11 +289,11 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 
 * 运行机制
 
-![Flink runtime: client, job manager, task managers](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/distributed-runtime.svg)
+![Flink runtime: client, job manager, task managers](../img/distributed-runtime.svg)
 
 * 任务调度
 
-![The processes involved in executing a Flink dataflow](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/processes.svg)
+![The processes involved in executing a Flink dataflow](../img/processes.svg)
 
 * Yarn提交流程
 
@@ -295,18 +302,18 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 ### 任务和算子调用链
 
 * 对于分布式执行，Flink将操作符subtask连接到一起，形成多个task。每个task由一个线程执行。将操作符链接到任务中是一种有用的优化:它减少了线程到线程的切换和缓冲开销，提高了总体吞吐量，同时减少了延迟。
-* 一个特定算子的子任务(subtask)的个数被称之为其并行度(parallelism)。一般情况下，一个stream的并行度，可以任务就是其所有算子中的最大并行度（`因为slot共享的原因`）。
+* 一个特定算子的子任务(subtask)的个数被称之为其并行度(parallelism)。一般情况下，一个stream的并行度就是其所有算子中的最大并行度（`因为slot共享的原因`）。
 
-![Operator chaining into Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_chains.svg)
+![Operator chaining into Tasks](../img/tasks_chains.svg)
 
 ### TaskManger和Slots
 
 #### task和slot的关系
 
 * Flink中每一个TaskManager都是一个JVM进程，它会在独立的线程上运行一个或多个subtask
-* 为了控制一个taskmanager能接收多个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)
+* 为了控制一个TaskManager能接收多个task，TaskManager通过task slot来进行控制(一个TaskManager至少有一个slot)
 
-![A TaskManager with Task Slots and Tasks](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/tasks_slots.svg)
+![A TaskManager with Task Slots and Tasks](../img/tasks_slots.svg)
 
 #### slot共享
 
@@ -319,7 +326,7 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 .slotSharingGroup("a")
 ```
 
-![TaskManagers with shared Task Slots](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/slot_sharing.svg)
+![TaskManagers with shared Task Slots](../img/slot_sharing.svg)
 
 ### 并行子任务的分配
 
@@ -335,8 +342,8 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 
 * Flink的执行度分为4层:`StreamGraph->JobGraph->ExecutionGraph->物理执行图`
 * **StreamGraph**:是根据用户通过 Stream API 编写的代码生成的最初的图。用来表示程序的拓扑结构。
-* **JobGraph**：StreamGraph经过优化后生成了 JobGraph，提交给 JobManager 的数据结构。主要的优化为，将多个符合条件的节点 **chain 在一起作为一个节点**，这样可以减少数据在节点之间流动所需要的`序列化/反序列化/传输消耗`。
-* **ExecutionGraph**：JobManager 根据 JobGraph 生成ExecutionGraph。**ExecutionGraph是JobGraph的并行化版本**，是调度层最核心的数据结构。
+* **JobGraph**：StreamGraph经过优化后生成了 JobGraph，提交给 JobManager 的数据结构。主要的优化为，将多个符合条件的节点 **chain 在一起作为一个节点**，这样可以减少数据在节点之间流动所需要的`序列化/反序列化/传输消耗`。**operator chain优化**
+* **ExecutionGraph**：JobManager 根据 JobGraph 生成ExecutionGraph。**ExecutionGraph是JobGraph的并行化版本**，是调度层最核心的数据结构。**并行化task 拆分subtask**
 * **物理执行图**：JobManager 根据 ExecutionGraph 对 Job 进行调度后，在各个TaskManager 上部署 Task 后形成的“图”，并不是一个具体的数据结构。
 
 ![执行图](../img/执行图.jpg)
@@ -344,7 +351,7 @@ yarn-session.sh -tm 2048m -jm 1024m -s 4 -d -nm test
 ### 数据传输形式
 
 * 一个程序中，不同的算子可能具有不同的并行度。
-* 算子之间传输数据的形式可以是`one-to-one(forwarding)的模式`也可以是`redistributing`的模式，具体是哪种形式取决于算子的种类。
+* 算子之间传输数据的形式可以是`one-to-one(forwarding)的模式`也可以是`redistributing`(重分区)的模式，具体是哪种形式取决于算子的种类。
   * one-to-one:stream维护着分区以及元素的顺序(比如source和map之间)。这意味着map算子的子任务看到的元素的个数以顺序跟source算子的subtask产生的元素的个数、顺序相同。map、filter、flatMap等算子都是one-to-one的对应关系，类似于Spark的map、flatmap、filter等同样类似于窄依赖。
   * redistributing:stream的分区会发生改变。每个算子的subtask根据所选择的trasnsformation发送数据到不同的目标任务。例如keyBy基于hashCode重分区、而broadcast和rebalance会随机重新分区，这些算子都会引起redistributing过程，而redistribute过程就类似于spark中的shuffle过程。
 
