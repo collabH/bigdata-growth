@@ -49,14 +49,14 @@ table.executeInsert()
 ## 表（Table）
 
 * TableEnvironment可以注册Catalog，并可以基于Catalog注册表
-* 表是由一个标识符来指定，由catalog名、数据库名和对象名组成。
+* 表是由一个标识符来指定，由catalog名、数据库名和对象名组成。(catalog.database.table)
 * 表可以是常规的，也可以是虚拟表（视图）
 * 常规表一般可以用来描述外部数据，比如文件、数据库或消息队列数据，也可以从DataStream转换而来
 * 视图可以从现有的表中创建，通常是table API或SQL查询的一个结果集。
 
 ## 动态表(Dynamic Tables)
 
-![Dynamic tables](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/stream-query-stream.png)
+![Dynamic tables](../img/stream-query-stream.png)
 
 * 动态表是Flink对流数据的Table API和SQL支持的核心概念。
 * 与表示批处理数据的静态表不同，动态表随时间变化的。
@@ -67,7 +67,7 @@ table.executeInsert()
 * 连续查询永远不会终止，并会生成另一个动态表。
 * 查询会不断更新其动态结果表，以反映动态输入表上的更改。
 
-![Continuous Non-Windowed Query](https://ci.apache.org/projects/flink/flink-docs-release-1.12/fig/table-streaming/query-groupBy-cnt.png)
+![Continuous Non-Windowed Query](../img/query-groupBy-cnt.png)
 
 ### 流式表查询的处理过程
 
@@ -84,11 +84,11 @@ table.executeInsert()
 - **Append-only 流：** 仅通过 `INSERT` 操作修改的动态表可以通过输出插入的行转换为流。
 - **Retract 流：** retract 流包含两种类型的 message： *add messages* 和 *retract messages* 。通过将`INSERT` 操作编码为 add message、将 `DELETE` 操作编码为 retract message、将 `UPDATE` 操作编码为更新(先前)行的 retract message 和更新(新)行的 add message，将动态表转换为 retract 流。下图显示了将动态表转换为 retract 流的过程。
 
-![Dynamic tables](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/undo-redo-mode.png)
+![Dynamic tables](../img/undo-redo-mode.png)
 
 - **Upsert 流:** upsert 流包含两种类型的 message： *upsert messages* 和*delete messages*。转换为 upsert 流的动态表需要(可能是组合的)唯一键。通过将 `INSERT` 和 `UPDATE` 操作编码为 upsert message，将 `DELETE` 操作编码为 delete message ，将具有唯一键的动态表转换为流。消费流的算子需要知道唯一键的属性，以便正确地应用 message。与 retract 流的主要区别在于 `UPDATE` 操作是用单个 message 编码的，因此效率更高。下图显示了将动态表转换为 upsert 流的过程。
 
-![Dynamic tables](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/redo-mode.png)
+![Dynamic tables](../img/redo-mode.png)
 
 # Flink SQL架构
 
@@ -130,7 +130,7 @@ table.executeInsert()
 
 ![](../img/FlinkSQL工作流.jpeg)
 
-* 将FLink SQL/Table API程序转换为可执行的JobGraph经历以下阶段
+* 将Flink SQL/Table API程序转换为可执行的JobGraph经历以下阶段
   * 将SQL文本/TableAPI代码转化为逻辑执行计划(Logical Plan)
   * Logical Plan通过优化器优化为物理执行计划(Physical Plan)
   * 通过代码生成技术生成Transformations后进一步编译为可执行的JobGraph提交运行
