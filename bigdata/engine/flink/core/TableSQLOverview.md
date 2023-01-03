@@ -208,19 +208,63 @@ table.executeInsert()
 
 * 在内存中 buffer 一定量的数据，预先做一次聚合后再更新 State，则不但会降低操作 State 的开销，还会有效减少发送到下游的数据量，提升吞吐量，降低两层聚合时由 Retraction 引起的数据抖动, 这就是 Mini-batch 攒批优化的核心思想。
 * 把所有的数据先聚合一次，类似一个微批处理，然后再把这个数据写到 State 里面，或者在从 State 里面查出来，这样可以大大的减轻对 State 查询的压力。
+* 通过以下配置设置:
+
+```properties
+SET table.exec.mini-batch.enabled=true;
+SET table.exec.mini-batch.allow-latency="5 s";
+SET table.exec.mini-batch.size=5000;
+```
+
+
 
 ![img](https://mmbiz.qpic.cn/mmbiz_gif/8AsYBicEePu5KNuaibsibpYmAJ1cm1apjUicDic2QTTU5ueDVEBezeervrG84lNVyREu8JpRGUTT2ygZDhKWErnajrQ/640?wx_fmt=gif&tp=webp&wxfrom=5&wx_lazy=1)
 
 ### 数据倾斜处理
 
-* 对于数据倾斜的优化，主要分为是否带 DISTINCT 去重语义的两种方式。对于普通聚合的数据倾斜，Flink 引入了 Local-Global 两阶段优化，类似于 MapReduce 增加 Local Combiner 的处理模式。而对于带有去重的聚合，Flink 则会将用户的 SQL 按原有聚合的 key 组合再加上 DISTINCT key 做 Hash 取模后改写为两层聚合来进行打散。
+* 对于数据倾斜的优化，主要分为是否带 DISTINCT 去重语义的两种方式。对于普通聚合的数据倾斜，Flink 引入了 Local-Global 两阶段优化，类似于 MapReduce 增加 Local Combiner 的处理模式。
+* 通过以下配置设置:
 
-![img](https://mmbiz.qpic.cn/mmbiz_gif/8AsYBicEePu5KNuaibsibpYmAJ1cm1apjUicrwcM3ZauvkAicGiaWicXzJIEPOPlO8aw8oh7kLhF10ZmhIevtwy083gFQ/640?wx_fmt=gif&tp=webp&wxfrom=5&wx_lazy=1)
+```properties
+# 开启local-global二阶段优化
+SET table.optimizer.agg-phase-strategy=TWO_PHASE
+```
+
+![img](../img/local_agg.png)
+
+* 而对于带有去重的聚合，Flink 则会将用户的 SQL 按原有聚合的 key 组合再加上 DISTINCT key 做 Hash 取模后改写为两层聚合来进行打散。
+
+```properties
+# distinct key
+SET table.optimizer.distinct-agg.split.enabled=true
+SET table.optimizer.distinct-agg.split.bucket-num=1024，默认1024个bucket
+```
+
+![](../img/distinct_split.png)
+
+* distinct key案例
+
+```sql
+-- 原始sql
+SELECT day, COUNT(DISTINCT user_id)
+FROM T
+GROUP BY day
+-- 开启SET table.optimizer.distinct-agg.split.bucket-num=1024，默认1024个bucket后的sql
+SET table.optimizer.distinct-agg.split.enabled=true;
+SET table.optimizer.distinct-agg.split.bucket-num=1024;
+SELECT day, SUM(cnt)
+FROM (
+    SELECT day, COUNT(DISTINCT user_id) as cnt
+    FROM T
+    GROUP BY day, MOD(HASH_CODE(user_id), 1024)
+)
+GROUP BY day
+```
 
 ### Top-N重写
 
 ```sql
-SELECT*
+SELECT *
 FROM(
   SELECT *, -- you can get like shopId or other information from this
     ROW_NUMBER() OVER (PARTITION BY category ORDER BY sales DESC) AS rowNum
@@ -239,7 +283,7 @@ WHERE rowNum <= 3
 
 ![](../img/TableAPi.png)
 
-* Table:Table APIDE核心接口
+* Table:Table API核心接口
 * GroupedTable:在Table上使用列、表达式(不包含时间窗口)、两者组合进行分组之后的Table，可以理解为对Table进行GroupBy运算。
 * GroupWindowedTable:使用格式将窗口分组后的Table，按照时间对数据进行切分，**时间窗口**必须是GroupBy中的第一项，且每个GroupBy只支持一个窗口。
 * WindowedGroupTable:GroupWindowdTable和WindowedGroupTable一般组合使用，在GroupWindowedTable上再按照字段进行GroupBy运算后的Table
@@ -329,7 +373,7 @@ List<String> tables = catalog.listTables("mydb");
 ### 数据库操作
 
 ```java
-/ create database
+// create database
 catalog.createDatabase("mydb", new CatalogDatabaseImpl(...), false);
 
 // drop database
