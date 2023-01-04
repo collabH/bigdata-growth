@@ -513,7 +513,7 @@ catalog.listFunctions("mydb");
 * `将一组输入的数据缓存在聚合算子内部的缓冲区中`，当输入的数据被触发处理时，每个key只需一个操作即可访问状态，这样可以大大减少状态开销并获得更好的吞吐量。
 * 但是，这可能会增加一些延迟，因为它会缓冲一些记录而不是立即处理它们。这是吞吐量和延迟之间的权衡。
 
-![img](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/minibatch_agg.png)
+![img](../img/minibatch_agg.png)
 
 ### 参数配置开启
 
@@ -531,7 +531,7 @@ configuration.setString("table.exec.mini-batch.size", "5000"); // the maximum nu
 * Local-global聚合是为解决数据倾斜问题，通过将一组聚合氛围两个阶段，首先在上游进行本地聚合，然后在下游进行全局聚合，类似于MR中的**Combine+Reduce**模式。
 * 每次本地聚合累积的输入数据量基于 mini-batch 间隔。
 
-![img](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/table-streaming/local_agg.png)
+![img](../img/local_agg.png)
 
 ### 开启配置
 
@@ -567,7 +567,6 @@ GROUP BY day
 
         // 获取执行配置
         ExecutionConfig config = env.getConfig();
-
 
         // 级别设置，
         // 默认为ClosureCleanerLevel.RECURSIVE 递归地清除所有字段。
