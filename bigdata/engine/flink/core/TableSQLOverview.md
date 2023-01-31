@@ -296,6 +296,198 @@ WHERE rowNum <= 3
 * DML：INSERT语句，不包含UPDATE、DELETE语句，后面这两类语句的运算实际上在Flink SQL中也有体现，通过Retract召回实现了流上的UPDATE和DELETE。
 * DDL：Create、Drop、Alter语句
 
+### Hints
+
+#### 动态表选项
+
+* 语法
+
+```sql
+table_path /*+ OPTIONS(key=val [, key=val]*) */
+
+key:
+    stringLiteral
+val:
+    stringLiteral
+```
+
+* 案例
+
+```sql
+CREATE TABLE kafka_table1 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE kafka_table2 (id BIGINT, name STRING, age INT) WITH (...);
+
+-- 覆盖查询语句中源表的选项
+select id, name from kafka_table1 /*+ OPTIONS('scan.startup.mode'='earliest-offset') */;
+
+-- 覆盖 join 中源表的选项
+select * from
+    kafka_table1 /*+ OPTIONS('scan.startup.mode'='earliest-offset') */ t1
+    join
+    kafka_table2 /*+ OPTIONS('scan.startup.mode'='earliest-offset') */ t2
+    on t1.id = t2.id;
+
+-- 覆盖插入语句中结果表的选项
+insert into kafka_table1 /*+ OPTIONS('sink.partitioner'='round-robin') */ select * from kafka_table2;
+```
+
+#### Query Hints
+
+* 语法
+
+```sql
+# Query hints:
+SELECT /*+ hint [, hint ] */ ...
+
+hint:
+        hintName
+    |   hintName '(' optionKey '=' optionVal [, optionKey '=' optionVal ]* ')'
+    |   hintName '(' hintOption [, hintOption ]* ')'
+
+optionKey:
+        simpleIdentifier
+    |   stringLiteral
+
+optionVal:
+        stringLiteral
+
+hintOption:
+        simpleIdentifier
+    |   numericLiteral
+    |   stringLiteral
+```
+
+##### Join Hints
+
+* 联接提示（`Join Hints`）是查询提示（`Query Hints`）的一种，该提示允许用户手动指定表联接（join）时使用的联接策略，来达到优化执行的目的。Flink 联接提示现在支持 `BROADCAST`， `SHUFFLE_HASH`，`SHUFFLE_MERGE` 和 `NEST_LOOP`。
+
+**BROADCAST**
+
+`BROADCAST` 推荐联接使用 `BroadCast` 策略。如果该联接提示生效，不管是否设置了 `table.optimizer.join.broadcast-threshold`， 指定了联接提示的联接端（join side）都会被广播到下游。所以当该联接端是小表时，更推荐使用 `BROADCAST`。
+
+> 注意： BROADCAST 只支持等值的联接条件，且不支持 Full Outer Join。
+
+```sql
+CREATE TABLE t1 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t2 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t3 (id BIGINT, name STRING, age INT) WITH (...);
+
+-- Flink 会使用 broadcast join，且表 t1 会被当作需 broadcast 的表。
+SELECT /*+ BROADCAST(t1) */ * FROM t1 JOIN t2 ON t1.id = t2.id;
+
+-- Flink 会在两个联接中都使用 broadcast join，且 t1 和 t3 会被作为需 broadcast 到下游的表。
+SELECT /*+ BROADCAST(t1, t3) */ * FROM t1 JOIN t2 ON t1.id = t2.id JOIN t3 ON t1.id = t3.id;
+
+-- BROADCAST 只支持等值的联接条件
+-- 联接提示会失效，只能使用支持非等值条件联接的 nested loop join。
+SELECT /*+ BROADCAST(t1) */ * FROM t1 join t2 ON t1.id > t2.id;
+
+-- BROADCAST 不支持 `Full Outer Join`
+-- 联接提示会失效，planner 会根据 cost 选择最合适的联接策略。
+SELECT /*+ BROADCAST(t1) */ * FROM t1 FULL OUTER JOIN t2 ON t1.id = t2.id;
+```
+
+**SHUFFLE_HASH**
+
+`SHUFFLE_HASH` 推荐联接使用 `Shuffle Hash` 策略。如果该联接提示生效，指定了联接提示的联接端将会被作为联接的 build 端。 该提示在被指定的表较小（相较于 `BROADCAST`，小表的数据量更大）时，表现得更好。
+
+> 注意：SHUFFLE_HASH 只支持等值的联接条件。
+
+```sql
+CREATE TABLE t1 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t2 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t3 (id BIGINT, name STRING, age INT) WITH (...);
+
+-- Flink 会使用 hash join，且 t1 会被作为联接的 build 端。
+SELECT /*+ SHUFFLE_HASH(t1) */ * FROM t1 JOIN t2 ON t1.id = t2.id;
+
+-- Flink 会在两个联接中都使用 hash join，且 t1 和 t3 会被作为联接的 build 端。
+SELECT /*+ SHUFFLE_HASH(t1, t3) */ * FROM t1 JOIN t2 ON t1.id = t2.id JOIN t3 ON t1.id = t3.id;
+
+-- SHUFFLE_HASH 只支持等值联接条件
+-- 联接提示会失效，只能使用支持非等值条件联接的 nested loop join。
+SELECT /*+ SHUFFLE_HASH(t1) */ * FROM t1 join t2 ON t1.id > t2.id;
+```
+
+**SHUFFLE_MERGE**
+
+`SHUFFLE_MERGE` 推荐联接使用 `Sort Merge` 策略。该联接提示适用于联接两端的表数据量都非常大，或者联接两端的表都有序的场景。
+
+> 注意：SHUFFLE_MERGE 只支持等值的联接条件。
+
+```sql
+CREATE TABLE t1 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t2 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t3 (id BIGINT, name STRING, age INT) WITH (...);
+
+-- 会使用 sort merge join。
+SELECT /*+ SHUFFLE_MERGE(t1) */ * FROM t1 JOIN t2 ON t1.id = t2.id;
+
+-- Sort merge join 会使用在两次不同的联接中。
+SELECT /*+ SHUFFLE_MERGE(t1, t3) */ * FROM t1 JOIN t2 ON t1.id = t2.id JOIN t3 ON t1.id = t3.id;
+
+-- SHUFFLE_MERGE 只支持等值的联接条件，
+-- 联接提示会失效，只能使用支持非等值条件联接的 nested loop join。
+SELECT /*+ SHUFFLE_MERGE(t1) */ * FROM t1 join t2 ON t1.id > t2.id;
+```
+
+**NEST_LOOP**
+
+`NEST_LOOP` 推荐联接使用 `Nested Loop` 策略。如无特殊的场景需求，不推荐使用该类型的联接提示。
+
+> 注意：NEST_LOOP 同时支持等值的和非等值的联接条件。
+
+```sql
+CREATE TABLE t1 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t2 (id BIGINT, name STRING, age INT) WITH (...);
+CREATE TABLE t3 (id BIGINT, name STRING, age INT) WITH (...);
+
+-- Flink 会使用 nest loop join，且 t1 会被作为联接的 build 端。
+SELECT /*+ NEST_LOOP(t1) */ * FROM t1 JOIN t2 ON t1.id = t2.id;
+
+-- Flink 会在两次联接中都使用 nest loop join，且 t1 和 t3 会被作为联接的 build 端。
+SELECT /*+ NEST_LOOP(t1, t3) */ * FROM t1 JOIN t2 ON t1.id = t2.id JOIN t3 ON t1.id = t3.id;
+```
+
+**LOOKUP**
+
+* 仅支持Streaming模式
+
+LOOKUP 联接提示允许用户建议 Flink 优化器:
+
+1. 使用同步或异步的查找函数
+2. 配置异步查找相关参数
+3. 启用延迟重试查找策略
+
+**LOOKUP 提示选项：**
+
+| 选项类型       | 选项名称        | 必选     | 选项值类型 | 默认值                                                       | 选项说明                                                     |
+| -------------- | --------------- | -------- | ---------- | ------------------------------------------------------------ | :----------------------------------------------------------- |
+| table          | table           | Y        | string     | N/A                                                          | 查找源表的表名                                               |
+| async          | async           | N        | boolean    | N/A                                                          | 值可以是 'true' 或 'false', 以建议优化器选择对应的查找函数。若底层的连接器无法提供建议模式的查找函数，提示就不会生效 |
+| output-mode    | N               | string   | ordered    | 值可以是 'ordered' 或 'allow_unordered'，'allow_unordered' 代表用户允许不保序的输出, 在优化器判断不影响 正确性的情况下会转成 `AsyncDataStream.OutputMode.UNORDERED`， 否则转成 `ORDERED`。 这与作业参数 `ExecutionConfigOptions#TABLE_EXEC_ASYNC_LOOKUP_OUTPUT_MODE` 是一致的 |                                                              |
+| capacity       | N               | integer  | 100        | 异步查找使用的底层 `AsyncWaitOperator` 算子的缓冲队列大小    |                                                              |
+| timeout        | N               | duration | 300s       | 异步查找从第一次调用到最终查找完成的超时时间，可能包含了多次重试，在发生 failover 时会重置 |                                                              |
+| retry          | retry-predicate | N        | string     | N/A                                                          | 可以是 'lookup_miss'，表示在查找结果为空是启用重试           |
+| retry-strategy | N               | string   | N/A        | 可以是 'fixed_delay'                                         |                                                              |
+| fixed-delay    | N               | duration | N/A        | 固定延迟策略的延迟时长                                       |                                                              |
+| max-attempts   | N               | integer  | N/A        | 固定延迟策略的最大重试次数                                   |                                                              |
+
+> 注意：其中
+>
+> - ’table’ 是必选项，需要填写目标联接表的表名（和 FROM 子句引用的表名保持一致），注意当前不支持填写表的别名（这将在后续版本中支持）。
+> - 异步查找参数可按需设置一个或多个，未设置的参数按默认值生效。
+> - 重试查找参数没有默认值，在需要开启时所有参数都必须设置为有效值。
+
+```sql
+-- 建议优化器选择同步查找
+LOOKUP('table'='Customers', 'async'='false')
+
+-- 建议优化器选择异步查找
+LOOKUP('table'='Customers', 'async'='true')
+
+```
+
 # Catalogs
 
 * Catalog 提供了元数据信息，例如数据库、表、分区、视图以及数据库或其他外部系统中存储的函数和信息。
