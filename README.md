@@ -1,6 +1,7 @@
 ![img.png](./img/logo.png)
 
 # repository
+[![Security Status](https://www.murphysec.com/platform3/v3/badge/1613734950386302976.svg?t=1)](https://www.murphysec.com/accept?code=6d3cfe0ef182c3d08318514d339bc2b8&type=1&from=2&t=2)
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT/)
 
