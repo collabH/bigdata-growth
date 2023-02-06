@@ -99,3 +99,84 @@ $ ./sql-gateway -Dkey=value
 * [操作文档](https://nightlies.apache.org/flink/flink-docs-release-1.16/zh/docs/dev/table/sql-gateway/rest/)
 
 ## HiveServer2 Endpoint
+
+### 配置HiveSever2 Endpoint
+
+* 启动sql gateway service指定
+
+```shell
+$ ./bin/sql-gateway.sh start -Dsql-gateway.endpoint.type=hiveserver2 -Dsql-gateway.endpoint.hiveserver2.catalog.hive-conf-dir=<path to hive conf>
+```
+
+* 配置在flink-conf.yaml下
+
+```yaml
+sql-gateway.endpoint.type: hiveserver2
+sql-gateway.endpoint.hiveserver2.catalog.hive-conf-dir: <path to hive conf>
+```
+
+### 通过hive beeline连接HiveServer2
+
+```shell
+./beeline
+```
+
+### HiveSever2配置
+
+| Key                                                          | Required | Default   | Type         | Description                                                  |
+| :----------------------------------------------------------- | :------: | :-------- | :----------- | :----------------------------------------------------------- |
+| sql-gateway.endpoint.type                                    | required | "rest"    | List<String> | rest或hiveserver2                                            |
+| sql-gateway.endpoint.hiveserver2.catalog.hive-conf-dir       | required | (none)    | String       | URI to your Hive conf dir containing hive-site.xml. The URI needs to be supported by Hadoop FileSystem. If the URI is relative, i.e. without a scheme, local file system is assumed. If the option is not specified, hive-site.xml is searched in class path. |
+| sql-gateway.endpoint.hiveserver2.catalog.default-database    | optional | "default" | String       | The default database to use when the catalog is set as the current catalog. |
+| sql-gateway.endpoint.hiveserver2.catalog.name                | optional | "hive"    | String       | Name for the pre-registered hive catalog.                    |
+| sql-gateway.endpoint.hiveserver2.module.name                 | optional | "hive"    | String       | Name for the pre-registered hive module.                     |
+| sql-gateway.endpoint.hiveserver2.thrift.exponential.backoff.slot.length | optional | 100 ms    | Duration     | Binary exponential backoff slot time for Thrift clients during login to HiveServer2,for retries until hitting Thrift client timeout |
+| sql-gateway.endpoint.hiveserver2.thrift.host                 | optional | (none)    | String       | The server address of HiveServer2 host to be used for communication.Default is empty, which means the to bind to the localhost. This is only necessary if the host has multiple network addresses. |
+| sql-gateway.endpoint.hiveserver2.thrift.login.timeout        | optional | 20 s      | Duration     | Timeout for Thrift clients during login to HiveServer2       |
+| sql-gateway.endpoint.hiveserver2.thrift.max.message.size     | optional | 104857600 | Long         | Maximum message size in bytes a HS2 server will accept.      |
+| sql-gateway.endpoint.hiveserver2.thrift.port                 | optional | 10000     | Integer      | The port of the HiveServer2 endpoint.                        |
+| sql-gateway.endpoint.hiveserver2.thrift.worker.keepalive-time | optional | 1 min     | Duration     | Keepalive time for an idle worker thread. When the number of workers exceeds min workers, excessive threads are killed after this time interval. |
+| sql-gateway.endpoint.hiveserver2.thrift.worker.threads.max   | optional | 512       | Integer      | The maximum number of Thrift worker threads                  |
+| sql-gateway.endpoint.hiveserver2.thrift.worker.threads.min   | optional | 5         | Integer      | The minimum number of Thrift worker threads                  |
+
+### 客户端&工具
+
+* HiveServer2 Endpoint与HiveServer2有线协议兼容。因此，管理Hive SQL的工具也适用于带有HiveServer2 Endpoint的SQL Gateway。目前，Hive JDBC, Hive Beeline, Dbeaver, Apache Superset等正在测试能够连接到Flink SQL网关与HiveServer2端点并提交SQL。
+
+#### Hive JDBC
+
+* 引入依赖
+
+```xml
+<dependency>
+    <groupId>org.apache.hive</groupId>
+    <artifactId>hive-jdbc</artifactId>
+    <version>${hive.version}</version>
+</dependency>
+```
+
+* 编写Java代码连接hiveserver2
+
+```java
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+
+public class JdbcConnection {
+    public static void main(String[] args) throws Exception {
+        try (
+                // Please replace the JDBC URI with your actual host, port and database.
+                Connection connection = DriverManager.getConnection("jdbc:hive2://{host}:{port}/{database};auth=noSasl");
+                Statement statement = connection.createStatement()) {
+            statement.execute("SHOW TABLES");
+            ResultSet resultSet = statement.getResultSet();
+            while (resultSet.next()) {
+                System.out.println(resultSet.getString(1));
+            }
+        }
+    }
+}
+```
+
