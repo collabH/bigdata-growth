@@ -100,6 +100,8 @@ $ ./sql-gateway -Dkey=value
 
 ## HiveServer2 Endpoint
 
+**注意:**将flink-sql-hive依赖放入flinkHome/lib目录下，否则启动hiveServer2时报错找不到factory
+
 ### 配置HiveSever2 Endpoint
 
 * 启动sql gateway service指定
