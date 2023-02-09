@@ -100,7 +100,19 @@ $ ./sql-gateway -Dkey=value
 
 ## HiveServer2 Endpoint
 
-**注意:**将flink-sql-hive依赖放入flinkHome/lib目录下，否则启动hiveServer2时报错找不到factory
+### 前置环境
+
+* 将flink-hive所需依赖放入flinkHome/lib目录下，否则启动hiveServer2时报错找不到factory
+* 启动metastore service,`hive --service metastore`
+* hive-site.xml配置`hive.metastore.uris`
+* 将`FLINK_HOME/opt`目录下的`flink-table-planner_2.12`移动至`FLINK_HOME/lib`下,将`FLINK_HOME/lib`下的`flink-table-planner-loader`移出
+
+```shell
+mv $FLINK_HOME/opt/flink-table-planner_2.12-1.16.1.jar $FLINK_HOME/lib
+mv $FLINK_HOME/lib/flink-table-planner-loader-1.16.1.jar $FLINK_HOME/lib/flink-table-planner-loader-1.16.1.jar.bak
+```
+
+**注意：**上述所有操作都需要重启sql-gateway service
 
 ### 配置HiveSever2 Endpoint
 
@@ -121,6 +133,8 @@ sql-gateway.endpoint.hiveserver2.catalog.hive-conf-dir: <path to hive conf>
 
 ```shell
 ./beeline
+// 连接sqlgateway，账号密码都输入回车即可
+!connect jdbc:hive2://localhost:10000/default;auth=noSasl
 ```
 
 ### HiveSever2配置
@@ -182,3 +196,59 @@ public class JdbcConnection {
 }
 ```
 
+### Streaming SQL
+
+* 通过以下配置设置流式执行语义
+
+```shell
+SET table.sql-dialect=default; 
+SET execution.runtime-mode=streaming; 
+SET table.dml-sync=false;
+```
+
+* HiveServer2 API的RowKind通常为INSERT，不支持CDC数据
+
+#### 测试Kafka流表
+
+* 添加kafka connector依赖只`FLINK_HOME/lib`下
+* 重启Flink Standalone集群
+
+```shell
+mv flink-connector-kafka-1.16.1.jar $FLINK_HOME/lib
+stop-cluster.sh
+start-cluster.sh
+```
+
+* 启动测试kafka集群，创建对应topic&flink kafka流表
+
+```sql
+SET table.sql-dialect=default; 
+SET execution.runtime-mode=streaming; 
+SET table.dml-sync=false;
+CREATE TABLE KafkaTable (
+  `event_time` TIMESTAMP(3) METADATA FROM 'timestamp',
+  `partition` BIGINT METADATA VIRTUAL,
+  `offset` BIGINT METADATA VIRTUAL,
+  `user_id` BIGINT,
+  `item_id` BIGINT,
+  `behavior` STRING
+) WITH (
+  'connector' = 'kafka',
+  'topic' = 'user_behavior',
+  'properties.bootstrap.servers' = 'localhost:9092',
+  'properties.group.id' = 'testGroup',
+  'scan.startup.mode' = 'earliest-offset',
+  'format' = 'csv'
+);
+```
+
+* 执行查询Kafka表语句
+
+```sql
+select * from KafkaTable;
+```
+
+#### 常见问题
+
+* 集群启动过程中将flink-kafka-connector以来放入FLINK_HOME/lib下只重启了sql-gateway service发现读取kafka流表时报错无法找到KafkaSource类，需要重启Flink standalone集群&sql-gateway service
+* 遇到`cannot assign instance of java.util.LinkedHashMap to field org.apache.flink.runtime.jobgraph.JobVertex.results of type java.util.ArrayList`问题需要在$FLINK_HOME/conf/flink-conf.yaml添加`classloader.resolve-order: parent-first`配置
