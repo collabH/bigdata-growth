@@ -37,10 +37,10 @@
 
 ### Scan Table Source
 
-* 扫描的行不必只包含插入，也可以包含更新和删除。因此，表源可以用来读取(有限的或无限的)变更日志。返回的changelog模式指示规划器在运行时可以预期的更改集。
-* 对于常规的批处理场景，源可以发出一个只包含插入行的有界流。
-* 对于常规流场景，源可以发出一个无限制的只包含插入行的流。
-* 对于更改数据捕获（CDC）方案，源可以发出带有插入，更新和删除行的有界或无界流。
+* 扫描的行不必只包含插入，也可以包含更新和删除。因此，表源可以用来读取(有限的或无限的)变更日志(CDC Format)。返回的changelog模式指示planner在运行时可以预期的更改集。
+* 对于常规的批处理场景，源可以发出一个只包含插入行的有界流。Rowkind:INSERT
+* 对于常规流场景，源可以发出一个无限制的只包含插入行的流。Rowkind:INSERT
+* 对于更改数据捕获（CDC）方案，源可以发出带有插入，更新和删除行的有界或无界流。Rowkind:INSERT、DELETE、UPDATE_AFTER、UPDATE_BEFORE
 * 一个table source可以实现的能力[source abilities table](https://ci.apache.org/projects/flink/flink-docs-release-1.12/zh/dev/table/sourceSinks.html#source-abilities). 记录必须输出格式为`org.apache.flink.table.data.RowData`
 
 ### Lookup Table Source
@@ -61,9 +61,9 @@
 
 * 某些表连接器接收编码和解码键和/或值的不同格式。例如`cancl-json`/`json`等格式
 
-* 格式的工作方式类似于模式`DynamicTableSourceFactory-> DynamicTableSource-> ScanRuntimeProvider`，其中工厂负责翻译选项，而source负责创建运行时逻辑。
+* 格式的工作方式类似于模式`DynamicTableSourceFactory-> DynamicTableSource-> ScanRuntimeProvider`，其中工厂负责翻译options，而source负责创建运行时逻辑。
 
-* 例如，Kafka表源需要DeserializationSchema作为解码格式的运行时接口。 因此，Kafka表源工厂使用`value.format`选项的值来发现DeserializationFormatFactory。
+* 例如，Kafka表源需要DeserializationSchema作为解码格式的运行时接口。 因此，KafkaTableSourceFactory使用`value.format`选项的值来发现DeserializationFormatFactory。
 
 * 当前支持的格式工厂:
 
@@ -72,11 +72,9 @@
   org.apache.flink.table.factories.SerializationFormatFactory
   ```
 
-  
-
 * 格式工厂将选项转换为EncodingFormat或DecodingFormat。 这些接口是另一种针对给定数据类型生成专用格式运行时逻辑的工厂。
 
-* 例如，对于Kafka表源工厂，DeserializationFormatFactory将返回一个EncodingFormat <DeserializationSchema>，可以将其传递到Kafka表源中。
+* 例如，对于KafkaTableSourceFactory，DeserializationFormatFactory将返回一个EncodingFormat <DeserializationSchema>，可以将其传递到KafkaTableSource中。
 
 # 实现案例
 
