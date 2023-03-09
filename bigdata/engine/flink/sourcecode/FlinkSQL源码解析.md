@@ -1,3 +1,79 @@
+# Flink SQL执行流程
+
+**0.预览 AST、Optimized Logical Plan、Physical Execution Plan**
+
+* 程序方法可以打印 待执行Sql的抽象语法树(Abstract Syntax Tree)、优化后的逻辑计划以及物理计划：
+  == Abstract Syntax Tree ==
+  == Optimized Logical Plan ==
+  == Physical Execution Plan ==
+
+```sql
+== Abstract Syntax Tree ==
+LogicalProject(user=[$0], product=[$1], amount=[$2])
++- LogicalFilter(condition=[>($2, 2)])
+   +- LogicalUnion(all=[true])
+      :- LogicalProject(user=[$0], product=[$1], amount=[$2])
+      :  +- LogicalFilter(condition=[<($0, 3)])
+      :     +- LogicalTableScan(table=[[default_catalog, default_database, OrderA]])
+      +- LogicalProject(user=[$0], product=[$1], amount=[$2])
+         +- LogicalFilter(condition=[<>($1, _UTF-16LE'rubber')])
+            +- LogicalTableScan(table=[[default_catalog, default_database, OrderB]])
+
+== Optimized Logical Plan ==
+Union(all=[true], union=[user, product, amount])
+:- Calc(select=[user, product, amount], where=[AND(<(user, 3), >(amount, 2))])
+:  +- DataStreamScan(table=[[default_catalog, default_database, OrderA]], fields=[user, product, amount])
++- Calc(select=[user, product, amount], where=[AND(<>(product, _UTF-16LE'rubber':VARCHAR(2147483647) CHARACTER SET "UTF-16LE"), >(amount, 2))])
+   +- DataStreamScan(table=[[default_catalog, default_database, OrderB]], fields=[user, product, amount])
+
+== Physical Execution Plan ==
+Stage 1 : Data Source
+	content : Source: Collection Source
+
+Stage 2 : Data Source
+	content : Source: Collection Source
+
+	Stage 3 : Operator
+		content : SourceConversion(table=[default_catalog.default_database.OrderA], fields=[user, product, amount])
+		ship_strategy : FORWARD
+
+		Stage 4 : Operator
+			content : Calc(select=[user, product, amount], where=[((user < 3) AND (amount > 2))])
+			ship_strategy : FORWARD
+
+			Stage 5 : Operator
+				content : SourceConversion(table=[default_catalog.default_database.OrderB], fields=[user, product, amount])
+				ship_strategy : FORWARD
+
+				Stage 6 : Operator
+					content : Calc(select=[user, product, amount], where=[((product <> _UTF-16LE'rubber':VARCHAR(2147483647) CHARACTER SET "UTF-16LE") AND (amount > 2))])
+					ship_strategy : FORWARD
+
+```
+
+**1.Parse阶段(语法解析)**
+
+* 使用JavaCC把SQL转换成抽象语法树(AST),在Calcite中用SQLNode来表示
+
+**2.Validate阶段(语法校验)**
+
+* 根据元数据信息进行验证，例如查询的表、使用的函数是否存在，会分别对 from / where / group by / having / select / order by 等子句进行validate ，校验之后仍然是 SqlNode 构成的语法树；
+
+**3.Convert阶段**
+
+* 语义分析，根据SqlNode和元数据信息构建关系表达式RelNode树，也就是最初版本的逻辑计划。
+
+**4.Optimize阶段(查询计划优化)**
+
+* 首先将 SqlNode 语法树转换成关系表达式 RelNode 构成的逻辑树
+* 然后使用优化器基于规则进行等价变换，例如我们比较熟悉的谓词下推、列裁剪等，经过优化器优化后得到最优的查询计划；
+
+**5.Execute阶段**
+
+*  将逻辑查询计划翻译成物理执行计划，生成对应的可执行代码，提交运行。转换成Flink识别的StreamGraph、JobGraph
+
+![](../img/flinksql执行流程.jpg)
+
 # Blink Planner
 
 ## runtime
