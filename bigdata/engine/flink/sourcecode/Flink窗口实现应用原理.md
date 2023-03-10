@@ -41,7 +41,7 @@
 
 ### Fire and Purge
 
-* 一旦触发器确定好一个窗口已经准备处理，它触发计算，它返回FIRE或者FIRE_AND_PURGE。这是窗口操作符发出当前窗口结果的信号。给定一个带有ProcessWindowFunction的窗口，所有元素都被传递给ProcessWindowFunction(可能在将它们传递给驱逐器之后)。使用ReduceFunction、AggregateFunction或FoldFunction的窗口只会发出它们急切地聚合的结果。
+* 一旦触发器确定好一个窗口已经准备处理，它触发计算，它返回FIRE或者FIRE_AND_PURGE。这是窗口操作符发出当前窗口结果的信号。给定一个带有ProcessWindowFunction的窗口，所有元素都被传递给ProcessWindowFunction(可能在将它们传递给驱逐器之后)。使用ReduceFunction、AggregateFunction或FoldFunction的窗口只会发出它们聚合后的结果。
 * 当触发器触发时，它既可以触发也可以触发并清除。FIRE保留窗口的内容，而FIRE_AND_PURGE则删除其内容。默认情况下，预先实现的触发器只是在不清除窗口状态的情况下触发。
 
 ### DeltaTrigger
@@ -67,11 +67,11 @@
 
 ## Window Evictor
 
-### 内置Evictor
+### 内置Evictor(注意和trigger的区别)
 
 * CountEvictor:窗口计算时，只保留最近N条element
 * TimeEvictor:窗口计算时，只保留最近N段时间范围的element
-* DeltaEvictor:窗口计算时，最新的一条element与其他element做delta计算，保留delta在threshold内的element
+* DeltaEvictor:窗口计算时，最新的一条element与其他element做delta计算，保留delta在threshold内的element，Trigger是大于阈值触发，Evictor是只保留阈值范围内的数据
 
 ### TimeEvictor
 
@@ -92,11 +92,11 @@
 
 ### AggregateFunction
 
-* 高度抽象的增量聚合函数
+* 增加聚合函数，有助于状态大小的优化
 
 ### ProcessWindowFunction
 
-* 低级别抽象的全量聚合函数
+* 全量窗口数据处理函数，会catch整个窗口的状态
 
 ### ReduceFunction
 
