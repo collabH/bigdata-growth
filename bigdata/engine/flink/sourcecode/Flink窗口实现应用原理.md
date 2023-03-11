@@ -122,141 +122,178 @@ input
 ## WindowOperator工作流程
 
 ```java
-public void processElement(StreamRecord<IN> element) throws Exception {
-  // 获取元素规则的windows，windowAssigner来分配
-		final Collection<W> elementWindows = windowAssigner.assignWindows(
-			element.getValue(), element.getTimestamp(), windowAssignerContext);
+ public void processElement(StreamRecord<IN> element) throws Exception {
+    // 通过windowAssiger分配window
+        final Collection<W> elementWindows =
+                windowAssigner.assignWindows(
+                        element.getValue(), element.getTimestamp(), windowAssignerContext);
 
-		//if element is handled by none of assigned elementWindows
-		boolean isSkippedElement = true;
+        // if element is handled by none of assigned elementWindows
+        boolean isSkippedElement = true;
 
-		final K key = this.<K>getKeyedStateBackend().getCurrentKey();
+        final K key = this.<K>getKeyedStateBackend().getCurrentKey();
+				// 如果是merge窗口则进行合并操作
+        if (windowAssigner instanceof MergingWindowAssigner) {
+          // 获取merge window
+            MergingWindowSet<W> mergingWindows = getMergingWindowSet();
 
-		if (windowAssigner instanceof MergingWindowAssigner) {
-			MergingWindowSet<W> mergingWindows = getMergingWindowSet();
+            for (W window : elementWindows) {
 
-			for (W window: elementWindows) {
+                // adding the new window might result in a merge, in that case the actualWindow
+                // is the merged window and we work with that. If we don't merge then
+                // actualWindow == window
+                W actualWindow =
+                   // 当前window加入merge window集合
+                        mergingWindows.addWindow(
+                                window,
+                                new MergingWindowSet.MergeFunction<W>() {
+                                  // window merge核心逻辑
+                                    @Override
+                                    public void merge(
+                                            W mergeResult,
+                                            Collection<W> mergedWindows,
+                                            W stateWindowResult,
+                                            Collection<W> mergedStateWindows)
+                                            throws Exception {
+																				// eventTime并且需要合并的window的最大时间戳+运行延迟的时间小于等于当前的watermark，如果大于则可以进行输出 无法合并
+                                        if ((windowAssigner.isEventTime()
+                                                && mergeResult.maxTimestamp() + allowedLateness
+                                                        <= internalTimerService
+                                                                .currentWatermark())) {
+                                            throw new UnsupportedOperationException(
+                                                    "The end timestamp of an "
+                                                            + "event-time window cannot become earlier than the current watermark "
+                                                            + "by merging. Current watermark: "
+                                                            + internalTimerService
+                                                                    .currentWatermark()
+                                                            + " window: "
+                                                            + mergeResult);
+                                          // 如果不是eventTime
+                                        } else if (!windowAssigner.isEventTime()) {
+                                            long currentProcessingTime =
+                                                    internalTimerService.currentProcessingTime();
+                                          // 判断是否在process window范围
+                                            if (mergeResult.maxTimestamp()
+                                                    <= currentProcessingTime) {
+                                                throw new UnsupportedOperationException(
+                                                        "The end timestamp of a "
+                                                                + "processing-time window cannot become earlier than the current processing time "
+                                                                + "by merging. Current processing time: "
+                                                                + currentProcessingTime
+                                                                + " window: "
+                                                                + mergeResult);
+                                            }
+                                        }
+																				// 更新triggerContext信息，将key和合并的window已经mergewindow集合进行操作
+                                        triggerContext.key = key;
+                                        triggerContext.window = mergeResult;
 
-				// adding the new window might result in a merge, in that case the actualWindow
-				// is the merged window and we work with that. If we don't merge then
-				// actualWindow == window
-				W actualWindow = mergingWindows.addWindow(window, new MergingWindowSet.MergeFunction<W>() {
-					@Override
-					public void merge(W mergeResult,
-							Collection<W> mergedWindows, W stateWindowResult,
-							Collection<W> mergedStateWindows) throws Exception {
+                                        triggerContext.onMerge(mergedWindows);
+	
+                                        for (W m : mergedWindows) {
+                                            triggerContext.window = m;
+                                            triggerContext.clear();
+                                            deleteCleanupTimer(m);
+                                        }
 
-						if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
-							throw new UnsupportedOperationException("The end timestamp of an " +
-									"event-time window cannot become earlier than the current watermark " +
-									"by merging. Current watermark: " + internalTimerService.currentWatermark() +
-									" window: " + mergeResult);
-						} else if (!windowAssigner.isEventTime()) {
-							long currentProcessingTime = internalTimerService.currentProcessingTime();
-							if (mergeResult.maxTimestamp() <= currentProcessingTime) {
-								throw new UnsupportedOperationException("The end timestamp of a " +
-									"processing-time window cannot become earlier than the current processing time " +
-									"by merging. Current processing time: " + currentProcessingTime +
-									" window: " + mergeResult);
-							}
-						}
+                                        // merge the merged state windows into the newly resulting
+                                        // state window
+                                        windowMergingState.mergeNamespaces(
+                                                stateWindowResult, mergedStateWindows);
+                                    }
+                                });
 
-						triggerContext.key = key;
-						triggerContext.window = mergeResult;
+                // drop if the window is already late 删除延迟的window
+                if (isWindowLate(actualWindow)) {
+                    mergingWindows.retireWindow(actualWindow);
+                    continue;
+                }
+                isSkippedElement = false;
 
-						triggerContext.onMerge(mergedWindows);
+                W stateWindow = mergingWindows.getStateWindow(actualWindow);
+                if (stateWindow == null) {
+                    throw new IllegalStateException(
+                            "Window " + window + " is not in in-flight window set.");
+                }
 
-						for (W m: mergedWindows) {
-							triggerContext.window = m;
-							triggerContext.clear();
-							deleteCleanupTimer(m);
-						}
+              // 更新状态
+                windowState.setCurrentNamespace(stateWindow);
+                windowState.add(element.getValue());
 
-						// merge the merged state windows into the newly resulting state window
-						windowMergingState.mergeNamespaces(stateWindowResult, mergedStateWindows);
-					}
-				});
+                triggerContext.key = key;
+                triggerContext.window = actualWindow;
 
-				// drop if the window is already late
-				if (isWindowLate(actualWindow)) {
-					mergingWindows.retireWindow(actualWindow);
-					continue;
-				}
-				isSkippedElement = false;
+              // 放入触发器获取TriggerResult
+                TriggerResult triggerResult = triggerContext.onElement(element);
+	
+              // 输出当前窗口数据
+                if (triggerResult.isFire()) {
+                    ACC contents = windowState.get();
+                    if (contents == null) {
+                        continue;
+                    }
+                  // 数据调用windowFunction
+                    emitWindowContents(actualWindow, contents);
+                }
 
-				W stateWindow = mergingWindows.getStateWindow(actualWindow);
-				if (stateWindow == null) {
-					throw new IllegalStateException("Window " + window + " is not in in-flight window set.");
-				}
+              // 清空当前窗口状态
+                if (triggerResult.isPurge()) {
+                    windowState.clear();
+                }
+              // 注册Trigger Window clean定时器
+                registerCleanupTimer(actualWindow);
+            }
 
-				windowState.setCurrentNamespace(stateWindow);
-				windowState.add(element.getValue());
+            // need to make sure to update the merging state in state
+            mergingWindows.persist();
+          // 如果不是merge window
+        } else {
+            for (W window : elementWindows) {
 
-				triggerContext.key = key;
-				triggerContext.window = actualWindow;
+              // merge后的逻辑类似
+                // drop if the window is already late
+                if (isWindowLate(window)) {
+                    continue;
+                }
+                isSkippedElement = false;
 
-				TriggerResult triggerResult = triggerContext.onElement(element);
+                windowState.setCurrentNamespace(window);
+                windowState.add(element.getValue());
 
-				if (triggerResult.isFire()) {
-					ACC contents = windowState.get();
-					if (contents == null) {
-						continue;
-					}
-					emitWindowContents(actualWindow, contents);
-				}
+                triggerContext.key = key;
+                triggerContext.window = window;
 
-				if (triggerResult.isPurge()) {
-					windowState.clear();
-				}
-				registerCleanupTimer(actualWindow);
-			}
+                TriggerResult triggerResult = triggerContext.onElement(element);
 
-			// need to make sure to update the merging state in state
-			mergingWindows.persist();
-		} else {
-			for (W window: elementWindows) {
+                if (triggerResult.isFire()) {
+                    ACC contents = windowState.get();
+                    if (contents == null) {
+                        continue;
+                    }
+                    emitWindowContents(window, contents);
+                }
 
-				// drop if the window is already late
-				if (isWindowLate(window)) {
-					continue;
-				}
-				isSkippedElement = false;
+                if (triggerResult.isPurge()) {
+                    windowState.clear();
+                }
+                registerCleanupTimer(window);
+            }
+        }
 
-				windowState.setCurrentNamespace(window);
-				windowState.add(element.getValue());
-
-				triggerContext.key = key;
-				triggerContext.window = window;
-
-				TriggerResult triggerResult = triggerContext.onElement(element);
-
-				if (triggerResult.isFire()) {
-					ACC contents = windowState.get();
-					if (contents == null) {
-						continue;
-					}
-					emitWindowContents(window, contents);
-				}
-
-				if (triggerResult.isPurge()) {
-					windowState.clear();
-				}
-				registerCleanupTimer(window);
-			}
-		}
-
-		// side output input event if
-		// element not handled by any window
-		// late arriving tag has been set
-		// windowAssigner is event time and current timestamp + allowed lateness no less than element timestamp
-		if (isSkippedElement && isElementLate(element)) {
-			if (lateDataOutputTag != null){
-				sideOutput(element);
-			} else {
-				this.numLateRecordsDropped.inc();
-			}
-		}
-	}
+        // side output input event if
+        // element not handled by any window
+        // late arriving tag has been set
+        // windowAssigner is event time and current timestamp + allowed lateness no less than
+        // element timestamp
+			   // 延迟数据旁路输出
+        if (isSkippedElement && isElementLate(element)) {
+            if (lateDataOutputTag != null) {
+                sideOutput(element);
+            } else {
+                this.numLateRecordsDropped.inc();
+            }
+        }
+    }
 ```
 
 1. 获取element归属的windows
