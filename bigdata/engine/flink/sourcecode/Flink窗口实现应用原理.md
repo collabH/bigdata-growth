@@ -312,6 +312,11 @@ input
 * process()/evitor()
 * 全量状态计算
 
+```java
+    /** The state that holds the merging window metadata (the sets that describe what is merged). */
+private transient InternalListState<K, VoidNamespace, Tuple2<W, W>> mergingSetsState;
+```
+
 ### AggregatingState
 
 * Reduce()/aggregate()
@@ -337,11 +342,13 @@ public void add(IN value) throws IOException {
 * 根据指定的`window function`，将window的记录放入prcoess中
 
 ```java
-private void emitWindowContents(W window, ACC contents) throws Exception {
-		timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
-		processContext.window = window;
-		userFunction.process(triggerContext.key, window, processContext, contents, timestampedCollector);
-	}
+  private void emitWindowContents(W window, ACC contents) throws Exception {
+        timestampedCollector.setAbsoluteTimestamp(window.maxTimestamp());
+        processContext.window = window;
+    // 调用windowFunction，传入当前key，当前window，上下文，窗口全量内容
+        userFunction.process(
+                triggerContext.key, window, processContext, contents, timestampedCollector);
+    }
 ```
 
 # 源码分析
@@ -351,6 +358,7 @@ private void emitWindowContents(W window, ACC contents) throws Exception {
 * timeWindow(Time size)指定滚动窗口的窗口大小
 
 ```java
+// 已过期
 public WindowedStream<T, KEY, TimeWindow> timeWindow(Time size) {
 		// 根据不同的时间语义生成不同的WindowAssigner
 		if (environment.getStreamTimeCharacteristic() == TimeCharacteristic.ProcessingTime) {
@@ -359,6 +367,11 @@ public WindowedStream<T, KEY, TimeWindow> timeWindow(Time size) {
 			return window(TumblingEventTimeWindows.of(size));
 		}
 	}
+// 核心window方法
+  public <W extends Window> WindowedStream<T, KEY, W> window(
+            WindowAssigner<? super T, W> assigner) {
+        return new WindowedStream<>(this, assigner);
+    }
 ```
 
 * timeWindow(Time size, Time slide)指定滑动窗口大小和步长
@@ -389,73 +402,30 @@ public WindowedStream<T, KEY, GlobalWindow> countWindow(long size, long slide) {
 	}
 ```
 
-## WindowStream
+## WindowedStream
 
 ### reduce
 
 ```java
-public <R> SingleOutputStreamOperator<R> reduce(
-			ReduceFunction<T> reduceFunction,
-			WindowFunction<T, R, K, W> function,
-			TypeInformation<R> resultType) {
+  public <R> SingleOutputStreamOperator<R> reduce(
+            ReduceFunction<T> reduceFunction,
+            WindowFunction<T, R, K, W> function,
+            TypeInformation<R> resultType) {
 
-		if (reduceFunction instanceof RichFunction) {
-			throw new UnsupportedOperationException("ReduceFunction of reduce can not be a RichFunction.");
-		}
+        // clean the closures
+        function = input.getExecutionEnvironment().clean(function);
+        reduceFunction = input.getExecutionEnvironment().clean(reduceFunction);
 
-		//clean the closures
-		function = input.getExecutionEnvironment().clean(function);
-		reduceFunction = input.getExecutionEnvironment().clean(reduceFunction);
-		// 生成算子名称
-		final String opName = generateOperatorName(windowAssigner, trigger, evictor, reduceFunction, function);
-		KeySelector<T, K> keySel = input.getKeySelector();
+    // 获取算子名称
+        final String opName = builder.generateOperatorName();
+    // 获取算子描述
+        final String opDescription = builder.generateOperatorDescription(reduceFunction, function);
 
-		OneInputStreamOperator<T, R> operator;
-		// 判断是否指定evictor创建不同的窗口算子
-		if (evictor != null) {
-			@SuppressWarnings({"unchecked", "rawtypes"})
-				// 获取streamRecord序列化器
-			TypeSerializer<StreamRecord<T>> streamRecordSerializer =
-				(TypeSerializer<StreamRecord<T>>) new StreamElementSerializer(input.getType().createSerializer(getExecutionEnvironment().getConfig()));
-
-			// 创建ListState，用于存储窗口内容
-			ListStateDescriptor<StreamRecord<T>> stateDesc =
-				new ListStateDescriptor<>("window-contents", streamRecordSerializer);
-
-			// 创建EvictingWindowOperator
-			operator =
-				new EvictingWindowOperator<>(windowAssigner,
-					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					keySel,
-					input.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
-					stateDesc,
-					new InternalIterableWindowFunction<>(new ReduceApplyWindowFunction<>(reduceFunction, function)),
-					trigger,
-					evictor,
-					allowedLateness,
-					lateDataOutputTag);
-
-		} else {
-			// 创建Reducing状态，将reduce函数传入
-			ReducingStateDescriptor<T> stateDesc = new ReducingStateDescriptor<>("window-contents",
-				reduceFunction,
-				input.getType().createSerializer(getExecutionEnvironment().getConfig()));
-
-			operator =
-				new WindowOperator<>(windowAssigner,
-					windowAssigner.getWindowSerializer(getExecutionEnvironment().getConfig()),
-					keySel,
-					input.getKeyType().createSerializer(getExecutionEnvironment().getConfig()),
-					stateDesc,
-					new InternalSingleValueWindowFunction<>(function),
-					trigger,
-					allowedLateness,
-					lateDataOutputTag);
-		}
-
-		// 算子加入算子链条
-		return input.transform(opName, resultType, operator);
-	}
+    // 调用reduce，将reduce函数和窗口函数传入
+        OneInputStreamOperator<T, R> operator = builder.reduce(reduceFunction, function);
+    // transform操作
+        return input.transform(opName, resultType, operator).setDescription(opDescription);
+    }
 ```
 
 ### EvictingWindowOperator
@@ -496,21 +466,25 @@ public void processElement(StreamRecord<IN> element) throws Exception {
 					public void merge(W mergeResult,
 							Collection<W> mergedWindows, W stateWindowResult,
 							Collection<W> mergedStateWindows) throws Exception {
-						// 如果是事件时间，获取最大时间+延迟时间如果小于等于watermark则抛出一次，窗口的最新时间不能低于当前watermark在合并的时候
+						// 如果是事件时间，获取最大时间+延迟时间如果小于等于watermark则抛出一次，窗口的最新时间不能低于当前watermark在合并的时候 Evicting与正常窗口相反，过滤掉小于wm的数据
 						if ((windowAssigner.isEventTime() && mergeResult.maxTimestamp() + allowedLateness <= internalTimerService.currentWatermark())) {
 							throw new UnsupportedOperationException("The end timestamp of an " +
 									"event-time window cannot become earlier than the current watermark " +
 									"by merging. Current watermark: " + internalTimerService.currentWatermark() +
 									" window: " + mergeResult);
-						} else if (!windowAssigner.isEventTime()) {
-							// 时间时间，判断最大窗口是否能超过watermark
-							long currentProcessingTime = internalTimerService.currentProcessingTime();
-							if (mergeResult.maxTimestamp() <= currentProcessingTime) {
-								throw new UnsupportedOperationException("The end timestamp of a " +
-									"processing-time window cannot become earlier than the current processing time " +
-									"by merging. Current processing time: " + currentProcessingTime +
-									" window: " + mergeResult);
-							}
+						} else if  (!windowAssigner.isEventTime()
+                                                && mergeResult.maxTimestamp()
+                                                        <= internalTimerService
+                                                                .currentProcessingTime()) {
+                                            throw new UnsupportedOperationException(
+                                                    "The end timestamp of a "
+                                                            + "processing-time window cannot become earlier than the current processing time "
+                                                            + "by merging. Current processing time: "
+                                                            + internalTimerService
+                                                                    .currentProcessingTime()
+                                                            + " window: "
+                                                            + mergeResult);
+                                        }
 						}
 
 						triggerContext.key = key;
@@ -623,96 +597,55 @@ public void processElement(StreamRecord<IN> element) throws Exception {
 ####  registerCleanupTimer注册的定时器
 
 ```java
-public void onEventTime(InternalTimer<K, W> timer) throws Exception {
-		triggerContext.key = timer.getKey();
-		triggerContext.window = timer.getNamespace();
+// timer触发逻辑
+  public void onEventTime(InternalTimer<K, W> timer) throws Exception {
 
-		MergingWindowSet<W> mergingWindows;
+        triggerContext.key = timer.getKey();
+        triggerContext.window = timer.getNamespace();
+        evictorContext.key = timer.getKey();
+        evictorContext.window = timer.getNamespace();
 
-		if (windowAssigner instanceof MergingWindowAssigner) {
-			mergingWindows = getMergingWindowSet();
-			W stateWindow = mergingWindows.getStateWindow(triggerContext.window);
-			if (stateWindow == null) {
-				// Timer firing for non-existent window, this can only happen if a
-				// trigger did not clean up timers. We have already cleared the merging
-				// window and therefore the Trigger state, however, so nothing to do.
-				return;
-			} else {
-				windowState.setCurrentNamespace(stateWindow);
-			}
-		} else {
-			windowState.setCurrentNamespace(triggerContext.window);
-			mergingWindows = null;
-		}
+        MergingWindowSet<W> mergingWindows = null;
 
-		TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
+        if (windowAssigner instanceof MergingWindowAssigner) {
+            mergingWindows = getMergingWindowSet();
+            W stateWindow = mergingWindows.getStateWindow(triggerContext.window);
+            if (stateWindow == null) {
+                // Timer firing for non-existent window, this can only happen if a
+                // trigger did not clean up timers. We have already cleared the merging
+                // window and therefore the Trigger state, however, so nothing to do.
+                return;
+            } else {
+                evictingWindowState.setCurrentNamespace(stateWindow);
+            }
+        } else {
+            evictingWindowState.setCurrentNamespace(triggerContext.window);
+        }
 
-		if (triggerResult.isFire()) {
-			ACC contents = windowState.get();
-			if (contents != null) {
-				emitWindowContents(triggerContext.window, contents);
-			}
-		}
+        TriggerResult triggerResult = triggerContext.onEventTime(timer.getTimestamp());
 
-		if (triggerResult.isPurge()) {
-			windowState.clear();
-		}
+        if (triggerResult.isFire()) {
+            Iterable<StreamRecord<IN>> contents = evictingWindowState.get();
+            if (contents != null) {
+                emitWindowContents(triggerContext.window, contents, evictingWindowState);
+            }
+        }
+    	// 清理状态
+        if (triggerResult.isPurge()) {
+            evictingWindowState.clear();
+        }
 
-		if (windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
-			clearAllState(triggerContext.window, windowState, mergingWindows);
-		}
+    // 清理全部状态
+        if (windowAssigner.isEventTime()
+                && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
+            clearAllState(triggerContext.window, evictingWindowState, mergingWindows);
+        }
 
-		if (mergingWindows != null) {
-			// need to make sure to update the merging state in state
-			mergingWindows.persist();
-		}
-	}
-
-	@Override
-	public void onProcessingTime(InternalTimer<K, W> timer) throws Exception {
-		triggerContext.key = timer.getKey();
-		triggerContext.window = timer.getNamespace();
-
-		MergingWindowSet<W> mergingWindows;
-
-		if (windowAssigner instanceof MergingWindowAssigner) {
-			mergingWindows = getMergingWindowSet();
-			W stateWindow = mergingWindows.getStateWindow(triggerContext.window);
-			if (stateWindow == null) {
-				// Timer firing for non-existent window, this can only happen if a
-				// trigger did not clean up timers. We have already cleared the merging
-				// window and therefore the Trigger state, however, so nothing to do.
-				return;
-			} else {
-				windowState.setCurrentNamespace(stateWindow);
-			}
-		} else {
-			windowState.setCurrentNamespace(triggerContext.window);
-			mergingWindows = null;
-		}
-
-		TriggerResult triggerResult = triggerContext.onProcessingTime(timer.getTimestamp());
-
-		if (triggerResult.isFire()) {
-			ACC contents = windowState.get();
-			if (contents != null) {
-				emitWindowContents(triggerContext.window, contents);
-			}
-		}
-
-		if (triggerResult.isPurge()) {
-			windowState.clear();
-		}
-
-		if (!windowAssigner.isEventTime() && isCleanupTime(triggerContext.window, timer.getTimestamp())) {
-			clearAllState(triggerContext.window, windowState, mergingWindows);
-		}
-
-		if (mergingWindows != null) {
-			// need to make sure to update the merging state in state
-			mergingWindows.persist();
-		}
-	}
+        if (mergingWindows != null) {
+            // need to make sure to update the merging state in state
+            mergingWindows.persist();
+        }
+    }
 ```
 
 ### aggregate
