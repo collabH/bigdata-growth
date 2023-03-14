@@ -2,7 +2,7 @@
 
 ![](../img/flink执行流程.jpg)
 
-* Flink run -t yarn-per-job -c xxxx xxx.jar
+* `Flink run -t yarn-per-job -c xxxx xxx.jar`执行流程图
 
 ## CliFrontend
 
@@ -62,7 +62,7 @@ public static void main(final String[] args) {
 
 * TaskManager的入口类
 * 启动TaskExecutor
-* 向RM注册slot，RM分配Slot，taskExecutor接收到分配的指令，提供offset给JobMaster（slotpool）
+* 向RM注册slot，RM分配Slot，taskExecutor接收到分配的指令，提供slot给JobMaster（slotpool）
 * JobMaster提交任务给TaskExecutor执行任务
 
 # 组件通信
