@@ -116,26 +116,26 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 
 ![](../img/执行图.jpg)
 
-* Flink的执行图可以分成四层:StreamGraph->JobGraph->ExecutionGraph->物理执行图
-* StreamGraph:是根据用户通过StreamAPI编写的代码生成的最初的图，表示程序的拓扑结构。
-  * StreamNode:用来代表operator的类，并具有所有相关的属性，如并发度，入边和出边（表示算子的上游和下游）等。
-  * StreamEdge:表示连续两个StreamNode的边。
-* JobGraph:StreamGraph经过优化后生成了JobGraph，提交给JobManager的数据结构，会进行operator chain链优化，减少各个节点所需的序列化/反序列化/传输消耗。
-  * JobVertex:经过优化后符合条件的多个StreamNode可能会chain在一起生成一个Vertex，即一个JobVertex包含一个或多个opeartor，JobVertext的输入是Jobedge，输出是IntermediateDataSet。
-  * IntermediateDataSet:表示JobVertex的输出，即经过opeartor处理产生的数据集，producer是JobVertex，consumer是JobEdge。
-  * JobEdge:代表了JobGraph中的一条数据传输通道。source是IntermediateDataSet，target是JobVertex。即数据通过JobEdge由IntermediateDataSet传递给目标的JobVertex。
-* ExecutionGraph:JobManager根据JobGraph生成ExecutionGraph，是并行版本的JobGraph，是调度层最核心的数据结构。
-  * ExecutionVertex:表示ExecutionJobVertex的其中一个并发子任务，输入是ExecutionEdge，输出是IntermediateResultPartition。
-  * IntermediateResult:和JobGraph的IntermediateDataSet一一对应。`一个IntermediateResult包含多个IntermediateResultPartition`，其个数等于该operator的并行度。
-  * IntermediateResultPartition:表示ExecutionVertex的一个输入分区，producer是ExecutionVertex，consumer是若干个Executionedge。
-  * ExecutionEdge:表示ExecutionVertex的输入，source是IntermediateResultPartition，traget是ExecutionVertex，source和target都只能有一个。
-  * Execution:是执行一个ExecutionVertex的一次尝试，当发生故障或者数据需要重算的情况下ExecutionVertex可能会有多个ExecutionAttemptID，一个Execution通过ExecutionAttemptID来唯一标识。JM和TM之间关于task的部署和task status的更新都是通过ExecutionAttemptID来确定消息接受者。
-* 物理执行图:JobManager根据executionGraph对Job进行调度后，在各个TaskManager上部署Task后形成的"图"，并不是一个具体的数据结构。
-  * Task:Execution被调度后分配的TaskManager中启动对应的Task。Task包裹来具有用户执行逻辑的operator。
-  * ResultPartition:代表一个Task的生成的数据，和ExecutionGraph的IntermediateResultPartition一一对应。
-  * ResultSubPartition:是ResultPartition的一个子分区。每个ResultPartition都多个ResultSubPartition，其数目要由下游消费Task数和DistributionPattern来决定。
-  * InputGate:代表Task的输入封装。每个InputGate消费一个或多个ResultPartition。
-  * InputChannel:每个InputGate会包含一个以上的InputChannel，和ExecutionGraph的ExecutionEdge一一对应，也和ResultSubPartition一对一地相连，即一个InputChannel接收一个ResultSubPartition的输出。
+* Flink的执行图可以分成四层:**StreamGraph->JobGraph->ExecutionGraph->物理执行图**
+* **StreamGraph**:是根据用户通过StreamAPI编写的代码生成的最初的Graph，表示程序的拓扑结构。
+  * **StreamNode**:用来代表**operator**的类，并具有所有相关的属性，如并发度，入边和出边（表示算子的上游和下游）等。
+  * **StreamEdge**:表示连续两个StreamNode的边。
+* **JobGraph**:StreamGraph经过优化后生成了JobGraph，提交给JobManager的数据结构，会进行**operator chain**链优化，减少各个节点所需的序列化/反序列化/传输消耗。
+  * **JobVertex**:经过优化后符合条件的多个StreamNode可能会chain在一起生成一个JobVertex，即一个JobVertex包含一个或多个opeartor，JobVertext的输入是JobEdge，输出是IntermediateDataSet。
+  * **IntermediateDataSet**:表示JobVertex的输出，即经过opeartor处理产生的数据集，producer是JobVertex，consumer是JobEdge。
+  * **JobEdge**:代表了JobGraph中的一条数据传输通道。source是IntermediateDataSet，target是JobVertex。即数据通过JobEdge由IntermediateDataSet传递给目标的JobVertex。
+* **ExecutionGraph**:JobManager根据JobGraph生成ExecutionGraph，是并行版本的JobGraph，是调度层最核心的数据结构。
+  * **ExecutionVertex**:表示ExecutionJobVertex的其中一个并发子任务，输入是ExecutionEdge，输出是IntermediateResultPartition。
+  * **IntermediateResult**:和JobGraph的IntermediateDataSet一一对应。`一个IntermediateResult包含多个IntermediateResultPartition`，其个数等于该operator的并行度。
+  * **IntermediateResultPartition**:表示ExecutionVertex的一个输入分区，producer是ExecutionVertex，consumer是若干个Executionedge。
+  * **ExecutionEdge**:表示ExecutionVertex的输入，source是IntermediateResultPartition，traget是ExecutionVertex，source和target都只能有一个。
+  * **Execution**:是执行一个ExecutionVertex的一次尝试，当发生故障或者数据需要重算的情况下ExecutionVertex可能会有多个ExecutionAttemptID，一个Execution通过ExecutionAttemptID来唯一标识。JM和TM之间关于task的部署和task status的更新都是通过ExecutionAttemptID来确定消息接受者。
+* **物理执行图**:JobManager根据ExecutionGraph对Job进行调度后，在各个TaskManager上部署Task后形成的"图"，并不是一个具体的数据结构。
+  * **Task**:Execution被调度后分配的TaskManager中启动对应的Task。Task包裹来具有用户执行逻辑的operator。
+  * **ResultPartition**:代表一个Task的生成的数据，和ExecutionGraph的IntermediateResultPartition一一对应。
+  * **ResultSubPartition**:是ResultPartition的一个子分区。每个ResultPartition都多个ResultSubPartition，其数目要由下游消费Task数和DistributionPattern来决定。
+  * **InputGate**:代表Task的输入封装。每个InputGate消费一个或多个ResultPartition。
+  * **InputChannel**:每个InputGate会包含一个以上的InputChannel，和ExecutionGraph的**ExecutionEdge**一一对应，也和**ResultSubPartition**一对一地相连，即一个InputChannel接收一个ResultSubPartition的输出。
 
 ## Task任务调度
 
@@ -171,7 +171,7 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
   * setChaining会对source调用createChain方法，将StreamNode转换成JobVertex放置在内存里，并将配置放入StreamConfig中。
 * StreamEdge转换JobEdge
 * JobEdge和JobVertex之间创建IntermediateDataSet来连接
-  * connect方法创建JobEdge和创建中间结果集连接。
+  * connect方法创建JobEdge和创建IntermediateDataSet连接。
 
 ## ExecutionGraph在JobManager生成
 
@@ -228,7 +228,7 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 
 * 作业的生命周期管理，如作业的发布、挂起、取消。
 * 作业执行资源的申请、分配、释放。
-* 作业的状态管理，作业发布过程中的状态变化和作业异常时的FailOver等。
+* 作业的状态管理，作业发布过程中的状态变化和作业异常时的Failover等。
 * 作业的信息提供，对外提供作业的详细信息。
 
 #### 实现类
