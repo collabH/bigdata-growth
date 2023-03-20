@@ -44,7 +44,7 @@ Spark Streaming 里也有做类似这样的 feedback 机制，上图 Fecher 会�
 
 ![图片](../img/flink网络传输.jpg)
 
-这张图就体现了 Flink 在做网络传输的时候基本的数据的流向，发送端在发送网络数据前要经历自己内部的一个流程，会有一个自己的Network Buffer，在底层用 Netty 去做通信，Netty 这一层又有属于自己的ChannelOutbound Buffer，因为最终是要通过 Socket 做网络请求的发送，所以在 Socket 也有自己的 Send Buffer，同样在接收端也有对应的三级 Buffer。学过计算机网络的时候我们应该了解到，TCP 是自带流量控制的。实际上 Flink （before V1.5）就是通过 TCP 的流控机制来实现 feedback 的。
+这张图就体现了 Flink 在做网络传输的时候基本的数据的流向，发送端在发送网络数据前要经历自己内部的一个流程，会有一个自己的Network Buffer，在底层用 Netty 去做通信，Netty 这一层又有属于自己的ChannelOutbound Buffer，因为最终是要通过 Socket 做网络请求的发送，所以在 Socket 也有自己的 Send Buffer，同样在接收端也有对应的三级 Buffer。学过计算机网络的时候我们应该了解到，TCP 是自带流量控制的。实际上 Flink （1.5之前）就是通过 TCP 的流控机制来实现 feedback 的。
 
 # TCP 流控机制
 
@@ -88,9 +88,9 @@ TCP 的流控就是基于滑动窗口的机制，现在我们有一个 Socket �
 
 <img src="../img/TCP滑动窗口流控9.jpg" alt="图片" style="zoom:200%;" />
 
-TCP 当中有一个ZeroWindowProbe的机制，发送端会定期的发送 1 个字节的探测消息，这时候接收端就会把 window 的大小进行反馈。当接收端的消费恢复了之后，接收到探测消息就可以将 window 反馈给发送端端了从而恢复整个流程。TCP 就是通过这样一个滑动窗口的机制实现 feedback。
+TCP 当中有一个**ZeroWindowProbe的机制**，发送端会定期的发送 1 个字节的探测消息，这时候接收端就会把 window 的大小进行反馈。当接收端的消费恢复了之后，接收到探测消息就可以将 window 反馈给发送端端了从而恢复整个流程。TCP 就是通过这样一个滑动窗口的机制实现 feedback。
 
-# Flink TCP-based 反压机制（before V1.5）
+# Flink TCP-based 反压机制（Flink1.5之前）
 
 ## 示例：WindowWordCount
 
@@ -116,17 +116,17 @@ JobGraph 提交到集群后会生成 ExecutionGraph ，这时候就已经具备�
 
 反压的传播实际上是分为两个阶段的，对应着上面的执行图，我们一共涉及 3 个 TaskManager，在每个 TaskManager 里面都有相应的 Task 在执行，还有负责接收数据的 InputGate，发送数据的 ResultPartition，这就是一个最基本的数据传输的通道。在这时候假设最下游的 Task （Sink）出现了问题，处理速度降了下来这时候是如何将这个压力反向传播回去呢？这时候就分为两种情况：
 
-* 跨 TaskManager ，反压如何从 InputChannel 传播到 ResultSubPartition
-* TaskManager 内，反压如何从 ResultSubPartition 传播到 InputChannel
+* 跨 TaskManager ，反压如何**从 InputChannel 传播到 ResultSubPartition**
+* TaskManager 内，反压如何**从 ResultSubPartition 传播到 InputChannel**
 ## 跨 TaskManager 数据传输
 
 <img src="../img/tm数据传输.jpg" alt="图片" style="zoom:200%;" />
 
 前面提到，发送数据需要 ResultPartition，在每个 ResultPartition 里面会有分区 ResultSubPartition，中间还会有一些关于内存管理的 Buffer。
 
-对于一个 TaskManager 来说会有**一个统一的Network BufferPool 被所有的 Task 共享**，在初始化时会从Off-heap Memory 中申请内存，申请到内存的后续内存管理就是同步 Network BufferPool 来进行的，不需要依赖 JVM GC 的机制去释放。有了 Network BufferPool 之后可以为**每一个 ResultSubPartition 创建 Local BufferPool** 。
+对于一个 TaskManager 来说会有**一个统一的Network BufferPool 被所有的 Task 共享**，在初始化时会从Off-heap Memory 中申请内存，申请到内存的后续内存管理就是同步 Network BufferPool 来进行的，不需要依赖 JVM GC 的机制去释放。有了 Network BufferPool 之后可以为**每一个 ResultSubPartition (Task)创建 Local BufferPool** 。
 
-如上图左边的 TaskManager 的 Record Writer 写了 <1，2> 这个两个数据进来，因为 ResultSubPartition 初始化的时候为空，没有 Buffer 用来接收，就会向 Local BufferPool 申请内存，这时 Local BufferPool 也没有足够的内存于是将请求转到 Network BufferPool，最终将申请到的 Buffer 按原链路返还给 ResultSubPartition，<1，2> 这个两个数据就可以被写入了。之后会将 ResultSubPartition 的 Buffer 拷贝到 Netty 的 Buffer 当中最终拷贝到 Socket 的 Buffer 将消息发送出去。然后接收端按照类似的机去处理将消息消费掉。
+如上图左边的 TaskManager 的 Record Writer 写了 <1，2> 这个两个数据进来，因为 ResultSubPartition 初始化的时候为空，没有 Buffer 用来接收，就会向 Local BufferPool 申请内存，这时 Local BufferPool 也没有足够的内存于是将请求转到 Network BufferPool，最终将申请到的 Buffer 按原链路返还给 ResultSubPartition，<1，2> 这个两个数据就可以被写入了。之后会将 ResultSubPartition 的 Buffer 拷贝到 Netty 的 Buffer 当中,最终拷贝到 Socket 的 Buffer 将消息发送出去。然后接收端按照类似的机去处理将消息消费掉。
 
 接下来我们来模拟上下游处理速度不匹配的场景，发送端的速率为 2，接收端的速率为 1，看一下反压的过程是怎样的。
 
@@ -184,8 +184,8 @@ Local BufferPool 和 Network BufferPool 都用尽后整个 Operator 就会停止
 
 在介绍 Credit-based 反压机制之前，先分析下 TCP 反压有哪些弊端。
 
-* 在一个 TaskManager 中可能要执行多个 Task，如果多个 Task 的数据最终都要传输到下游的同一个 TaskManager 就会复用同一个 Socket 进行传输，这个时候如果单个 Task 产生反压，就会导致复用的 Socket 阻塞，其余的 Task 也无法使用传输，checkpoint barrier 也无法发出导致下游执行 checkpoint 的延迟增大。
-* 依赖最底层的 TCP 去做流控，会导致反压传播路径太长，导致生效的延迟比较大。
+* 在一个 TaskManager 中可能要执行多个 Task，如果多个 Task 的数据最终都要传输到下游的同一个 TaskManager 就会复用同一个 Socket 进行传输，这个时候如果单个 Task 产生反压，**就会导致复用的 Socket 阻塞，其余的 Task 也无法使用传输，checkpoint barrier 也无法发出导致下游执行 checkpoint 的延迟增大**。
+* 依赖最底层的 TCP 去做流控，**会导致反压传播路径太长，导致生效的延迟比较大**。
 ## 引入Credit-based 反压
 
 这个机制简单的理解起来就是在 Flink 层面实现类似 TCP 流控的反压机制来解决上述的弊端，Credit 可以类比为 TCP 的 Window 机制。
@@ -194,7 +194,7 @@ Local BufferPool 和 Network BufferPool 都用尽后整个 Operator 就会停止
 
 <img src="../img/creditBase反压.jpg" alt="图片" style="zoom:200%;" />
 
-如图所示在 Flink 层面实现反压机制，就是每一次 ResultSubPartition 向 InputChannel 发送消息的时候都会发送一个 **backlog size** 告诉下游准备发送多少消息，下游就会去计算有多少的 Buffer 去接收消息，算完之后如果有充足的 Buffer 就会返还给上游一个 Credit 告知他可以发送消息（图上两个 ResultSubPartition 和 InputChannel 之间是虚线是因为最终还是要通过 Netty 和 Socket 去通信），下面我们看一个具体示例。
+如图所示在 Flink 层面实现反压机制，就是每一次 ResultSubPartition 向 InputChannel 发送消息的时候都会发送一个 **backlog size告诉下游准备发送多少消息，下游就会去计算有多少的 Buffer 去接收消息，算完之后如果有充足的 Buffer 就会返还给上游一个 Credit 告知他可以发送消息**（图上两个 ResultSubPartition 和 InputChannel 之间是虚线是因为最终还是要通过 Netty 和 Socket 去通信），下面我们看一个具体示例。
 
 <img src="../img/creditBase反压1.jpg" alt="图片" style="zoom:200%;" />
 
@@ -224,7 +224,7 @@ Local BufferPool 和 Network BufferPool 都用尽后整个 Operator 就会停止
 
 * Flink 有四层转换流程，第一层为Program 到 StreamGraph；第二层为StreamGraph 到 JobGraph；第三层为JobGraph 到 ExecutionGraph；第四层为ExecutionGraph 到物理执行计划。
 
-<img src="../img/flink4层转化流程.jpg" alt="图片" style="zoom:200%;" />
+<img src="../img/执行图.jpg" alt="图片" style="zoom:200%;" />
 
 第一部分将先讲解四层转化的流程，然后将以详细案例讲解四层的具体转化。
 
@@ -236,7 +236,7 @@ Local BufferPool 和 Network BufferPool 都用尽后整个 Operator 就会停止
 
 Program 转换成 StreamGraph 具体分为三步：
 
-* 从 StreamExecutionEnvironment.execute 开始执行程序，将 transform 添加到 StreamExecutionEnvironment 的transformations。
+* 从 StreamExecutionEnvironment.execute 开始执行程序，将 transform 添加到 StreamExecutionEnvironment的transformations。
 * 调用StreamGraphGenerator的 generateInternal 方法，遍历 transformations 构建 StreamNode 及 StreamEage。
 * 通过 StreamEdge 连接 StreamNode。
 
