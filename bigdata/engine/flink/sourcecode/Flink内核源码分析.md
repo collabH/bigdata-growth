@@ -260,7 +260,7 @@ Flink中实现类为AkkaRpcService，是Akka的ActorSystem的封装，基本可�
 
 # 内存管理
 
-* Flink自定义了内存管理机制，规避传统JVM内存管理存在的问题，多级缓存未命中，内存占用过大，Full GC问题等
+* Flink自定义了内存管理机制，规避传统JVM内存管理存在的问题，**多级缓存未命中**(缓存未命中问题，CPU进行计算时，是从CPU缓存中获取数据，而不是直接从内存中，CPU有分L1和L2/3级换成，L1小，一般为32KB，L3大能达到32MB。缓存的理论基础是程序局部性原理，包括时间局部性和空间局部性：最近被CPU访问的数据，短期内CPU还要访问（时间）；被CPU访问的数据附近的数据，CPU短期内还要访问（空间）。Java对象在堆上存储的时候并不是连续的，所以从内存中读取Java对象时，缓存的邻近的内存区域的数据往往不是CPU下一步计算所需要的，这就是缓存未命中。此时CPU需要空转等待从内存中重新读取数据，CPU的速度和内存的速度之间差好几个数量级，导致CPU没有充分利用起来。如果数据没有在内存中，而是需要从磁盘上加载，那么执行效率就会变得惨不忍睹。)，内存占用过大，Full GC问题等
 
 ## JobMananger内存模型
 
@@ -353,18 +353,18 @@ Flink使用内存=框架堆内和堆外内存+Task堆内和堆外内存+网络�
 
 ### 内存页
 
-* 内存页是MemorySegement之上的数据访问视图，数据读取抽象为DataInputView，数据写入抽象为DataOutputView。
+* 内存页是MemorySegement之上的数据访问视图，数据读取抽象为**DataInputView**，数据写入抽象为**DataOutputView**。
 
 ### Buffer
 
 * Task算子之间在网络层面上传输数据，使用的是Buffer，申请和释放由Flink自行管理，实现类为NetworkBuffer。1个NetworkBuffer包装一个MemorySegment，同时继承了AbstractReferenceCountedByteBuffer，是Netty的抽象类。
 
-### Buffer资源池
+### BufferPool
 
-* BufferPool用来管理Buffer，包含Buffer的申请、释放、销毁、可用Buffer通知等，实现类是LocalBufferPool，每个**Task拥有自己的LocalBufferPool**。
-* BufferPoolFactory用来提供BufferPool的创建和销毁，唯一的实现类是NetworkBufferPool，每个TaskManager只有一个NetworkBufferPool。同一个TaskManager上的Task共享NetworkBufferPool。
+* BufferPool用来管理Buffer，包含Buffer的申请、释放、销毁、可用Buffer通知等，实现类是LocalBufferPool，**每个Task拥有自己的LocalBufferPool**。
+* BufferPoolFactory用来提供BufferPool的创建和销毁，唯一的实现类是NetworkBufferPool，**每个TaskManager只有一个NetworkBufferPool**。同一个TaskManager上的Task共享NetworkBufferPool。
 
-## 内存管理器
+## MemoryManager
 
 * MemoryManager用来管理Flink中用于排序、Hash表、中间结果缓存或使用堆外内存的状态后端的内存。1.10之前负责TM所有内存，1.10之后范围为Slot级别。
 
