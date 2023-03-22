@@ -3,37 +3,92 @@
 ## 环境属性相关配置
 
 ```java
-  public static final String DEFAULT_JOB_NAME = "Flink Streaming Job";
-	private static final TimeCharacteristic DEFAULT_TIME_CHARACTERISTIC = TimeCharacteristic.ProcessingTime;
-	private static final long DEFAULT_NETWORK_BUFFER_TIMEOUT = 100L;
-	/**上下文环境*/
-	private static StreamExecutionEnvironmentFactory contextEnvironmentFactory = null;
-	private static final ThreadLocal<StreamExecutionEnvironmentFactory> threadLocalContextEnvironmentFactory = new ThreadLocal<>();
-	// 默认本地并行度为当前机器core数
-	private static int defaultLocalParallelism = Runtime.getRuntime().availableProcessors();
-	// 当前环境执行配置，包含并行度、序列化方式等
-	private final ExecutionConfig config = new ExecutionConfig();
-	// 配置控制checkpoint行为
-	private final CheckpointConfig checkpointCfg = new CheckpointConfig();
-	/**transformation算子集合，记录从基础的transformations到最终transforms的逻辑集合*/
-	protected final List<Transformation<?>> transformations = new ArrayList<>();
-	// buffer刷新的频率
-	private long bufferTimeout = DEFAULT_NETWORK_BUFFER_TIMEOUT;
-	// 是否开启任务链优化，相同并行度的one-to-one算子会放在同一个task slot中，优化网络io
-	protected boolean isChainingEnabled = true;
-	// 默认状态后端，用于存储kv状态和状态快照
-	private StateBackend defaultStateBackend;
-	/** 默认时间语义：processing time**/
-	private TimeCharacteristic timeCharacteristic = DEFAULT_TIME_CHARACTERISTIC;
-	// 分布式缓存文件
-	protected final List<Tuple2<String, DistributedCache.DistributedCacheEntry>> cacheFile = new ArrayList<>();
-	/*executor服务加载器，加载yarn、local、k8s等相关执行器*/
-	private final PipelineExecutorServiceLoader executorServiceLoader;
-	private final Configuration configuration;
-	// 用户指定的累加载器
-	private final ClassLoader userClassloader;
-	/**任务监听器，监听job状态的变化*/
-	private final List<JobListener> jobListeners = new ArrayList<>();
+ // 一个迭代器，迭代一个查询作业的结果。
+    private final List<CollectResultIterator<?>> collectIterators = new ArrayList<>();
+
+    @Internal
+    public void registerCollectIterator(CollectResultIterator<?> iterator) {
+        collectIterators.add(iterator);
+    }
+    /**
+     * The default name to use for a streaming job if no other name has been specified.
+     *
+     * @deprecated This constant does not fit well to batch runtime mode.
+     */
+    @Deprecated
+    public static final String DEFAULT_JOB_NAME = StreamGraphGenerator.DEFAULT_STREAMING_JOB_NAME;
+
+    /** The time characteristic that is used if none other is set. */
+    private static final TimeCharacteristic DEFAULT_TIME_CHARACTERISTIC =
+            TimeCharacteristic.EventTime;
+
+    /**
+     * The environment of the context (local by default, cluster if invoked through command line).
+     */
+    private static StreamExecutionEnvironmentFactory contextEnvironmentFactory = null;
+
+    /** The ThreadLocal used to store {@link StreamExecutionEnvironmentFactory}. */
+    private static final ThreadLocal<StreamExecutionEnvironmentFactory>
+            threadLocalContextEnvironmentFactory = new ThreadLocal<>();
+
+    /** The default parallelism used when creating a local environment. */
+    private static int defaultLocalParallelism = Runtime.getRuntime().availableProcessors();
+
+    /** The execution configuration for this environment. */
+    // 当前环境执行配置，包含并行度、序列化方式等
+    protected final ExecutionConfig config = new ExecutionConfig();
+
+    /** Settings that control the checkpointing behavior. */
+    // ck配置
+    protected final CheckpointConfig checkpointCfg = new CheckpointConfig();
+
+    /**transformation算子集合，记录从基础的transformations到最终transforms的逻辑集合*/
+    protected final List<Transformation<?>> transformations = new ArrayList<>();
+
+    // cacheStream实现逻辑
+    private final Map<AbstractID, CacheTransformation<?>> cachedTransformations = new HashMap<>();
+    // buffer刷新的频率
+    private long bufferTimeout = ExecutionOptions.BUFFER_TIMEOUT.defaultValue().toMillis();
+
+    // 是否开启opeartor chain优化
+    protected boolean isChainingEnabled = true;
+
+    /** The state backend used for storing k/v state and state snapshots. */
+    // 默认状态后端
+    private StateBackend defaultStateBackend;
+
+    /** Whether to enable ChangelogStateBackend, default value is unset. */
+    // 是否开启changelog ck
+    private TernaryBoolean changelogStateBackendEnabled = TernaryBoolean.UNDEFINED;
+
+    /** The default savepoint directory used by the job. */
+    private Path defaultSavepointDirectory;
+
+    /** The time characteristic used by the data streams. */
+    private TimeCharacteristic timeCharacteristic = DEFAULT_TIME_CHARACTERISTIC;
+
+    protected final List<Tuple2<String, DistributedCache.DistributedCacheEntry>> cacheFile =
+            new ArrayList<>();
+    /*executor服务加载器，加载yarn、local、k8s等相关执行器*/
+    private final PipelineExecutorServiceLoader executorServiceLoader;
+
+    /**
+     * Currently, configuration is split across multiple member variables and classes such as {@link
+     * ExecutionConfig} or {@link CheckpointConfig}. This architecture makes it quite difficult to
+     * handle/merge/enrich configuration or restrict access in other APIs.
+     *
+     * <p>In the long-term, this {@link Configuration} object should be the source of truth for
+     * newly added {@link ConfigOption}s that are relevant for DataStream API. Make sure to also
+     * update {@link #configure(ReadableConfig, ClassLoader)}.
+     */
+    protected final Configuration configuration;
+
+    private final ClassLoader userClassloader;
+
+    private final List<JobListener> jobListeners = new ArrayList<>();
+
+    // Records the slot sharing groups and their corresponding fine-grained ResourceProfile
+    private final Map<String, ResourceProfile> slotSharingGroupResources = new HashMap<>();
 ```
 
 ## 数据流相关操作
@@ -48,36 +103,35 @@
 * 核心类方法
 
 ```java
-	public JobClient executeAsync(StreamGraph streamGraph) throws Exception {
-		checkNotNull(streamGraph, "StreamGraph cannot be null.");
-		checkNotNull(configuration.get(DeploymentOptions.TARGET), "No execution.target specified in your configuration file.");
+ public JobClient executeAsync(StreamGraph streamGraph) throws Exception {
+        checkNotNull(streamGraph, "StreamGraph cannot be null.");
+        // 根据execution.target配置获取执行器
+        final PipelineExecutor executor = getPipelineExecutor();
 
-		final PipelineExecutorFactory executorFactory =
-			executorServiceLoader.getExecutorFactory(configuration);
+        // streamGraph提交转换成jobGraph-》executionGraph-》物理执行图
+        CompletableFuture<JobClient> jobClientFuture =
+                executor.execute(streamGraph, configuration, userClassloader);
 
-		checkNotNull(
-			executorFactory,
-			"Cannot find compatible factory for specified execution.target (=%s)",
-			configuration.get(DeploymentOptions.TARGET));
+        try {
+            // 获取job客户端
+            JobClient jobClient = jobClientFuture.get();
+            // 触发监听器螺距
+            jobListeners.forEach(jobListener -> jobListener.onJobSubmitted(jobClient, null));
+            // job执行结果放入collectIterators
+            collectIterators.forEach(iterator -> iterator.setJobClient(jobClient));
+            collectIterators.clear();
+            return jobClient;
+        } catch (ExecutionException executionException) {
+            final Throwable strippedException =
+                    ExceptionUtils.stripExecutionException(executionException);
+            jobListeners.forEach(
+                    jobListener -> jobListener.onJobSubmitted(null, strippedException));
 
-		// 通过executorFactory得到特定配置的executor
-		CompletableFuture<JobClient> jobClientFuture = executorFactory
-			.getExecutor(configuration)
-			.execute(streamGraph, configuration);
-
-		try {
-			JobClient jobClient = jobClientFuture.get();
-			jobListeners.forEach(jobListener -> jobListener.onJobSubmitted(jobClient, null));
-			return jobClient;
-		} catch (ExecutionException executionException) {
-			final Throwable strippedException = ExceptionUtils.stripExecutionException(executionException);
-			jobListeners.forEach(jobListener -> jobListener.onJobSubmitted(null, strippedException));
-
-			throw new FlinkException(
-				String.format("Failed to execute job '%s'.", streamGraph.getJobName()),
-				strippedException);
-		}
-	}
+            throw new FlinkException(
+                    String.format("Failed to execute job '%s'.", streamGraph.getJobName()),
+                    strippedException);
+        }
+    }
 ```
 
 ## 执行环境创建
@@ -87,24 +141,25 @@
 ```java
 	public static StreamExecutionEnvironment getExecutionEnvironment() {
 		// 解析执行环境创建工程，如果不存在则创建本地执行环境，根据任务运行环境区分
-		return Utils.resolveFactory(threadLocalContextEnvironmentFactory, contextEnvironmentFactory)
-			.map(StreamExecutionEnvironmentFactory::createExecutionEnvironment)
-			.orElseGet(StreamExecutionEnvironment::createLocalEnvironment);
+	 return Utils.resolveFactory(threadLocalContextEnvironmentFactory, contextEnvironmentFactory)
+                .map(factory -> factory.createExecutionEnvironment(configuration))
+                .orElseGet(() -> StreamExecutionEnvironment.createLocalEnvironment(configuration));
 	}
 ```
 
 ### 本地执行环境
 
 ```java
-public static LocalStreamEnvironment createLocalEnvironment(int parallelism, Configuration configuration) {
-		final LocalStreamEnvironment currentEnvironment;
-
-		// 创建本地执行环境，传入空配置，并将execution.target设置为local
-		currentEnvironment = new LocalStreamEnvironment(configuration);
-		currentEnvironment.setParallelism(parallelism);
-
-		return currentEnvironment;
-	}
+  public static LocalStreamEnvironment createLocalEnvironment(Configuration configuration) {
+        if (configuration.getOptional(CoreOptions.DEFAULT_PARALLELISM).isPresent()) {
+            return new LocalStreamEnvironment(configuration);
+        } else {
+            Configuration copyOfConfiguration = new Configuration();
+            copyOfConfiguration.addAll(configuration);
+            copyOfConfiguration.set(CoreOptions.DEFAULT_PARALLELISM, defaultLocalParallelism);
+            return new LocalStreamEnvironment(copyOfConfiguration);
+        }
+    }
 
 // 本地运行环境webUI
  public static StreamExecutionEnvironment createLocalEnvironmentWithWebUI(Configuration conf) {
@@ -122,7 +177,8 @@ public static LocalStreamEnvironment createLocalEnvironment(int parallelism, Con
 ### 远程执行环境
 
 ```java
-	private static Configuration getEffectiveConfiguration(
+// RemoteStreamEnvironment类下	
+private static Configuration getEffectiveConfiguration(
 			final Configuration baseConfiguration,
 			final String host,
 			final int port,
@@ -407,6 +463,10 @@ public interface TableEnvironment {
   static TableEnvironment create(EnvironmentSettings settings) {
 		return TableEnvironmentImpl.create(settings);
 	}
+  // 通过Configuration配置创建table执行环境
+    static TableEnvironment create(Configuration configuration) {
+        return TableEnvironmentImpl.create(configuration);
+    }
   /**
   使用方式，从传入对象构造Table对象
   *	 <pre>{@code
