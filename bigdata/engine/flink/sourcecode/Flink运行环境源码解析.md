@@ -898,23 +898,37 @@ public interface TableFactory {
 
 ```
 
-## ComponentFactory
+## Factory
 
 * 组件的工厂接口，如果存在多个匹配的实现，则可以进一步进行歧义消除
 
 ```java
-public interface ComponentFactory extends TableFactory {
+public interface Factory {
 
-  // 可选上下文
-	Map<String, String> optionalContext();
+    /**
+     * Returns a unique identifier among same factory interfaces.
+     *
+     * <p>For consistency, an identifier should be declared as one lower case word (e.g. {@code
+     * kafka}). If multiple factories exist for different versions, a version should be appended
+     * using "-" (e.g. {@code elasticsearch-7}).
+     */
+    String factoryIdentifier();
 
-  // 比选上下文配置
-	@Override
-	Map<String, String> requiredContext();
+    /**
+     * Returns a set of {@link ConfigOption} that an implementation of this factory requires in
+     * addition to {@link #optionalOptions()}.
+     *
+     * <p>See the documentation of {@link Factory} for more information.
+     */
+    Set<ConfigOption<?>> requiredOptions();
 
-  // 支持配置属性
-	@Override
-	List<String> supportedProperties();
+    /**
+     * Returns a set of {@link ConfigOption} that an implementation of this factory consumes in
+     * addition to {@link #requiredOptions()}.
+     *
+     * <p>See the documentation of {@link Factory} for more information.
+     */
+    Set<ConfigOption<?>> optionalOptions();
 }
 ```
 
@@ -923,58 +937,46 @@ public interface ComponentFactory extends TableFactory {
 * 执行器工厂
 
 ```java
-public interface ExecutorFactory extends ComponentFactory {
+public interface ExecutorFactory extends Factory {
 
-  // 根据配置创建executor
-	Executor create(Map<String, String> properties);
+    String DEFAULT_IDENTIFIER = "default";
+
+    /** Creates a corresponding {@link Executor}. */
+    Executor create(Configuration configuration);
 }
 ```
 
-## BlinkExecutorFactory
+## DefaultExecutorFactory
 
-* Blink执行器工厂
+* 默认执行器工厂
 
 ```java
-public class BlinkExecutorFactory implements ExecutorFactory {
+public final class DefaultExecutorFactory implements StreamExecutorFactory {
 
-	/**
-	 * Creates a corresponding {@link ExecutorBase}.
-	 *
-	 * @param properties Static properties of the {@link Executor}, the same that were used for factory lookup.
-	 * @param executionEnvironment a {@link StreamExecutionEnvironment} to use while executing Table programs.
-	 * @return instance of a {@link Executor}
-	 */
-	public Executor create(Map<String, String> properties, StreamExecutionEnvironment executionEnvironment) {
-		// 根据对应模式创建
-		if (Boolean.valueOf(properties.getOrDefault(EnvironmentSettings.STREAMING_MODE, "true"))) {
-			return new StreamExecutor(executionEnvironment);
-		} else {
-			return new BatchExecutor(executionEnvironment);
-		}
-	}
+    @Override
+    public Executor create(Configuration configuration) {
+        return create(StreamExecutionEnvironment.getExecutionEnvironment(configuration));
+    }
 
-	@Override
-	public Executor create(Map<String, String> properties) {
-		return create(properties, StreamExecutionEnvironment.getExecutionEnvironment());
-	}
+    @Override
+    public Executor create(StreamExecutionEnvironment executionEnvironment) {
+        return new DefaultExecutor(executionEnvironment);
+    }
 
-	@Override
-	public Map<String, String> requiredContext() {
-		DescriptorProperties properties = new DescriptorProperties();
-		return properties.asMap();
-	}
+    @Override
+    public String factoryIdentifier() {
+        return ExecutorFactory.DEFAULT_IDENTIFIER;
+    }
 
-	@Override
-	public List<String> supportedProperties() {
-		return Arrays.asList(EnvironmentSettings.STREAMING_MODE, EnvironmentSettings.CLASS_NAME);
-	}
+    @Override
+    public Set<ConfigOption<?>> requiredOptions() {
+        return Collections.emptySet();
+    }
 
-	@Override
-	public Map<String, String> optionalContext() {
-		Map<String, String> context = new HashMap<>();
-		context.put(EnvironmentSettings.CLASS_NAME, this.getClass().getCanonicalName());
-		return context;
-	}
+    @Override
+    public Set<ConfigOption<?>> optionalOptions() {
+        return Collections.emptySet();
+    }
 }
 ```
 
@@ -985,95 +987,91 @@ public class BlinkExecutorFactory implements ExecutorFactory {
 * execute(Pipeline pipeline) throws Exception;
 * executeAsync(Pipeline pipeline) throws Exception;
 
-### ExecutorBase
+### DefaultExecutor
+
+* 支持流批一体
 
 ```java
-public abstract class ExecutorBase implements Executor {
-	// 默认Job名称
-	private static final String DEFAULT_JOB_NAME = "Flink Exec Table Job";
+public class DefaultExecutor implements Executor {
 
-	// Job执行环境
-	private final StreamExecutionEnvironment executionEnvironment;
-	// 表配置
-	protected TableConfig tableConfig;
+   // 默认作业名
+    private static final String DEFAULT_JOB_NAME = "Flink Exec Table Job";
 
-	public ExecutorBase(StreamExecutionEnvironment executionEnvironment) {
-		this.executionEnvironment = executionEnvironment;
-	}
+  // 作业执行环境
+    private final StreamExecutionEnvironment executionEnvironment;
 
-	public StreamExecutionEnvironment getExecutionEnvironment() {
-		return executionEnvironment;
-	}
+    public DefaultExecutor(StreamExecutionEnvironment executionEnvironment) {
+        this.executionEnvironment = executionEnvironment;
+    }
 
-	@Override
-	public JobExecutionResult execute(Pipeline pipeline) throws Exception {
-		return executionEnvironment.execute((StreamGraph) pipeline);
-	}
+    public StreamExecutionEnvironment getExecutionEnvironment() {
+        return executionEnvironment;
+    }
 
-	@Override
-	public JobClient executeAsync(Pipeline pipeline) throws Exception {
-		return executionEnvironment.executeAsync((StreamGraph) pipeline);
-	}
+    @Override
+    public ReadableConfig getConfiguration() {
+        return executionEnvironment.getConfiguration();
+    }
 
-	protected String getNonEmptyJobName(String jobName) {
-		if (StringUtils.isNullOrWhitespaceOnly(jobName)) {
-			return DEFAULT_JOB_NAME;
-		} else {
-			return jobName;
-		}
-	}
-}
-```
+  // 创建pipeline
+    @Override
+    public Pipeline createPipeline(
+            List<Transformation<?>> transformations,
+            ReadableConfig tableConfiguration,
+            @Nullable String defaultJobName) {
 
-### StreamExecutor
+        // reconfigure before a stream graph is generated
+        executionEnvironment.configure(tableConfiguration);
 
-```java
-@Internal
-public class StreamExecutor extends ExecutorBase {
+        // create stream graph
+        final RuntimeExecutionMode mode = getConfiguration().get(ExecutionOptions.RUNTIME_MODE);
+        switch (mode) {
+            case BATCH:
+            // 配置批执行属性
+                configureBatchSpecificProperties();
+                break;
+            case STREAMING:
+                break;
+            case AUTOMATIC:
+            default:
+                throw new TableException(String.format("Unsupported runtime mode: %s", mode));
+        }
 
-	@VisibleForTesting
-	public StreamExecutor(StreamExecutionEnvironment executionEnvironment) {
-		super(executionEnvironment);
-	}
+      // 生成streamGraph
+        final StreamGraph streamGraph = executionEnvironment.generateStreamGraph(transformations);
+        setJobName(streamGraph, defaultJobName);
+        return streamGraph;
+    }
 
-	/**
-	 * 表执行器，将transformations转换为StreamGraph
-	 * @param transformations list of transformations
-	 * @param tableConfig
-	 * @param jobName what should be the name of the job
-	 * @return
-	 */
-	@Override
-	public Pipeline createPipeline(List<Transformation<?>> transformations, TableConfig tableConfig, String jobName) {
-		// 将transformations转换成StreamGraph
-		StreamGraph streamGraph = ExecutorUtils.generateStreamGraph(getExecutionEnvironment(), transformations);
-		// 设置job名称
-		streamGraph.setJobName(getNonEmptyJobName(jobName));
-		return streamGraph;
-	}
-}
-```
+    @Override
+    public JobExecutionResult execute(Pipeline pipeline) throws Exception {
+      // 执行任务
+        return executionEnvironment.execute((StreamGraph) pipeline);
+    }
 
-### BatchExecutor
+    @Override
+    public JobClient executeAsync(Pipeline pipeline) throws Exception {
+        return executionEnvironment.executeAsync((StreamGraph) pipeline);
+    }
 
-```java
-public class BatchExecutor extends ExecutorBase {
+    @Override
+    public boolean isCheckpointingEnabled() {
+        return executionEnvironment.getCheckpointConfig().isCheckpointingEnabled();
+    }
 
-	@VisibleForTesting
-	public BatchExecutor(StreamExecutionEnvironment executionEnvironment) {
-		super(executionEnvironment);
-	}
+    private void configureBatchSpecificProperties() {
+        executionEnvironment.getConfig().enableObjectReuse();
+    }
 
-	@Override
-	public Pipeline createPipeline(List<Transformation<?>> transformations, TableConfig tableConfig, String jobName) {
-		StreamExecutionEnvironment execEnv = getExecutionEnvironment();
-		// 设置table配置
-		ExecutorUtils.setBatchProperties(execEnv, tableConfig);
-		StreamGraph streamGraph = ExecutorUtils.generateStreamGraph(execEnv, transformations);
-		streamGraph.setJobName(getNonEmptyJobName(jobName));
-		ExecutorUtils.setBatchProperties(streamGraph, tableConfig);
-		return streamGraph;
-	}
+    private void setJobName(StreamGraph streamGraph, @Nullable String defaultJobName) {
+        final String adjustedDefaultJobName =
+                StringUtils.isNullOrWhitespaceOnly(defaultJobName)
+                        ? DEFAULT_JOB_NAME
+                        : defaultJobName;
+        final String jobName =
+                getConfiguration().getOptional(PipelineOptions.NAME).orElse(adjustedDefaultJobName);
+        streamGraph.setJobName(jobName);
+    }
 }
 ```
 
@@ -1087,58 +1085,117 @@ public class BatchExecutor extends ExecutorBase {
 ## ParserImpl
 
 ```java
-public class ParserImpl implements Parser {
 
-	// catalog管理器
-	private final CatalogManager catalogManager;
+    // catalog管理器
+    private final CatalogManager catalogManager;
 
-	// we use supplier pattern here in order to use the most up to
-	// date configuration. Users might change the parser configuration in a TableConfig in between
-	// multiple statements parsing
-	// 校验器提供器
-	private final Supplier<FlinkPlannerImpl> validatorSupplier;
-	private final Supplier<CalciteParser> calciteParserSupplier;
-	private final Function<TableSchema, SqlExprToRexConverter> sqlExprToRexConverterCreator;
+    // we use supplier pattern here in order to use the most up to
+    // date configuration. Users might change the parser configuration in a TableConfig in between
+    // multiple statements parsing
+    // 校验器
+    private final Supplier<FlinkPlannerImpl> validatorSupplier;
+    // calcite解析器
+    private final Supplier<CalciteParser> calciteParserSupplier;
+    // 用于将sql解析成RexNode
+    private final RexFactory rexFactory;
+    // 扩展解析器主要涉及help、set、reset、CLEAR、quit等命令处理
+    private static final ExtendedParser EXTENDED_PARSER = ExtendedParser.INSTANCE;
 
-	public ParserImpl(
-			CatalogManager catalogManager,
-			Supplier<FlinkPlannerImpl> validatorSupplier,
-			Supplier<CalciteParser> calciteParserSupplier,
-			Function<TableSchema, SqlExprToRexConverter> sqlExprToRexConverterCreator) {
-		this.catalogManager = catalogManager;
-		this.validatorSupplier = validatorSupplier;
-		this.calciteParserSupplier = calciteParserSupplier;
-		this.sqlExprToRexConverterCreator = sqlExprToRexConverterCreator;
-	}
+    public ParserImpl(
+            CatalogManager catalogManager,
+            Supplier<FlinkPlannerImpl> validatorSupplier,
+            Supplier<CalciteParser> calciteParserSupplier,
+            RexFactory rexFactory) {
+        this.catalogManager = catalogManager;
+        this.validatorSupplier = validatorSupplier;
+        this.calciteParserSupplier = calciteParserSupplier;
+        this.rexFactory = rexFactory;
+    }
 
-	@Override
-	public List<Operation> parse(String statement) {
-		CalciteParser parser = calciteParserSupplier.get();
-		FlinkPlannerImpl planner = validatorSupplier.get();
-		// parse the sql query，解析SQL
-		SqlNode parsed = parser.parse(statement);
+    /**
+     * When parsing statement, it first uses {@link ExtendedParser} to parse statements. If {@link
+     * ExtendedParser} fails to parse statement, it uses the {@link CalciteParser} to parse
+     * statements.
+     *
+     * @param statement input statement.
+     * @return parsed operations.
+     */
+    @Override
+    public List<Operation> parse(String statement) {
+        CalciteParser parser = calciteParserSupplier.get();
+        FlinkPlannerImpl planner = validatorSupplier.get();
 
-		Operation operation = SqlToOperationConverter.convert(planner, catalogManager, parsed)
-			.orElseThrow(() -> new TableException("Unsupported query: " + statement));
-		return Collections.singletonList(operation);
-	}
+        // 处理扩展语法，help、set、reset、CLEAR、quit等命令处理
+        Optional<Operation> command = EXTENDED_PARSER.parse(statement);
+        if (command.isPresent()) {
+            return Collections.singletonList(command.get());
+        }
 
-	@Override
-	public UnresolvedIdentifier parseIdentifier(String identifier) {
-		CalciteParser parser = calciteParserSupplier.get();
-		SqlIdentifier sqlIdentifier = parser.parseIdentifier(identifier);
-		return UnresolvedIdentifier.of(sqlIdentifier.names);
-	}
+        // parse the sql query
+        // use parseSqlList here because we need to support statement end with ';' in sql client.
+        // 解析sql为SqlNode
+        SqlNodeList sqlNodeList = parser.parseSqlList(statement);
+        List<SqlNode> parsed = sqlNodeList.getList();
+        Preconditions.checkArgument(parsed.size() == 1, "only single statement supported");
+        // 将sqlNode转换成flink的operation对象
+        return Collections.singletonList(
+                SqlNodeToOperationConversion.convert(planner, catalogManager, parsed.get(0))
+                        .orElseThrow(() -> new TableException("Unsupported query: " + statement)));
+    }
 
-	@Override
-	public ResolvedExpression parseSqlExpression(String sqlExpression, TableSchema inputSchema) {
-		SqlExprToRexConverter sqlExprToRexConverter = sqlExprToRexConverterCreator.apply(inputSchema);
-		RexNode rexNode = sqlExprToRexConverter.convertToRexNode(sqlExpression);
-		// 转换成逻辑类型
-		LogicalType logicalType = FlinkTypeFactory.toLogicalType(rexNode.getType());
-		return new RexNodeExpression(rexNode, TypeConversions.fromLogicalToDataType(logicalType));
-	}
-}
+    @Override
+    public UnresolvedIdentifier parseIdentifier(String identifier) {
+        CalciteParser parser = calciteParserSupplier.get();
+        SqlIdentifier sqlIdentifier = parser.parseIdentifier(identifier);
+        return UnresolvedIdentifier.of(sqlIdentifier.names);
+    }
+
+    @Override
+    public ResolvedExpression parseSqlExpression(
+            String sqlExpression, RowType inputRowType, @Nullable LogicalType outputType) {
+        try {
+            final SqlToRexConverter sqlToRexConverter =
+                    rexFactory.createSqlToRexConverter(inputRowType, outputType);
+            // 将sql表达式转换成RexNode，例如`my_catalog`.`my_database`.`my_udf`(`f0`) + 1
+            final RexNode rexNode = sqlToRexConverter.convertToRexNode(sqlExpression);
+            final LogicalType logicalType = FlinkTypeFactory.toLogicalType(rexNode.getType());
+            // expand expression for serializable expression strings similar to views
+            final String sqlExpressionExpanded = sqlToRexConverter.expand(sqlExpression);
+            return new RexNodeExpression(
+                    rexNode,
+                    TypeConversions.fromLogicalToDataType(logicalType),
+                    sqlExpression,
+                    sqlExpressionExpanded);
+        } catch (Throwable t) {
+            throw new ValidationException(
+                    String.format("Invalid SQL expression: %s", sqlExpression), t);
+        }
+    }
+
+    public String[] getCompletionHints(String statement, int cursor) {
+        List<String> candidates =
+                new ArrayList<>(
+                        Arrays.asList(EXTENDED_PARSER.getCompletionHints(statement, cursor)));
+
+        // use sql advisor
+        SqlAdvisorValidator validator = validatorSupplier.get().getSqlAdvisorValidator();
+        SqlAdvisor advisor =
+                new SqlAdvisor(validator, validatorSupplier.get().config().getParserConfig());
+        String[] replaced = new String[1];
+
+        List<String> sqlHints =
+                advisor.getCompletionHints(statement, cursor, replaced).stream()
+                        .map(item -> item.toIdentifier().toString())
+                        .collect(Collectors.toList());
+
+        candidates.addAll(sqlHints);
+
+        return candidates.toArray(new String[0]);
+    }
+
+    public CatalogManager getCatalogManager() {
+        return catalogManager;
+    }
 ```
 
 # Planner
