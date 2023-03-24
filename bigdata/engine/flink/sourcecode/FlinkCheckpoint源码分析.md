@@ -1,9 +1,9 @@
 # Checkpoint模块分配
 
 * checkpoint
-  * channel:数据管道，包含checkpoint的读写
-  * hooks:钩子函数
-  * metadata:元数据
+  * **channel**:数据管道，包含checkpoint的读写
+  * **hooks**:钩子函数
+  * **metadata**:元数据
 
 ## Channel模块
 
@@ -67,6 +67,8 @@ public class InputChannelInfo implements Serializable {
 
 #### ResultSubpartitionInfo
 
+* 描述ResultPartition和ResultSubPartition的关系，1对多
+
 ```java
 @Internal
 public class ResultSubpartitionInfo implements Serializable {
@@ -114,143 +116,37 @@ public class ResultSubpartitionInfo implements Serializable {
 }
 ```
 
-
-
 ### state reader
 
 * 读取状态的数据管道，用于判断管道内是否还有状态，读取输入/输出数据。
 
 ```java
-@Internal
-public interface ChannelStateReader extends AutoCloseable {
+public interface SequentialChannelStateReader extends AutoCloseable {
 
-	/**
-	 * Status of reading result.
-	 * 读取状态的结果
-	 */
-	enum ReadResult { HAS_MORE_DATA, NO_MORE_DATA }
+    // 从特定inputGate数组读取数据
+    void readInputData(InputGate[] inputGates) throws IOException, InterruptedException;
 
-	/**
-	 * Return whether there are any channel states to be read.
-	 */
-	boolean hasChannelStates();
+    // 从特定ResultPartitionWriter读取数据，是否通知完成状态
+    void readOutputData(ResultPartitionWriter[] writers, boolean notifyAndBlockOnCompletion)
+            throws IOException, InterruptedException;
 
-	/**
-	 * Put data into the supplied buffer to be injected into
-	 * {@link org.apache.flink.runtime.io.network.partition.consumer.InputChannel InputChannel}.
-	 */
-	ReadResult readInputData(InputChannelInfo info, Buffer buffer) throws IOException;
+    @Override
+    void close() throws Exception;
 
-	/**
-	 * Put data into the supplied buffer to be injected into
-	 * {@link org.apache.flink.runtime.io.network.partition.ResultSubpartition ResultSubpartition}.
-	 */
-	ReadResult readOutputData(ResultSubpartitionInfo info, BufferBuilder bufferBuilder) throws IOException;
+    // 不读取
+    SequentialChannelStateReader NO_OP =
+            new SequentialChannelStateReader() {
 
-	@Override
-	void close() throws Exception;
+                @Override
+                public void readInputData(InputGate[] inputGates) {}
 
-	/**
-	 * 不进行操作
-	 */
-	ChannelStateReader NO_OP = new ChannelStateReader() {
+                @Override
+                public void readOutputData(
+                        ResultPartitionWriter[] writers, boolean notifyAndBlockOnCompletion) {}
 
-		@Override
-		public boolean hasChannelStates() {
-			return false;
-		}
-
-		@Override
-		public ReadResult readInputData(InputChannelInfo info, Buffer buffer) {
-			return ReadResult.NO_MORE_DATA;
-		}
-
-		@Override
-		public ReadResult readOutputData(ResultSubpartitionInfo info, BufferBuilder bufferBuilder) {
-			return ReadResult.NO_MORE_DATA;
-		}
-
-		@Override
-		public void close() {
-		}
-	};
-}
-
-public class ChannelStateReaderImpl implements ChannelStateReader {
-	private static final Logger log = LoggerFactory.getLogger(ChannelStateReaderImpl.class);
-
-
-	/**
-	 * 俩个结果集更执行图有关，最终执行图从task-》ResultSubpartition-》inputchannel
-	 */
-	// 输出管道处理器
-	private final Map<InputChannelInfo, ChannelStateStreamReader> inputChannelHandleReaders;
-	// 结果子分区处理器
-	private final Map<ResultSubpartitionInfo, ChannelStateStreamReader> resultSubpartitionHandleReaders;
-	// 是否关闭
-	private boolean isClosed = false;
-
-	public ChannelStateReaderImpl(TaskStateSnapshot snapshot) {
-		this(snapshot, new ChannelStateSerializerImpl());
-	}
-
-	ChannelStateReaderImpl(TaskStateSnapshot snapshot, ChannelStateSerializer serializer) {
-		RefCountingFSDataInputStreamFactory streamFactory = new RefCountingFSDataInputStreamFactory(serializer);
-		final HashMap<InputChannelInfo, ChannelStateStreamReader> inputChannelHandleReadersTmp = new HashMap<>();
-		final HashMap<ResultSubpartitionInfo, ChannelStateStreamReader> resultSubpartitionHandleReadersTmp = new HashMap<>();
-		for (Map.Entry<OperatorID, OperatorSubtaskState> e : snapshot.getSubtaskStateMappings()) {
-			addReaders(inputChannelHandleReadersTmp, e.getValue().getInputChannelState(), streamFactory);
-			addReaders(resultSubpartitionHandleReadersTmp, e.getValue().getResultSubpartitionState(), streamFactory);
-		}
-		inputChannelHandleReaders = inputChannelHandleReadersTmp; // memory barrier to allow another thread call clear()
-		resultSubpartitionHandleReaders = resultSubpartitionHandleReadersTmp; // memory barrier to allow another thread call clear()
-	}
-
-	private <T> void addReaders(
-			Map<T, ChannelStateStreamReader> readerMap,
-			Collection<? extends AbstractChannelStateHandle<T>> handles,
-			RefCountingFSDataInputStreamFactory streamFactory) {
-		for (AbstractChannelStateHandle<T> handle : handles) {
-			checkState(!readerMap.containsKey(handle.getInfo()), "multiple states exist for channel: " + handle.getInfo());
-			readerMap.put(handle.getInfo(), new ChannelStateStreamReader(handle, streamFactory));
-		}
-	}
-
-	@Override
-	public boolean hasChannelStates() {
-		return !(inputChannelHandleReaders.isEmpty() && resultSubpartitionHandleReaders.isEmpty());
-	}
-
-	@Override
-	public ReadResult readInputData(InputChannelInfo info, Buffer buffer) throws IOException {
-		Preconditions.checkState(!isClosed, "reader is closed");
-		log.debug("readInputData, resultSubpartitionInfo: {} , buffer {}", info, buffer);
-		ChannelStateStreamReader reader = inputChannelHandleReaders.get(info);
-		// 数据放入Buffer
-		return reader == null ? ReadResult.NO_MORE_DATA : reader.readInto(buffer);
-	}
-
-	@Override
-	public ReadResult readOutputData(ResultSubpartitionInfo info, BufferBuilder bufferBuilder) throws IOException {
-		Preconditions.checkState(!isClosed, "reader is closed");
-		log.debug("readOutputData, resultSubpartitionInfo: {} , bufferBuilder {}", info, bufferBuilder);
-		ChannelStateStreamReader reader = resultSubpartitionHandleReaders.get(info);
-		return reader == null ? ReadResult.NO_MORE_DATA : reader.readInto(bufferBuilder);
-	}
-
-	@Override
-	public void close() throws Exception {
-		isClosed = true;
-		try (Closer closer = Closer.create()) {
-			for (Map<?, ChannelStateStreamReader> map : asList(inputChannelHandleReaders, resultSubpartitionHandleReaders)) {
-				for (ChannelStateStreamReader reader : map.values()) {
-					closer.register(reader);
-				}
-				map.clear();
-			}
-		}
-	}
-
+                @Override
+                public void close() {}
+            };
 }
 ```
 
@@ -1084,6 +980,7 @@ private void snapshotTaskState(
 		for (Execution execution: executions) {
 			// 如果是同步
 			if (props.isSynchronous()) {
+        // 触发同步savepoint
 				execution.triggerSynchronousSavepoint(checkpointID, timestamp, checkpointOptions, advanceToEndOfTime);
 			} else {
 				// 否则触发checkpoint
