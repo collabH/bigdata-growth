@@ -4,44 +4,78 @@
 
 ```java
 public interface ProcessingTimeService {
+    /** Returns the current processing time. */
+    // 获取当前Processing time
+    long getCurrentProcessingTime();
 
-	/**
-	 * 获取当前Processing时间
-	 * Returns the current processing time.
-	 */
-	long getCurrentProcessingTime();
+    /**
+     * Registers a task to be executed when (processing) time is {@code timestamp}.
+     *
+     * @param timestamp Time when the task is to be executed (in processing time)
+     * @param target The task to be executed
+     * @return The future that represents the scheduled task. This always returns some future, even
+     *     if the timer was shut down
+     */
+    // 注册一个异步timer
+    ScheduledFuture<?> registerTimer(long timestamp, ProcessingTimeCallback target);
 
-	/**
-	 * 注册一个timer异步
-	 */
-	ScheduledFuture<?> registerTimer(long timestamp, ProcessingTimeCallback target);
-
-	/**
-	 * Registers a task to be executed repeatedly at a fixed rate.
-	 */
-	ScheduledFuture<?> scheduleAtFixedRate(ProcessingTimeCallback callback, long initialDelay, long period);
-
-	/**
-	 * Registers a task to be executed repeatedly with a fixed delay.
-	 *
-	 */
-	ScheduledFuture<?> scheduleWithFixedDelay(ProcessingTimeCallback callback, long initialDelay, long period);
-
-	CompletableFuture<Void> quiesce();
+    /**
+    * 用于执行timer触发的动作
+     * A callback that can be registered via {@link #registerTimer(long, ProcessingTimeCallback)}.
+     */
+    @PublicEvolving
+    interface ProcessingTimeCallback {
+        /**
+         * This method is invoked with the time which the callback register for.
+         *
+         * @param time The time this callback was registered for.
+         */
+        void onProcessingTime(long time) throws IOException, InterruptedException, Exception;
+    }
 }
-```
 
-## ProcessingTimeCallback
+public interface ProcessingTimeService
+        extends org.apache.flink.api.common.operators.ProcessingTimeService {
+    /**
+     * Registers a task to be executed repeatedly at a fixed rate.
+     * 注册一个按固定速率执行的timer
+     * <p>This call behaves similar to {@link ScheduledExecutor#scheduleAtFixedRate(Runnable, long,
+     * long, TimeUnit)}.
+     *
+     * @param callback to be executed after the initial delay and then after each period
+     * @param initialDelay initial delay to start executing callback
+     * @param period after the initial delay after which the callback is executed
+     * @return Scheduled future representing the task to be executed repeatedly
+     */
+    ScheduledFuture<?> scheduleAtFixedRate(
+            ProcessingTimeCallback callback, long initialDelay, long period);
 
-* 用于执行timer触发的动作
+    /**
+     * Registers a task to be executed repeatedly with a fixed delay.
+     * 注册一个以固定延迟重复执行的timer
+     * <p>This call behaves similar to {@link ScheduledExecutor#scheduleWithFixedDelay(Runnable,
+     * long, long, TimeUnit)}.
+     *
+     * @param callback to be executed after the initial delay and then after each period
+     * @param initialDelay initial delay to start executing callback
+     * @param period after the initial delay after which the callback is executed
+     * @return Scheduled future representing the task to be executed repeatedly
+     */
+    ScheduledFuture<?> scheduleWithFixedDelay(
+            ProcessingTimeCallback callback, long initialDelay, long period);
 
-```java
-public interface ProcessingTimeCallback {
-
-	/**
-	 * timer触发方法
-	 */
-	void onProcessingTime(long timestamp) throws Exception;
+    /**
+     *
+     * This method puts the service into a state where it does not register new timers, but returns
+     * for each call to {@link #registerTimer} or {@link #scheduleAtFixedRate} a "mock" future and
+     * the "mock" future will be never completed. Furthermore, the timers registered before are
+     * prevented from firing, but the timers in running are allowed to finish.
+     *
+     * <p>If no timer is running, the quiesce-completed future is immediately completed and
+     * returned. Otherwise, the future returned will be completed when all running timers have
+     * finished.
+     */
+    CompletableFuture<Void> quiesce();
 }
 ```
 
@@ -116,7 +150,7 @@ public class SystemProcessingTimeService implements TimerService {
 		// tasks should be removed if the future is canceled，如果futrue被取消，task应该被移除
 		this.timerService.setRemoveOnCancelPolicy(true);
 
-		// make sure shutdown removes all pending tasks 确保关机删除所有未完成的任务
+		// make sure shutdown removes all pending tasks 确保shutdown删除所有未完成的任务
 		// timeService关闭后，任务被终止和移除，相当于shutdownNow
 		this.timerService.setContinueExistingPeriodicTasksAfterShutdownPolicy(false);
 		// 设置为true，标示关闭后执行，false标示不执行
@@ -480,4 +514,4 @@ public interface InternalTimerService<N> {
 - InternalTimerService的实例由getInternalTimerService()方法取得，该方法定义在所有算子的基类AbstractStreamOperator中.
 - KeyedProcessOperator.processElement()方法调用用户自定义函数的processElement()方法，顺便将上下文实例ContextImpl传了进去，所以用户可以由它获得TimerService来注册Timer。
 - Timer在代码中叫做InternalTimer。
-- 当Timer触发时，实际上是根据时间特征调用onProcessingTime()/onEventTime()方法（这两个方法来自Triggerable接口），进而触发用户函数的onTimer()回调逻辑。后面还会见到它们。
+- 当Timer触发时，实际上是根据时间特征调用onProcessingTime()/onEventTime()方法（这两个方法来自Triggerable接口），进而触发用户函数的onTimer()回调逻辑。
