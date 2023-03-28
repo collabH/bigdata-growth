@@ -66,7 +66,7 @@ Stage 2 : Data Source
 **4.Optimize阶段(查询计划优化)**
 
 * 首先将 SqlNode 语法树转换成关系表达式 RelNode 构成的逻辑树
-* 然后使用优化器基于规则进行等价变换，例如我们比较熟悉的谓词下推、列裁剪等，经过优化器优化后得到最优的查询计划；
+* 然后使用优化器基于规则进行等价变换，例如我们比较熟悉的谓词下推、列裁剪等，经过优化器优化后得到最优的查询计划；RBO(rule based optimization)、CBO(cost based optimization)
 
 **5.Execute阶段**
 
@@ -307,7 +307,7 @@ public class PartitionTimeCommitTigger implements PartitionCommitTrigger {
 
 	@Override
 	public List<String> committablePartitions(long checkpointId) {
-		// 判断提交的分区是否一件checkpoint完毕
+		// 判断提交的分区是否已经checkpoint完毕
 		if (!watermarks.containsKey(checkpointId)) {
 			throw new IllegalArgumentException(String.format(
 					"Checkpoint(%d) has not been snapshot. The watermark information is: %s.",
