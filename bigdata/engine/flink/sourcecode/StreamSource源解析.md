@@ -174,51 +174,45 @@ public <R> BroadcastConnectedStream<T, R> connect(BroadcastStream<R> broadcastSt
 * KeyedStream
 
 ```java
-public <K> KeyedStream<T, K> keyBy(KeySelector<T, K> key) {
-		Preconditions.checkNotNull(key);
-		return new KeyedStream<>(this, clean(key));
-	}
-public <K> KeyedStream<T, K> keyBy(KeySelector<T, K> key) {
-		Preconditions.checkNotNull(key);
-		return new KeyedStream<>(this, clean(key));
-	}
-public KeyedStream<T, Tuple> keyBy(int... fields) {
-		if (getType() instanceof BasicArrayTypeInfo || getType() instanceof PrimitiveArrayTypeInfo) {
-			return keyBy(KeySelectorUtil.getSelectorForArray(fields, getType()));
-		} else {
-			return keyBy(new Keys.ExpressionKeys<>(fields, getType()));
-		}
-	}  
- public KeyedStream<T, Tuple> keyBy(String... fields) {
-		return keyBy(new Keys.ExpressionKeys<>(fields, getType()));
-	}
  private KeyedStream<T, Tuple> keyBy(Keys<T> keys) {
-		return new KeyedStream<>(this, clean(KeySelectorUtil.getSelectorForKeys(keys,
-				getType(), getExecutionConfig())));
-	} 
+        return new KeyedStream<>(
+                this,
+                clean(KeySelectorUtil.getSelectorForKeys(keys, getType(), getExecutionConfig())));
+    }
+    public <K> KeyedStream<T, K> keyBy(KeySelector<T, K> key, TypeInformation<K> keyType) {
+        Preconditions.checkNotNull(key);
+        Preconditions.checkNotNull(keyType);
+        return new KeyedStream<>(this, clean(key), keyType);
+    }
+ public <K> KeyedStream<T, K> keyBy(KeySelector<T, K> key) {
+        Preconditions.checkNotNull(key);
+        return new KeyedStream<>(this, clean(key));
+    }
 ```
 
 ### 基于分区器
 
 #### partitionCustom
 
-* 使用自定义分区程序，对选择器返回的键上的DataStream进行分区。 此方法使用键选择器来获取要在其上进行分区的键，以及一个接受键类型的分区程序。
+* 使用自定义分区程序，对选择器返回的键上的DataStream进行分区。 此方法使用KeySelector来获取要在其上进行分区的键，以及一个接收键类型的分区程序。
   **注意：**此方法仅适用于单个字段键，即选择器无法返回字段元组。
 
 ```java
-	public <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, KeySelector<T, K> keySelector) {
-		// 使用自定义分区器对key选择器的键进行分区
-		return setConnectionType(new CustomPartitionerWrapper<>(clean(partitioner),
-				clean(keySelector)));
-	}
-private <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, Keys<T> keys) {
-		KeySelector<T, K> keySelector = KeySelectorUtil.getSelectorForOneKey(keys, partitioner, getType(), getExecutionConfig());
+ public <K> DataStream<T> partitionCustom(
+            Partitioner<K> partitioner, KeySelector<T, K> keySelector) {
+        return setConnectionType(
+                new CustomPartitionerWrapper<>(clean(partitioner), clean(keySelector)));
+    }
 
-		return setConnectionType(
-				new CustomPartitionerWrapper<>(
-						clean(partitioner),
-						clean(keySelector)));
-	}
+    //	private helper method for custom partitioning
+    private <K> DataStream<T> partitionCustom(Partitioner<K> partitioner, Keys<T> keys) {
+        KeySelector<T, K> keySelector =
+                KeySelectorUtil.getSelectorForOneKey(
+                        keys, partitioner, getType(), getExecutionConfig());
+
+        return setConnectionType(
+                new CustomPartitionerWrapper<>(clean(partitioner), clean(keySelector)));
+    }
 ```
 
 #### broadcast
@@ -637,7 +631,61 @@ public class StreamFilter<IN> extends AbstractUdfStreamOperator<IN, FilterFuncti
 public <R extends Tuple> SingleOutputStreamOperator<R> project(int... fieldIndexes) {
 		return new StreamProjection<>(this, fieldIndexes).projectTupleX();
 	}
+public class StreamProjection<IN> {
 
+    private DataStream<IN> dataStream;
+    // 需要project字段的inedx
+    private int[] fieldIndexes;
+
+    protected StreamProjection(DataStream<IN> dataStream, int[] fieldIndexes) {
+        // 判断是否是为tuple类型
+        if (!dataStream.getType().isTupleType()) {
+            throw new RuntimeException("Only Tuple DataStreams can be projected");
+        }
+        // 判断fieldIndexes长度是否合法
+        if (fieldIndexes.length == 0) {
+            throw new IllegalArgumentException("project() needs to select at least one (1) field.");
+        } else if (fieldIndexes.length > Tuple.MAX_ARITY - 1) {
+            throw new IllegalArgumentException(
+                    "project() may select only up to (" + (Tuple.MAX_ARITY - 1) + ") fields.");
+        }
+
+        // 获取tuple最大字段index
+        int maxFieldIndex = (dataStream.getType()).getArity();
+        // 校验索引是否大于maxFieldIndex
+        for (int i = 0; i < fieldIndexes.length; i++) {
+            Preconditions.checkElementIndex(fieldIndexes[i], maxFieldIndex);
+        }
+
+        this.dataStream = dataStream;
+        this.fieldIndexes = fieldIndexes;
+    }
+
+    /**
+     * Chooses a projectTupleX according to the length of {@link
+     * org.apache.flink.streaming.api.datastream.StreamProjection#fieldIndexes}.
+     *
+     * @return The projected DataStream.
+     * @see org.apache.flink.api.java.operators.ProjectOperator.Projection
+     */
+    @SuppressWarnings("unchecked")
+    public <OUT extends Tuple> SingleOutputStreamOperator<OUT> projectTupleX(){
+			// 返回具体的tuplex      
+    }
+  
+  	public <T0> SingleOutputStreamOperator<Tuple1<T0>> projectTuple1() {
+        TypeInformation<?>[] fTypes = extractFieldTypes(fieldIndexes, dataStream.getType());
+        TupleTypeInfo<Tuple1<T0>> tType = new TupleTypeInfo<Tuple1<T0>>(fTypes);
+
+        return dataStream.transform(
+                "Projection",
+                tType,
+                new StreamProject<IN, Tuple1<T0>>(
+                        fieldIndexes, tType.createSerializer(dataStream.getExecutionConfig())));
+    }
+}
+
+// 具体的project流
 public class StreamProject<IN, OUT extends Tuple>
 		extends AbstractStreamOperator<OUT>
 		implements OneInputStreamOperator<IN, OUT> {
