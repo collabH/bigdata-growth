@@ -861,6 +861,7 @@ public <T2> JoinedStreams<T, T2> join(DataStream<T2> otherStream) {
 		return new JoinedStreams<>(this, otherStream);
 	}
 
+// 对比coGroup和join的区别
  data1.coGroup(data2)
                 .where(new KeySelector<Tuple2<Integer, String>, Integer>() {
                     @Override
