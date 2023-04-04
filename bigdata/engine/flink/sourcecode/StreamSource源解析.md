@@ -994,7 +994,7 @@ public class TumblingProcessingTimeWindows extends WindowAssigner<Object, TimeWi
 		// 获取当前processTime
 		final long now = context.getCurrentProcessingTime();
 		if (staggerOffset == null) {
-			// 获取错开窗口offset
+			// 获取错开窗口offset，支持三种策略：ALIGNED（从0开始）、RANDOM（窗口大小的任意倍）、NATURAL(在窗口操作符中接收到第一个事件时，取开始窗口和当前处理时间作为偏移量。这样，窗户是交错的基于每个并行运算符接收到第一个事件的时间。)
 			staggerOffset = windowStagger.getStaggerOffset(context.getCurrentProcessingTime(), size);
 		}
 		// 计算开始窗口起始时间
@@ -1200,8 +1200,9 @@ public class SlidingProcessingTimeWindows extends WindowAssigner<Object, TimeWin
 	@Override
 	public Collection<TimeWindow> assignWindows(Object element, long timestamp, WindowAssignerContext context) {
 		timestamp = context.getCurrentProcessingTime();
-		// 计算最后的start
+		// 窗口大小/滑动补长 计算一个window size下存在几个window
 		List<TimeWindow> windows = new ArrayList<>((int) (size / slide));
+    // 计算起始位置
 		long lastStart = TimeWindow.getWindowStartWithOffset(timestamp, offset, slide);
 		// 从start开始，在size范围内，每次滑动slide，比如start为0，size为5 slide为3，windows存储为0~5，3~8，6~11.
 		for (long start = lastStart;
