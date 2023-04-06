@@ -1438,10 +1438,12 @@ public class CountEvictor<W extends Window> implements Evictor<Object, W> {
 		if (size <= maxCount) {
 			return;
 		} else {
+      // 记录evicted的数据数量
 			int evictedCount = 0;
 			for (Iterator<TimestampedValue<Object>> iterator = elements.iterator(); iterator.hasNext();){
 				iterator.next();
 				evictedCount++;
+        // 如果删除的数量大于阈值终止
 				if (evictedCount > size - maxCount) {
 					break;
 				} else {
@@ -2287,7 +2289,7 @@ public class TimestampsAndWatermarksOperator<T>
 	}
 
 	/**
-	 * 生成watermark，processing触发器触发
+	 * 生成watermark，processing触发器触发，定期生产wm
 	 * @param timestamp The timestamp for which the trigger event was scheduled.
 	 * @throws Exception
 	 */
@@ -2378,7 +2380,7 @@ public class TimestampsAndWatermarksOperator<T>
 		PrintSinkFunction<T> printFunction = new PrintSinkFunction<>();
 		return addSink(printFunction).name("Print to Std. Out");
 	}
-	// 带标示的prin
+	// 带标示的print
 	public DataStreamSink<T> print(String sinkIdentifier) {
 		PrintSinkFunction<T> printFunction = new PrintSinkFunction<>(sinkIdentifier, false);
 		return addSink(printFunction).name("Print to Std. Out");
@@ -2734,6 +2736,7 @@ public class LegacyKeyedProcessOperator<K, IN, OUT>
 			InternalTimer<K, VoidNamespace> timer) throws Exception {
 		onTimerContext.timeDomain = timeDomain;
 		onTimerContext.timer = timer;
+    // 触发process函数的onTimer逻辑
 		userFunction.onTimer(timer.getTimestamp(), onTimerContext, collector);
 		onTimerContext.timeDomain = null;
 		onTimerContext.timer = null;
@@ -2769,7 +2772,7 @@ public <R> SingleOutputStreamOperator<R> process(
 
 			TimeCharacteristic timeCharacteristic =
 				streamOne.getExecutionEnvironment().getStreamTimeCharacteristic();
-			// 边界流不支持eventTime时间语义
+			// IntervalJoin不支持eventTime时间语义
 			if (timeCharacteristic != TimeCharacteristic.EventTime) {
 				throw new UnsupportedTimeCharacteristicException("Time-bounded stream joins are only supported in event time");
 			}
