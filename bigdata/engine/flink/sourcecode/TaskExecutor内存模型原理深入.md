@@ -18,7 +18,7 @@
 | :----------------------------------------------------------- | :----------------------------------------------------------- | :----------------------------------------------------------- |
 | [框架堆内存（Framework Heap Memory）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#framework-memory) | [`taskmanager.memory.framework.heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-framework-heap-size) | 用于 Flink 框架的 JVM 堆内存（进阶配置）。                   |
 | [任务堆内存（Task Heap Memory）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#task-operator-heap-memory) | [`taskmanager.memory.task.heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-task-heap-size) | 用于 Flink 应用的算子及用户代码的 JVM 堆内存。               |
-| [托管内存（Managed memory）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#managed-memory) | [`taskmanager.memory.managed.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-managed-size) [`taskmanager.memory.managed.fraction`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-managed-fraction) | 由 Flink 管理的用于排序、哈希表、缓存中间结果及 RocksDB State Backend 的本地内存。 |
+| [托管内存（Managed memory）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#managed-memory) | [`taskmanager.memory.managed.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-managed-size) [`taskmanager.memory.managed.fraction`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-managed-fraction) | 由 Flink 管理的用于**排序、哈希表、缓存中间结果及 RocksDB State Backend** 的本地内存。 |
 | [框架堆外内存（Framework Off-heap Memory）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#framework-memory) | [`taskmanager.memory.framework.off-heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-framework-off-heap-size) | 用于 Flink 框架的[堆外内存（直接内存或本地内存）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#configure-off-heap-memory-direct-or-native)（进阶配置）。 |
 | [任务堆外内存（Task Off-heap Memory）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#configure-off-heap-memory-direct-or-native) | [`taskmanager.memory.task.off-heap.size`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-task-off-heap-size) | 用于 Flink 应用的算子及用户代码的[堆外内存（直接内存或本地内存）](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup_tm.html#configure-off-heap-memory-direct-or-native)。 |
 | 网络内存（Network Memory）                                   | [`taskmanager.memory.network.min`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-network-min) [`taskmanager.memory.network.max`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-network-max) [`taskmanager.memory.network.fraction`](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/config.html#taskmanager-memory-network-fraction) | 用于任务之间数据传输的直接内存（例如网络传输缓冲）。该内存部分为基于 [Flink 总内存](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup.html#configure-total-memory)的[受限的等比内存部分](https://ci.apache.org/projects/flink/flink-docs-release-1.11/zh/ops/memory/mem_setup.html#capped-fractionated-components)。NetworkBufferPool |
@@ -39,9 +39,9 @@
 
 ![](../img/TaskExecutorFlink内存分布.jpg)
 
-* 区别:是否计入Slot资源
+* 区别:是否计入Slot资源，Task计入Slot资源，Framework不计入Slot资源
 * 总用量限制
-  * -Xmx=FrameworkHeap+Task Heap
+  * -Xmx=Framework Heap+Task Heap
   * -Xx:MaxDiectMemorySize=...+Framework Off-heap+Task Off-Heap
 * Slot和Framwork的内存无隔离
 
@@ -60,17 +60,17 @@
 #### NetWork Memory
 
 * Direct Memory
-* 用于数据传输缓冲
+* 用于数据传输缓冲，NetworkBufferPool
 * 特点
   * 同一个taskExecutor的各slot之间没有隔离
   * 需要多少由作业拓扑决定，不足会导致运行失败
 * Task的网络内存计算
 
 ```shell
-networkMemory=bufferSize<32KB>*inputBuffers=remoteChannles*buffersPerChannel<2>+ggates*buffersPergates<8>
+networkMemory=bufferSize<32KB>*inputBuffers=remoteChannles*buffersPerChannel<2>+gates*buffersPergates<8>
 
 
-remoteChannels 不再当前TM的上游SubTask的数量
+remoteChannels 不在当前TM的上游SubTask的数量
 gates 上游task数量
 subpartitions 下游subtask数量
 ```
@@ -145,8 +145,8 @@ subpartitions 下游subtask数量
 
 ### 配置总内存
 
-* jobmanager.memory.flink.size
-* jobmanager.memory.process.size
+* `jobmanager.memory.process.size`
+* `jobmanager.memory.flink.size`
 
 ### 详细配置
 
