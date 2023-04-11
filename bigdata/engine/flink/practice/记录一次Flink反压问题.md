@@ -1,8 +1,8 @@
 # 问题出现
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351686-7c2bc225-de81-484a-9f4c-ff38f358a632.png#align=left&display=inline&height=372&margin=%5Bobject%20Object%5D&originHeight=372&originWidth=1460&size=0&status=done&style=none&width=1460)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351663-02121784-a3cc-42eb-ba4a-714912269fbd.png#align=left&display=inline&height=166&margin=%5Bobject%20Object%5D&originHeight=166&originWidth=732&size=0&status=done&style=none&width=732)
+![](../img/反压1.png)
+![](../img/反压2.png)
 根据subtask的watermark发现延迟了10几分钟，然后查看是否有异常或者BackPressure的情况最终发现，source->watermarks->filter端三个subtask反压都显示High
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351603-48eae46b-8bea-480c-8240-9d47926f34e8.png#align=left&display=inline&height=556&margin=%5Bobject%20Object%5D&originHeight=556&originWidth=1542&size=0&status=done&style=none&width=1542)
+![](../img/反压3.png)
 
 
 - 重启多次，问题依然存在。
@@ -11,36 +11,36 @@
 
 - 正常任务checkpoint时间端发现非常短
 
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351712-897811f8-6b9c-4850-980a-5499f4263054.png#align=left&display=inline&height=730&margin=%5Bobject%20Object%5D&originHeight=651&originWidth=1920&size=0&status=done&style=none&width=2152)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351598-90968eeb-f12b-427e-9e8c-a1f32798e3cc.png#align=left&display=inline&height=872&margin=%5Bobject%20Object%5D&originHeight=737&originWidth=1920&size=0&status=done&style=none&width=2272)
+![](../img/反压4.png)
+![](../img/反压6.png)
 
 - 反压任务
 
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351632-946dfa8f-128a-45df-8828-31b19ab4c640.png#align=left&display=inline&height=670&margin=%5Bobject%20Object%5D&originHeight=670&originWidth=2370&size=0&status=done&style=none&width=2370)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034352170-e68b986e-a029-493c-98a1-0f4f646f4cf5.png#align=left&display=inline&height=464&margin=%5Bobject%20Object%5D&originHeight=374&originWidth=1920&size=0&status=done&style=none&width=2382)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351686-22e6a56f-8571-4b0f-9e24-91bcf9cf860f.png#align=left&display=inline&height=1266&margin=%5Bobject%20Object%5D&originHeight=920&originWidth=1920&size=0&status=done&style=none&width=2642)
+![](../img/反压5.png)
+![](../img/反压7.png)
+![](../img/反压8.png)
 
 
-- 大约可以看出来checkpoint做的时间过程，并且内部基本上是下游的subtask任务耗时比较长，因此初步怀疑是因为下游sink消费原因。
+- 大约可以看出来checkpoint做的时间过程，并且内部基本上是下游的subtask任务耗时比较长，因此初步怀疑是因为下游sink原因。
 
 **分析上游的subtask的Metrics**
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351683-588c48ed-6337-4fab-bdac-3f4765a9857d.png#align=left&display=inline&height=538&margin=%5Bobject%20Object%5D&originHeight=538&originWidth=1462&size=0&status=done&style=none&width=1462)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351642-49fda873-f991-4dd0-8146-e8bf7a640033.png#align=left&display=inline&height=720&margin=%5Bobject%20Object%5D&originHeight=720&originWidth=1574&size=0&status=done&style=none&width=1574)
+![](../img/反压9.png)
+![](../img/反压10.png)
 **分析下游subtask的metrics**
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351595-219b38bf-159d-4ede-ab25-a37130ec5ab3.png#align=left&display=inline&height=516&margin=%5Bobject%20Object%5D&originHeight=516&originWidth=1416&size=0&status=done&style=none&width=1416)
+![](../img/反压11.png)
 
 - 如果一个 Subtask 的发送端 Buffer 占用率很高，则表明它被下游反压限速了；如果一个 Subtask 的接受端 Buffer 占用很高，则表明它将反压传导至上游。
 - outPoolUsage 和 inPoolUsage 同为低或同为高分别表明当前 Subtask 正常或处于被下游反压，这应该没有太多疑问。而比较有趣的是当 outPoolUsage 和 inPoolUsage 表现不同时，这可能是出于反压传导的中间状态或者表明该 Subtask 就是反压的根源。
-- 如果一个 Subtask 的 outPoolUsage 是高，通常是被下游 Task 所影响，所以可以排查它本身是反压根源的可能性。如果一个 Subtask 的 outPoolUsage 是低，但其 inPoolUsage 是高，则表明它有可能是反压的根源。因为通常反压会传导至其上游，导致上游某些 Subtask 的 outPoolUsage 为高，我们可以根据这点来进一步判断。值得注意的是，反压有时是短暂的且影响不大，比如来自某个 Channel 的短暂网络延迟或者 TaskManager 的正常 GC，这种情况下我们可以不用处理。
+- 如果一个 Subtask 的 outPoolUsage 是高，通常是被下游 Task 所影响，所以可以排除它本身是反压根源的可能性。如果一个 Subtask 的 outPoolUsage 是低，但其 inPoolUsage 是高，则表明它有可能是反压的根源。因为通常反压会传导至其上游，导致上游某些 Subtask 的 outPoolUsage 为高，我们可以根据这点来进一步判断。值得注意的是，反压有时是短暂的且影响不大，比如来自某个 Channel 的短暂网络延迟或者 TaskManager 的正常 GC，这种情况下我们可以不用处理。
 - 可以分析出来下游反压导致的上游反压问题
 
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034352017-4fc649c2-6ae7-4b8f-9c98-3d919a184f9f.png#align=left&display=inline&height=584&margin=%5Bobject%20Object%5D&originHeight=584&originWidth=1506&size=0&status=done&style=none&width=1506)
+![](../img/反压12.png)
 
-- 通常来说，floatingBuffersUsage 为高则表明反压正在传导至上游，而 exclusiveBuffersUsage 则表明了反压是否存在倾斜（floatingBuffersUsage 高、exclusiveBuffersUsage 低为有倾斜，因为少数 channel 占用了大部分的 Floating Buffer）。
+- 通常来说，inputFloatingBuffersUsage 为高则表明反压正在传导至上游，而 inputExclusiveBuffersUsage 则表明了反压是否存在倾斜（inputFloatingBuffersUsage 高、inputExclusiveBuffersUsage 低为有倾斜，因为少数 channel 占用了大部分的 Floating Buffer）。
 
 
 # 分析原因
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034351637-51c7a177-19e0-46af-adb1-f6e1ebd83e5e.png#align=left&display=inline&height=462&margin=%5Bobject%20Object%5D&originHeight=462&originWidth=1722&size=0&status=done&style=none&width=1722)
+![](../img/反压13.png)
 
 - 可以看出来subtask的数据并不是特别的倾斜
 
