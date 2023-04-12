@@ -61,14 +61,13 @@
 - 分析线程taskmanager线程占比，发现cep算子占用cpu百分之94，故增大算子并发度3为6线程cpu占用降低如下健康状态
 
 
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587034352181-0867f21e-a060-44fc-932d-970afc6634d8.png#align=left&display=inline&height=1530&margin=%5Bobject%20Object%5D&originHeight=1235&originWidth=1920&size=0&status=done&style=none&width=2378)
+![](../img/反压14.png)
 
-- 反压经历1个时间也没有再出现，后续会持续跟进，并且会尝试调大cep的时间窗口，尝试配置出最佳实践
+- 反压经历一段时间也没有再出现，后续会持续跟进，并且会尝试调大cep的时间窗口，尝试配置出最佳实践
 - 增大分区后发现数据倾斜严重，因为kafka分区为3，但是并行度为6因此cep算子的6个subtask数据倾斜严重，因此在添加source端执行reblance方法，强制轮询方式分配数据
 
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587092048094-5efc6856-0b8f-48e4-beed-76dc58c70a0c.png#align=left&display=inline&height=1011&margin=%5Bobject%20Object%5D&originHeight=1011&originWidth=1920&size=0&status=done&style=none&width=2618)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587092048384-b2fb5b8d-2019-4632-8d5e-0b73dc27adea.png#align=left&display=inline&height=698&margin=%5Bobject%20Object%5D&originHeight=698&originWidth=1838&size=0&status=done&style=none&width=1838)
-![](https://cdn.nlark.com/yuque/0/2020/png/361846/1587092048119-cd6fa5ae-0d94-41b7-8487-40a99cfa1513.png#align=left&display=inline&height=748&margin=%5Bobject%20Object%5D&originHeight=748&originWidth=1884&size=0&status=done&style=none&width=1884)
+![](../img/反压15.png)
+![](../img/反压16.png)
 
 - 可以看出来这里数据相比以前均匀很多
 
