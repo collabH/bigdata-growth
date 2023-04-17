@@ -1,16 +1,16 @@
 # Quick Start
 
-* Flink1.14之后才支持Table Stroe，下载对应版本的Flink。
+* Flink1.14之后才支持Table Stroe(现改名为paimon)，下载对应版本的Flink。
 
 ## 前置环境
 
-### 下载Flink Table Store所需依赖
+### 下载Paimon所需依赖
 
-* 下载[flink1.15]([**https://dlcdn.apache.org/flink/flink-1.15.2/flink-1.15.2-bin-scala_2.12.tgz**](https://dlcdn.apache.org/flink/flink-1.15.2/flink-1.15.2-bin-scala_2.12.tgz))
-* 编译[Flink Table Store](https://nightlies.apache.org/flink/flink-table-store-docs-master/docs/engines/build/)
+* 下载[flink1.16](https://www.apache.org/dyn/closer.lua/flink/flink-1.16.1/flink-1.16.1-bin-scala_2.12.tgz)
+* 下载[Paimon](https://repository.apache.org/snapshots/org/apache/paimon/paimon-flink-1.16/0.4-SNAPSHOT/)
 
 ```shell
-cp flink-table-store-dist-*.jar FLINK_HOME/lib/
+cp paimon-flink-*.jar <FLINK_HOME>/lib/
 ```
 
 * 下载[flink hadoop](https://repo.maven.apache.org/maven2/org/apache/flink/flink-shaded-hadoop-2-uber/2.8.3-10.0/flink-shaded-hadoop-2-uber-2.8.3-10.0.jar)
@@ -47,7 +47,7 @@ taskmanager.numberOfTaskSlots: 2
 
 ```sql
 CREATE CATALOG my_catalog WITH (
-  'type'='table-store',
+  'type'='paimon',
   'warehouse'='file:/Users/huangshimin/Documents/study/flink/tableStoreData'
 );
 
@@ -97,23 +97,39 @@ SELECT `interval`, COUNT(*) AS interval_cnt FROM
   (SELECT cnt / 10000 AS `interval` FROM word_count) GROUP BY `interval`;
 ```
 
-# Table Store概述
+# Paimon概述
 
-* Flink Table Store是在Flink中构建动态表进行流处理和批处理的统一存储，支持高速数据摄取和及时数据查询。Table Store提供以下核心功能:
-  * 支持大规模数据集的存储，允许批处理和流模式下的读写。
-  * 支持延迟最小至毫秒的流查询。
-  * 支持最小延迟至第二级的批次/OLAP查询。
-  * 默认支持增量快照流消费。因此用户不需要自己组合不同的数据管道。
+* Apache Paimon (incubating) 是一项流式数据湖存储技术，可以为用户提供高吞吐、低延迟的数据摄入、流式订阅以及实时查询能力。Paimon 采用开放的数据格式和技术理念，可以与 Apache Flink / Spark / Trino 等诸多业界主流计算引擎进行对接，共同推进 Streaming Lakehouse 架构的普及和发展。
+* 作为一种新型的可更新数据湖，Paimon具有以下特点：
+  - 大吞吐量的更新数据摄取，同时提供良好的查询性能。
+  - 具有主键过滤器的高性能查询，响应时间最快可达到百毫秒级别。
+  - 流式读取在 Lake Storage 上可用，Lake Storage 还可以与 Kafka 集成，以提供毫秒级流式读取。
 
 ## 架构
 
 ![](../../img/tablestore架构.jpg)
 
-* **读/写:**  Table Store支持读写数据和执行OLAP查询的通用方法。
-  * 对于读，它支持读取数据来自1.历史快照(batch mode) 2.来自最新的offset(streaming mode) 3.混合方式读取增量快照数据
-  * 对于写，支持从数据库的变更日志(CDC)的流同步或从离线数据的批量插入/覆盖。
-* **外部生态系统:**  除了支持Flink以外，Table Store还支持通过其他计算引擎来读取例如Hive/Spark/Trino。
-* **内部原理:**  Table Store使用混合存储体系结构，使用湖格式存储历史数据，使用消息队列系统存储增量数据。前者将列存文件存储在文件系统/对象存储中，并使用LSM树结构支持大量数据更新和高性能查询。后者使用Apache Kafka实时捕获数据。
+* **读/写:**  Paimon支持读写数据和执行OLAP查询的通用方法。
+  * 对于读，支持1全增量一体流读2.Changelog流读3.维表join4.批量/OLAP查询
+  * 对于写，支持1.实时更新2.整库同步3.DDL变更同步4.宽表合并5.批量overwrite
+* **外部生态系统:**  除了支持Flink以外，Paimon还支持通过其他计算引擎来读取例如Hive/Spark/Trino/Presto，未来会持续支持Doris和Starrocks
+* **内部原理:**  Paimon使用混合存储体系结构(湖存储 + LSM + 列式格式 (ORC, Parquet))，使用湖格式存储历史数据，使用消息队列系统存储增量数据。前者将列存文件存储在文件系统/对象存储中，并使用LSM树结构支持大量数据更新和高性能查询。后者使用Apache Kafka实时捕获数据。
+  * 高性能更新：LSM 的 **Minor Compaction**，保障写入的性能和稳定性
+  * 高性能合并：LSM 的有序合并效率非常高
+  * 高性能查询：LSM 的 基本有序性，保障查询可以基于主键做文件的 Skipping
+
+* **Flink CDC&Paimon**:通过与 Flink CDC 的整合，Paimon 可以让的业务数据简单高效的流入数据湖中。
+  * 实时同步 Mysql 单表到 Paimon 表，并且**实时将上游 Mysql 表结构（Schema）的变更同步到下游的 Paimon 表中**。
+  * 实时同步 Mysql 整库级别的表结构和数据到 Paimon 中，同时支持表结构变更的同步，并且在同步过程中复用资源，只用少量资源，就可以同步大量的表。
+
+* **多流合并能力**
+  * 在数据仓库的业务场景下，经常会用到宽表数据模型，宽表模型通常是指将业务主体相关的指标、维表、属性关联在一起的模型表，也可以泛指将多个事实表和多个维度表相关联到一起形成的宽表。
+  * Paimon 的 Partial-Update 合并引擎可以根据相同的主键实时合并多条流，形成 Paimon 的一张大宽表，依靠 LSM 的延迟 Compaction 机制，以较低的成本完成合并。合并后的表可以提供批读和流读：
+    * 批读：在批读时，读时合并仍然可以完成 Projection Pushdown，提供高性能的查询。
+    * 流读：下游可以看到完整的、合并后的数据，而不是部分列。
+
+
+![](../../img/paimonUnionStream.jpg)
 
 ## 统一的存储
 
@@ -121,7 +137,7 @@ SELECT `interval`, COUNT(*) AS interval_cnt FROM
   * **消息队列**，例如kafka，在这个管道的source阶段和中间处理阶段都使用它，以确保延迟保持在几秒内。
   * **OLAP系统**，例如clickhouse，它以流的方式接收处理过的数据，并为用户的特别查询服务。
   * **批次存储**，例如HIve，它支持传统批处理的各种操作，包括INSERT OVERWRITE。
-* Flink Table Store提供表抽象。它的使用方式与传统数据库没有区别:
+* Flink Paimon提供表抽象。它的使用方式与传统数据库没有区别:
   * 在flink的`batch`执行模式，它就像一个Hive表，支持Batch SQL的各种操作。查询它可以查看最新的快照。
   * 在flink的`streaming`执行模式，他类似消息队列，查询它就像从一个消息队列中查询历史数据永不过期的流更改日志。
 
