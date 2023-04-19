@@ -187,6 +187,7 @@
 ###### Paimin
 
 * [PaimonOverview](bigdata/engine/flink/zoology/paimon/PaimonOverview.md)
+* [PaimonPractice](bigdata/engine/flink/zoology/paimon/PaimonPractice.md)
 
 ###### Flink CDC Connector
 
