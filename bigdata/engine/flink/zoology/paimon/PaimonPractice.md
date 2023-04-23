@@ -46,7 +46,66 @@
 
 * 可以帮助 Streaming 来做 Join 能力。**Partial Update 的本质是存储本身，具有通过组件来更新部分列的能力**。如果两张表都有相同主键，它们可以分别进行 Partial Update。它的好处是**性能非常好，给存储很多空间来优化性能。性能较好，成本较低。但它的缺点是需要有同主键。**
 
+```sql
+create table paimonPartialTable(
+ id BIGINT PRIMARY KEY NOT ENFORCED,
+ c1 STRING,
+ c2 STRING
+)with(
+'merge-engine'='partial-update'
+);
+insert into paimonPartialTable 
+select id,c1,NULL from t1
+union all
+select id ,NULL,c2 from t2;
+```
+
 #### Indexed Partial Update
 
 * **它可以使用 Flink 补齐主键，只需要拿到该主键和主表主键间的映射关系即可**。其次，由于维表的数据量比主表数据量要小很多，所以成本可控。通过使用 Flink 补齐主键之后，以较小 State 解决多流 Join 的问题。
 
+## 数据入湖(仓)实践与痛点
+
+### 全量+定期增量的数据入仓
+
+![](../../img/dataInsertWarehouse.jpg)
+
+* 全量数据通过 bulk load 一次性导入，定时调度增量同步任务从数据库同步增量到临时表，再与全量数据进行合并。这种方式存在以下问题：
+  * 链路复杂，时效性差:因为下游数仓不支持行级别数据更新，所以下游需要特定的任务来进行数据去重从而得到和业务库快照一致的数据。
+  * 明细查询慢，排查问题难
+
+### 全量+实时增量的数据入湖
+
+* 以Apache Hudi为例，首先通过Bootstrap操作将全量历史数据写入hudi，然后基于新接入的 CDC 数据进行实时构建。
+
+![](../../img/dataInsertHudi.jpg)
+
+* 实时作业需要通过Bootstrap Index来对全量数据构建Index，这样后续实时数据可以upsert方式入湖。
+  * Bootstrap Index 超时及 state 膨胀:以流模式启动 Flink 增量同步作业后，系统会先将全量表导入到 Flink state 来构建 Hoodie key（即主键 + 分区路径）到写入文件的 file group 的索引，此过程会阻塞 checkpoint 完成。而只有在 checkpoint 成功后，写入的数据才可以变为可读状态，故而当全量数据很大时，有可能会出现 checkpoint 一直超时的情况，导致下游读不到数据。另外，由于索引一直保存在 state 内，在增量同步阶段遇到了 insert 类型的记录也会更新索引，需要合理评估 state TTL，配置太小可能会丢失数据，配置过大可能导致 state 膨胀。
+  * 链路依然复杂，难以对齐增量点位，自动化运维成本高
+
+### 全增量数据入湖数据入湖
+
+#### 存在的问题
+
+* 全量同步阶段数据乱序严重，写入性能和稳定性难以保障 
+  * 在全量同步阶段面临的一个问题是多并发同时读取 chunk 会遇到严重的数据乱序，出现同时写多个分区的情况，大量的随机写入会导致性能回退，出现吞吐毛刺，每个分区对应的 writer 都要维护各自缓存，很容易发生 OOM 导致作业不稳定。
+  * Hudi通过RateLimit配置来限制每分钟的数据写入来起到一定的平滑效果，但是整体的性能调优使用门槛偏高；
+
+#### Flink CDC+Paimon方式
+
+![](../../img/cdcInsertPaimon.jpg)
+
+* 大吞吐量的更新数据摄取，支持全增量一体入湖
+  * 全增量一体化同步入湖的主要挑战在于全量同步阶段产生了大量数据乱序引起的随机写入，导致性能回退、吞吐毛刺及不稳定。Paimon存储格式使用先分区（Partition）再分桶（Bucket），每个桶内各自维护一棵 LSM（Log-structured Merge Tree）的方式，每条记录通过主键哈希落入桶内时就确定了写入路径（Directory），以 KV 方式写入 MemTable 中（类似于 HashMap，Key 就是主键，Value 是记录）。在 flush 到磁盘的过程中，以主键排序合并（去重），以追加方式写入磁盘。Sort Merge 在 buffer 内进行，避免了需要点查索引来判断一条记录是 insert 还是 update 来获取写入文件的 file group 的 tagging [Apache Hudi Technical Specification#Writer Expectations](https://hudi.apache.org/tech-specs/#writer-expectations)[5] 。另外，触发 MemTable flush 发生在 buffer 充满时，不需要额外通过 Auto-File Sizing [Apache Hudi Write Operations#Writing path](https://hudi.apache.org/docs/next/write_operations/#writing-path)[6]（Auto-File Sizing 会影响写入速度 [Apache Hudi File Sizing#Auto-Size During ingestion](https://hudi.apache.org/docs/next/file_sizing/#auto-size-during-ingestion)[7]）来避免小文件产生，整个写入过程都是局部且顺序的 [On Disk IO, Part 3: LSM Trees](https://medium.com/databasss/on-disk-io-part-3-lsm-trees-8b2da218496f) [8]，避免了随机 IO 产生。
+
+* 高效 Data Skipping 支持过滤，提供高性能的点查和范围查询
+  * 虽然没有额外的索引，但是得益于 meta 的管理和列存格式，manifest 中保存了
+    * 文件的主键的 min/max 及每个字段的统计信息，这可以在不访问文件的情况下，进行一些 predicate 的过滤
+    * orc/parquet 格式中，文件的尾部记录了稀疏索引，每个 chunk 的统计信息和 offset，这可以通过文件的尾部信息，进行一些 predicate 的过滤
+    * 数据在有 filter 读取时，可以根据上述信息做如下过滤
+      * 读取 manifest：根据文件的 min/max、分区，执行分区和字段的 predicate，淘汰多余的文件
+      *  读取文件 footer：根据 chunk 的 min/max，过滤不需要读取的 chunk
+      *  读取剩下与文件以及其中的 chunks
+* 文件格式支持流读
+  * Paimon实现了 Incremental Scan，在流模式下，可以持续监听文件更新，数据新鲜度保持在分钟级别。
