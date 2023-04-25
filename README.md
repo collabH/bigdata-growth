@@ -191,6 +191,8 @@
 
 ###### Flink CDC Connector
 
+* [FlinkCdcOverview](bigdata/engine/flink/zoology/flink%20cdc%20connector/FlinkCdcOverview.md)
+
 ##### devops
 
 ###### Flink On K8s
