@@ -204,3 +204,138 @@ CREATE TABLE products (
   * 继续读取并发出在单个binlog Reader中**HIGH**偏移量之后属于chunk的binlog记录。
 * 注意：如果主键的实际值在其范围内不均匀分布，则可能导致增量快照读取时任务不平衡。
 
+#### Exactly-Once处理
+
+* MySQL CDC连接器是一个Flink Source连接器，它将首先读取表快照Chunk，然后继续读取binlog，无论是快照阶段还是binlog阶段，MySQL CDC连接器读取一次处理，即使发生故障。
+
+#### 启动读取位置设置
+
+* 通知配置`scan.startup.mode`指定MySQL CDC消费者的启动模式。有效的参数如下:
+  * `initial`(默认):在第一次启动时对监视的数据库表执行初始快照，并继续读取最新的binlog。
+  * `earliest-offset`:跳过快照阶段，从最早可访问的binlog偏移量开始读取binlog事件。
+  * `latest-offset`:跳过快照阶段，从最新可访问的binlog偏移量开始读取binlog事件。
+  * `specific-offset`:跳过快照阶段，从指定的binlog偏移量开始读取binlog事件。偏移量可以用binlog文件名和位置指定，如果服务器上启用了GTID，则可以使用GTID设置。
+  * `timestamp`:跳过快照阶段，从指定的时间戳开始读取binlog事件。
+
+* DataStream方式配置
+
+```java
+MySQLSource.builder()
+    .startupOptions(StartupOptions.earliest()) // Start from earliest offset
+    .startupOptions(StartupOptions.latest()) // Start from latest offset
+    .startupOptions(StartupOptions.specificOffset("mysql-bin.000003", 4L) // Start from binlog file and offset
+    .startupOptions(StartupOptions.specificOffset("24DA167-0C0C-11E8-8442-00059A3C7B00:1-19")) // Start from GTID set
+    .startupOptions(StartupOptions.timestamp(1667232000000L) // Start from timestamp
+    ...
+    .build()
+```
+
+* Flink SQL方式配置
+
+```sql
+CREATE TABLE mysql_source (...) WITH (
+    'connector' = 'mysql-cdc',
+    'scan.startup.mode' = 'earliest-offset', -- Start from earliest offset
+    'scan.startup.mode' = 'latest-offset', -- Start from latest offset
+    'scan.startup.mode' = 'specific-offset', -- Start from specific offset
+    'scan.startup.mode' = 'timestamp', -- Start from timestamp
+    'scan.startup.specific-offset.file' = 'mysql-bin.000003', -- Binlog filename under specific offset startup mode
+    'scan.startup.specific-offset.pos' = '4', -- Binlog position under specific offset mode
+    'scan.startup.specific-offset.gtid-set' = '24DA167-0C0C-11E8-8442-00059A3C7B00:1-19', -- GTID set under specific offset startup mode
+    'scan.startup.timestamp-millis' = '1667232000000' -- Timestamp under timestamp startup mode
+    ...
+)
+```
+
+##### 注意
+
+* MySQL CDC Source会将当前的binlog位置打印到Checkpoint上的INFO级别的日志中，并带有前缀“Binlog offset on checkpoint {checkpoint-id}”。
+* 如果更改了监控表的schema，则从earliest offset, specific offset or timestamp开始读取binlog可能会失败，因为Debezium Reader在内部保留当前最新的表schema，无法正确解析schema不匹配的早期记录。
+
+#### DataStream使用方式
+
+```java
+import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import com.ververica.cdc.debezium.JsonDebeziumDeserializationSchema;
+import com.ververica.cdc.connectors.mysql.source.MySqlSource;
+
+public class MySqlSourceExample {
+  public static void main(String[] args) throws Exception {
+    MySqlSource<String> mySqlSource = MySqlSource.<String>builder()
+        .hostname("yourHostname")
+        .port(yourPort)
+        .databaseList("yourDatabaseName") // set captured database, If you need to synchronize the whole database, Please set tableList to ".*".
+        .tableList("yourDatabaseName.yourTableName") // set captured table
+        .username("yourUsername")
+        .password("yourPassword")
+        .deserializer(new JsonDebeziumDeserializationSchema()) // converts SourceRecord to JSON String
+        .build();
+
+    StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+    // enable checkpoint
+    env.enableCheckpointing(3000);
+
+    env
+      .fromSource(mySqlSource, WatermarkStrategy.noWatermarks(), "MySQL Source")
+      // set 4 parallel source tasks
+      .setParallelism(4)
+      .print().setParallelism(1); // use parallelism 1 for sink to keep message ordering
+
+    env.execute("Print MySQL Snapshot + Binlog");
+  }
+}
+```
+
+#### 动态扫描新添加的表
+
+* 扫描新添加的表支持当前CDC任务可以动态扫描新添加的表，新加的表会先进行快照数据读取，然后自动读取它们的更改日志。
+* 例如一开始Flink CDC任务监听[product,user,address]表，几天后该作业也可以监控包含历史数据的表[order,custom],并且之前监控的表仍然可以继续正常的消费增量数据。
+
+```java
+// 开启scanNewlyAddedTableEnabled
+MySqlSource<String> mySqlSource = MySqlSource.<String>builder()
+        .hostname("yourHostname")
+        .port(yourPort)
+        .scanNewlyAddedTableEnabled(true) // enable scan the newly added tables feature
+        .databaseList("db") // set captured database
+        .tableList("db.product, db.user, db.address") // set captured tables [product, user, address]
+        .username("yourUsername")
+        .password("yourPassword")
+        .deserializer(new JsonDebeziumDeserializationSchema()) // converts SourceRecord to JSON String
+        .build();
+   // your business code
+```
+
+* 当你想要监控新的表你需要根据savepoint停止作业，在`tableList`添加新的表后再根据上次的savepoint启动Flink作业即可。
+
+### 数据类型映射
+
+| MySQL type                                                   | Flink SQL type  | NOTE                                                         |
+| ------------------------------------------------------------ | --------------- | ------------------------------------------------------------ |
+| TINYINT                                                      | TINYINT         |                                                              |
+| SMALLINT TINYINT UNSIGNED TINYINT UNSIGNED ZEROFILL          | SMALLINT        |                                                              |
+| INT MEDIUMINT SMALLINT UNSIGNED SMALLINT UNSIGNED ZEROFILL   | INT             |                                                              |
+| BIGINT INT UNSIGNED INT UNSIGNED ZEROFILL MEDIUMINT UNSIGNED MEDIUMINT UNSIGNED ZEROFILL | BIGINT          |                                                              |
+| BIGINT UNSIGNED BIGINT UNSIGNED ZEROFILL SERIAL              | DECIMAL(20, 0)  |                                                              |
+| FLOAT FLOAT UNSIGNED FLOAT UNSIGNED ZEROFILL                 | FLOAT           |                                                              |
+| REAL REAL UNSIGNED REAL UNSIGNED ZEROFILL DOUBLE DOUBLE UNSIGNED DOUBLE UNSIGNED ZEROFILL DOUBLE PRECISION DOUBLE PRECISION UNSIGNED DOUBLE PRECISION UNSIGNED ZEROFILL | DOUBLE          |                                                              |
+| NUMERIC(p, s) NUMERIC(p, s) UNSIGNED NUMERIC(p, s) UNSIGNED ZEROFILL DECIMAL(p, s) DECIMAL(p, s) UNSIGNED DECIMAL(p, s) UNSIGNED ZEROFILL FIXED(p, s) FIXED(p, s) UNSIGNED FIXED(p, s) UNSIGNED ZEROFILL where p <= 38 | DECIMAL(p, s)   |                                                              |
+| NUMERIC(p, s) NUMERIC(p, s) UNSIGNED NUMERIC(p, s) UNSIGNED ZEROFILL DECIMAL(p, s) DECIMAL(p, s) UNSIGNED DECIMAL(p, s) UNSIGNED ZEROFILL FIXED(p, s) FIXED(p, s) UNSIGNED FIXED(p, s) UNSIGNED ZEROFILL where 38 < p <= 65 | STRING          | The precision for DECIMAL data type is up to 65 in MySQL, but the precision for DECIMAL is limited to 38 in Flink. So if you define a decimal column whose precision is greater than 38, you should map it to STRING to avoid precision loss. |
+| BOOLEAN TINYINT(1) BIT(1)                                    | BOOLEAN         |                                                              |
+| DATE                                                         | DATE            |                                                              |
+| TIME [(p)]                                                   | TIME [(p)]      |                                                              |
+| TIMESTAMP [(p)] DATETIME [(p)]                               | TIMESTAMP [(p)] |                                                              |
+| CHAR(n)                                                      | CHAR(n)         |                                                              |
+| VARCHAR(n)                                                   | VARCHAR(n)      |                                                              |
+| BIT(n)                                                       | BINARY(⌈n/8⌉)   |                                                              |
+| BINARY(n)                                                    | BINARY(n)       |                                                              |
+| VARBINARY(N)                                                 | VARBINARY(N)    |                                                              |
+| TINYTEXT TEXT MEDIUMTEXT LONGTEXT                            | STRING          |                                                              |
+| TINYBLOB BLOB MEDIUMBLOB LONGBLOB                            | BYTES           | Currently, for BLOB data type in MySQL, only the blob whose length isn't greater than 2,147,483,647(2 ** 31 - 1) is supported. |
+| YEAR                                                         | INT             |                                                              |
+| ENUM                                                         | STRING          |                                                              |
+| JSON                                                         | STRING          | The JSON data type will be converted into STRING with JSON format in Flink. |
+| SET                                                          | ARRAY<STRING>   | As the SET data type in MySQL is a string object that can have zero or more values, it should always be mapped to an array of string |
+| GEOMETRY POINT LINESTRING POLYGON MULTIPOINT MULTILINESTRING MULTIPOLYGON GEOMETRYCOLLECTION | STRING          | The spatial data types in MySQL will be converted into STRING with a fixed Json format. Please see [MySQL Spatial Data Types Mapping](https://ververica.github.io/flink-cdc-connectors/master/content/connectors/mysql-cdc.html#mysql-spatial-data-types-mapping) section for more detailed information. |
