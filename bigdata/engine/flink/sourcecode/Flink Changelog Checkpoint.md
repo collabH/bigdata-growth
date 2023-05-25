@@ -95,3 +95,26 @@
 - T3 时刻触发了 Checkpoint-2，**由于此时 m1 还没有完成，Checkpoint-2 仍然只由 Changelog 构成，即包含了 Change-Set-1、Change-Set-2 和 Change-Set-3。**在 Checkpoint-2 制作完成之后，m1 也制作完成了。
 - T4 时刻触发了 Checkpoint-3，这时候可以发现存在一个最近完成的 m1，**Checkpoint-3 可以直接由 m1 及其之后的 Change-Set-3 和 Change-Set-4 构成。**
 - 通过这种方式，Flink 的 Checkpoint 与底层的状态存储快照进行了解耦，使得 Flink Checkpoint 能够以较高的频率和速度执行。
+
+# Changelog生产问题
+
+## 基于DFS方式的Changelog Storage
+
+**Changelog Restore重复下载问题**
+
+* 为了避免产生过多小文件，同一 TaskManager 内的 State Changelog 会尽量聚合到同一个文件中。而在 Restore 时这些文件会被同一个 TM 内的 operator 重复下载，导致 Restore 性能差。
+* **解决方案**
+  * 减少同一个Tm的Slot个数，从而单个Tm Restore的读放大问题就会减缓，但是会加重小文件问题，因为Tm的个数变多了
+  * 细粒度Restore流程，将原本的每个operator全量Restore changelog文件修改为每个operator Restore自己的changelog文件，已在ISSUE Flink-27155支持。
+    * 在 TM 上增加一个 Changelog File Cache 组件，代理 Changelog 文件的下载。Cache 组件会在需要的时候将 Changelog 文件下载并直接解压缩后存储到本地，当 Changelog Reader 发起请求时，可以直接在本地缓存的文件上 Seek 到相应的 Offset 后读取。
+    * 这样在 Restore 的过程中，每个 Changelog 文件都只需要下载和解压各一次。Changelog File Cache 组件会在内部对每个本地缓存文件记录引用计数，通过引用计数和可配置的 TTL 来清理本地缓存
+
+![](../img/changelogRestore优化.jpg)
+
+**小文件问题严重，HDFS NameNode压力巨大**
+
+* 即使经过 TM 粒度的聚合，小文件问题仍然严重，HDFS NN 压力巨大。以一个 4800 并发的作业为例，默认配置下会产生 130 万左右个 Changelog 文件，单个作业带来的 NN 请求高达 18000 次/秒左右。
+
+**changelog文件写延迟太高，影响Checkpoint制作速度**
+
+* 以 4800 并发作业为例，写 Changelog 文件 p99 延迟在 3 秒左右，最大延迟甚至达到 2 分钟，导致 Checkpoint 的制作时间非常不稳定。
