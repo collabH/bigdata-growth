@@ -94,25 +94,35 @@
 * [IceBerg整合Hive](bigdata/datalake/iceberg/icebergWithHive.md)
 * [IceBerg整合Spark](bigdata/datalake/iceberg/IcebergWithSpark.md)
 
-### kvstore
+### store
 
-**K-V结构存储,如Hbase、RocksDb(内嵌KV存储)等**
+**存储相关，包含rocksdb、Hbase、BookKeeper、Zookeeper等**
+
 
 #### rocksDB
 
-* [rocksDB概述](bigdata/kvstore/rocksdb/RocksdbOverview.md)
-* [rocksDB配置](bigdata/kvstore/rocksdb/Rocksdb配置.md)
-* [rocksDB组件描述](bigdata/kvstore/rocksdb/Rocksdb组件描述.md)
-* [rocksdb on flink](bigdata/kvstore/rocksdb/RocksDB%20On%20Flink.md)
-* [rocksdb API](bigdata/kvstore/rocksdb/RocksDB%20API.xmind)
+* [rocksDB概述](bigdata/store/rocksdb/RocksdbOverview.md)
+* [rocksDB配置](bigdata/store/rocksdb/Rocksdb配置.md)
+* [rocksDB组件描述](bigdata/store/rocksdb/Rocksdb组件描述.md)
+* [rocksdb on flink](bigdata/store/rocksdb/RocksDB%20On%20Flink.md)
+* [rocksdb API](bigdata/store/rocksdb/RocksDB%20API.xmind)
 
-### HBase
+#### Bookkeeper
 
-* [HBase概览](bigdata/kvstore/hbase/HBaseOverview.md)
-* [HBaseShell](bigdata/kvstore/hbase/HBase%20Shell.xmind)
-* [HBaseJavaAPI](bigdata/kvstore/hbase/HBase%20Java%20API.xmind)
-* [HBase整合MapReduce](bigdata/kvstore/hbase/HBase整合第三方组件.md)
-* [HBase过滤器](bigdata/kvstore/hbase/Hbase过滤器.md)
+* [BookkeeperOverview](bigdata/store/bookkeeper/BookkeeperOverview.md)
+
+#### HBase
+
+* [HBase概览](bigdata/store/hbase/HBaseOverview.md)
+* [HBaseShell](bigdata/store/hbase/HBase%20Shell.xmind)
+* [HBaseJavaAPI](bigdata/store/hbase/HBase%20Java%20API.xmind)
+* [HBase整合MapReduce](bigdata/store/hbase/HBase整合第三方组件.md)
+* [HBase过滤器](bigdata/store/hbase/Hbase过滤器.md)
+
+#### Zookeeper
+
+* [Zookeeper原理和参数配置](bigdata/store/zookeeper/ZookeeperOverView.md)
+* [Zookeeper操作与部署](bigdata/store/zookeeper/Zookeeper操作与部署.md)
 
 ### Hadoop
 
@@ -320,11 +330,6 @@
 
 * [快速入门](bigdata/mq/pulsar/1.快速入门.md)
 * [原理与实践](bigdata/mq/pulsar/2.原理与实践.md)
-
-### Zookeeper
-
-* [Zookeeper原理和参数配置](bigdata/zookeeper/ZookeeperOverView.md)
-* [Zookeeper操作与部署](bigdata/zookeeper/Zookeeper操作与部署.md)
 
 ### schedule
 
