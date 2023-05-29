@@ -144,3 +144,171 @@ Legders是entries的序列，每个entry的字节序列，entries被写入到led
 
 #### Data Compaction
 
+* 在Bookies上，不同ledgers的entry在entry log文件中交织在一起。bookies运行垃圾收集器线程来删除不关联的entry log文件以回收磁盘空间。如果给定的entry log文件包含未被删除的ledgers中的entry，则entry log文件将永远不会被删除，占用的磁盘空间也永远不会被回收。为了避免这种情况，bookie服务器在垃圾收集器线程中compaction entry log文件以回收磁盘空间。
+* 有两种运行频率不同的compaction方式:minor compaction和major compaction.。minor compaction和major compaction的区别在于它们的阈值和压缩间隔不同:
+  * 垃圾收集阈值是那些未删除的ledgers占用的entry log文件的大小百分比。默认的minor compaction阈值为0.2，而major compaction阈值为0.8。
+  * 垃圾收集间隔是运行压缩的频率。默认的minor compaction间隔为1小时，而major compaction阈值为1天。
+* 如果相关阈值设置为0或负数，则表示关闭data compaction
+* data compaction流程如下：
+  * 线程扫描entry log文件以获取它们的entry log元数据，元数据记录了包含entry log及其相应百分比的ledgers列表。
+  * 使用正常的垃圾收集流，一旦bookie确定ledgers已被删除，ledgers将从entry log元数据中删除，并且entry log的大小将减小。
+  * 如果entry log文件的剩余大小达到指定的阈值，则entry log中的活动ledgers entry将被复制到新的entry log文件中。
+  * 复制完所有有效entry后，将删除旧的entry log文件。
+
+### Zookeeper metadata
+
+* Bookkeeper需要Zookeeper存储ledger元数据，因此当你构建一个Bookkeeper客户端对象时需要传递Zookeeper服务器列表如下:
+
+```java
+String zkConnectionString = "127.0.0.1:2181";
+BookKeeper bkClient = new BookKeeper(zkConnectionString);
+```
+
+### Ledger Manger
+
+* ledger管理器处理ledger的元数据(存储在Zookeeper中)，Bookkeeper提供俩种类型的ledger管理器：flat ledger manger和hierarchical ledger manager，其都是继承`AbstractZkLedgerManager`抽象类
+
+#### Hierarchical ledger manager
+
+* 默认ledger manager，能够管理大于50000个的Bookkeeper ledgers元数据
+
+# 部署
+
+## 手动部署
+
+Bookkeeper主要需要俩个组件：
+
+* 一个ZooKeeper集群，用于配置和协调相关的任务
+* 一个bookies集合
+
+### 安装Zookeeper
+
+[zookeeper安装文档](https://zookeeper.apache.org/doc/current/zookeeperAdmin.html)
+
+### 设置集群元数据
+
+* 修改`bookkeeper-server/conf/bk_server.conf`配置文件
+
+```shell
+metadataServiceUri=zk+hierarchical://localhost:2181/ledgers
+```
+
+* 启动集群元数据服务
+
+```shell
+./bin/bookkeeper shell metaformat
+```
+
+* `metaformat`表示初始化集群元数据，每个只需要在Bookkeeper的任何一个bookie运行一次
+
+### 启动Bookies
+
+* 通过`bookkeeper`命令启动任意个bookie组成Bookkeeper集群，通过增加bookie个数可以获取高吞吐，bookie数量没有限制
+
+```shell
+bin/bookkeeper bookie
+```
+
+# 管理
+
+## 管理Bookkeeper
+
+* 这一part主要介绍如何部署、管理以及维护Bookkeeper，主要包含最佳实践和通用问题
+
+### 前置条件
+
+* 典型的Bookkeeper安装包含一组bookies和ZooKeeper quorum，bookie的确切数量取决于您选择的quorum模式、期望的吞吐量以及同时使用该安装的客户机数量。
+* 最小的bookie数量取决于安装的类型:
+  * 对于 *self-verifying* entry，应该运行至少三个bookies。在这种模式下，客户端将消息身份验证代码与每个entry一起存储。
+  * 对于*generic* entry，需要最少运行4个bookies
+* bookies的数量没有上限，区域于你需要的吞吐量
+
+#### 性能
+
+* 为了达到最佳性能，BookKeeper要求每个服务器**至少有两个磁盘**。也可以在单个磁盘上运行bookie，**但是性能会显著降低**。
+
+#### Zookeeper
+
+* 你可以使用BookKeeper运行ZooKeeper节点的数量没有限制。一台机器以独立模式运行ZooKeeper对BookKeeper来说就足够了，但为了提高弹性，我们建议在多台服务器上以 [quorum](https://zookeeper.apache.org/doc/current/zookeeperStarted.html#sc_RunningReplicatedZooKeeper)模式运行ZooKeeper。
+
+### 启动停止Bookie
+
+* 使用`nohup`来后台方式启动bookie，本地开发可以通过`localbookie`
+* 前台方式启动bookie
+
+```shell
+bin/bookkeeper bookie
+```
+
+* 后台方式启动bookie
+
+```shell
+bin/bookkeeper-daemon.sh start bookie
+```
+
+#### Local Bookie
+
+* 启动6个本地bookie，虽然是6个bookie，但是本质上在一个JVM进程内
+
+```shell
+bin/bookkeeper localbookie 6
+```
+
+### 配置Bookie
+
+* 修改`conf/bk_server.conf`配置bookie
+
+| Parameter           | Description                                                  | Default          |
+| ------------------- | ------------------------------------------------------------ | ---------------- |
+| `bookiePort`        | The TCP port that the bookie listens on                      | `3181`           |
+| `zkServers`         | A comma-separated list of ZooKeeper servers in `hostname:port` format | `localhost:2181` |
+| `journalDirectory`  | The directory where the [log device](https://bookkeeper.apache.org/docs/getting-started/concepts#log-device) stores the bookie's write-ahead log (WAL) | `/tmp/bk-txn`    |
+| `ledgerDirectories` | The directories where the [ledger device](https://bookkeeper.apache.org/docs/getting-started/concepts#ledger-device) stores the bookie's ledger entries (as a comma-separated list) | `/tmp/bk-data`   |
+
+* `journalDirectory`和`ledgerDirectories`的存储位置建议位于不同的磁盘上
+
+### 日志配置
+
+* Bookkeeper默认使用slf4j日志，要启用bookie的日志记录，需要创建`log4j.properties`文件，将BOOKIE_LOG_CONF环境变量指向配置文件。
+
+```shell
+export BOOKIE_LOG_CONF=/some/path/log4j.properties
+bin/bookkeeper bookie
+```
+
+### 升级
+
+* BookKeeper提供了一个用于升级文件系统的实用程序。您可以使用`bookkeeper`命令行工具的`upgrade`命令进行升级。当运行`bookkeeper upgrade`时，支持以下三种类型:
+
+| Flag         | Action                                     |
+| ------------ | ------------------------------------------ |
+| `--upgrade`  | 执行升级操作                               |
+| `--rollback` | 回滚到文件系统的初始版本                   |
+| `--finalize` | Marks the upgrade as complete 标识升级完成 |
+
+#### 升级模式
+
+* 一个标准的Bookkeeper升级模式为先执行upgrade，再执行finalize，最后再启动bookie
+
+```shell
+bin/bookkeeper upgrade --upgrade
+```
+
+* 然后检查一切是否正常，然后干掉那个bookie。如果一切正常，完成升级
+
+```shell
+bin/bookkeeper upgrade --finalize
+```
+
+* 重启服务
+
+```shell
+bin/bookkeeper bookie
+```
+
+* 如果出现了错误，可以执行回滚
+
+```shell
+bin/bookkeeper upgrade --rollback
+```
+
