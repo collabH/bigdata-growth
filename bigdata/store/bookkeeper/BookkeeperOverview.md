@@ -312,3 +312,100 @@ bin/bookkeeper bookie
 bin/bookkeeper upgrade --rollback
 ```
 
+### 格式化
+
+* 使用`bookkeeper`命令行的`metaformat`命令格式化bookie在Zookeeper上的元数据，如果格式化操作时存在旧数据会提醒，可以通过`-nonInteractive`关闭提醒。如果存在旧数据则无法格式化可以使用`-force`强制格式化
+
+```sh
+# 格式化操作
+bin/bookkeeper shell metaformat
+# 格式本地化bookie，在对于bookie的机器执行
+bin/bookkeeper shell bookieformat
+```
+
+### 丢失磁盘或目录
+
+* 意外替换磁盘或删除目录可能导致bookie在尝试读取根据ledger元数据存在于bookie上的ledger片段时失败。由于这个原因，当一个bookie第一次启动时，它的磁盘配置在该bookie的生命周期内是固定的。对其磁盘配置的任何更改，例如磁盘崩溃或意外的配置更改，都将导致bookie无法启动。会抛出这样的错误：
+
+```tex
+2023-05-29 18:19:13,790 - ERROR - [main:BookieServer314] – Exception running bookie server : @
+org.apache.bookkeeper.bookie.BookieException$InvalidCookieException
+.......at org.apache.bookkeeper.bookie.Cookie.verify(Cookie.java:82)
+.......at org.apache.bookkeeper.bookie.Bookie.checkEnvironment(Bookie.java:275)
+.......at org.apache.bookkeeper.bookie.Bookie.<init>(Bookie.java:351)
+```
+
+* 如果更改是偶然配置更改的结果，则可以恢复更改，并且可以重新启动bookie。但是，如果不能恢复更改，例如当您想要添加新磁盘或替换磁盘时，则必须擦除bookie，然后将其所有数据重新复制到bookie上。
+
+  * 在`bk_server.conf`配置添加`bookiePort`配置
+  * 确保`journalDirectory`和`ledgerDirectories`指定的所有目录都为空。
+  * 启动bookie
+  * 执行如下命令重新复制数据
+
+  ```shell
+  bin/bookkeeper shell recover <oldbookie> 
+  # 例如
+  bin/bookkeeper shell recover  192.168.1.10:3181
+  ```
+
+## 容错恢复
+
+* 当一个bookie崩溃时，该bookie的所有ledger都被复制不足。为了将BookKeeper集群中的所有ledger恢复到完全复制状态，您需要从任何宕机的bookie中恢复数据。有两种方法可以恢复bookies的数据:
+  * 手动恢复，[manual recovery](https://bookkeeper.apache.org/docs/admin/autorecovery/#manual-recovery)
+  * 自动恢复，通过[*AutoRecovery*](https://bookkeeper.apache.org/docs/admin/autorecovery/#autorecovery)
+
+### 手动恢复
+
+* 使用`bookkeeper`命令手动恢复失败的bookie
+
+```shell
+bin/bookkeeper shell recover \
+  192.168.1.10:3181      # IP and port for the failed bookie
+```
+
+* 恢复指定bookie的指定ledger数据
+
+```shell
+bin/bookkeeper shell recover \
+  192.168.1.10:3181 \    # IP and port for the failed bookie
+  --ledger ledgerID      # ledgerID which you want to recover 
+```
+
+### 自动恢复
+
+* 使用自动恢复
+
+```shell
+bin/bookkeeper autorecovery
+```
+
+* 关闭/开启自动恢复
+
+```shell
+bin/bookkeeper shell autorecovery -disable
+bin/bookkeeper shell autorecovery -enable
+```
+
+## 下线Bookies
+
+* 如果用户想要下线一个bookie，按照下面过程验证下线是否安全完成
+
+### 在下线操作之前
+
+1. 确保集群的状态能够支持目标bookie的下线。检查下线一个bookie时是否`EnsembleSize >= Write Quorum >= Ack Quorum`仍然为trie
+2. 确保目标Bookie出现在`listbookies`命令中。
+3. 确保没有其他正在进行的过程(升级等)
+
+### 执行下线操作
+
+1. 登录到bookie节点，检查是否有未充分复制的ledger，如果存在则使用`bin/bookkeeper shell listunderreplicated`命令强制复制
+2. 停止bookie，使用`bin/bookkeeper-daemon.sh stop bookie`
+3. 运行下线bookie命令，如果在下线bookie的机器上不需要通过`-bookieid`指定bookieid，否则你需要指定bookieid，`bin/bookkeeper shell decommissionbookie -bookieid <target bookieid>`
+4. 校验是否下线的bookie是否还有ledger，`bin/bookkeeper shell listledgers -bookieid <target bookieid>`
+5. 检查下线的bookie是否没有显示在bookie列表中
+
+```shell
+bin/bookkeeper shell listbookies -rw -h
+bin/bookkeeper shell listbookies -ro -h
+```
+
