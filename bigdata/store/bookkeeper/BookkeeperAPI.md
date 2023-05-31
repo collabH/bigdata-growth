@@ -170,3 +170,6 @@ Enumeration<LedgerEntry> ledgerEntryEnumeration = ledger.readEntries(1, 99);
         bk.close();
 ```
 
+# distributedlog
+
+https://github.com/apache/distributedlog
