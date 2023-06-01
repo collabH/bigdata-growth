@@ -110,7 +110,8 @@
 #### Bookkeeper
 
 * [BookkeeperOverview](bigdata/store/bookkeeper/BookkeeperOverview.md)
-* [BookkeepeAPI](bigdata/store/bookkeeper/BookkeeperAPI.md)
+* [BookkeeperAPI](bigdata/store/bookkeeper/BookkeeperAPI.md)
+* [BookkeeperApplication](bigdata/store/bookkeeper/BookkeeperApplication.md)
 
 #### HBase
 
