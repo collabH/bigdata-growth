@@ -118,3 +118,164 @@
 **changelog文件写延迟太高，影响Checkpoint制作速度**
 
 * 以 4800 并发作业为例，写 Changelog 文件 p99 延迟在 3 秒左右，最大延迟甚至达到 2 分钟，导致 Checkpoint 的制作时间非常不稳定。
+
+# 源码分析
+
+## Changelog状态后端
+
+* ChangelogStateBackend、DeactivatedChangelogStateBackend-->ConfigurableStateBackend、AbstractChangelogStateBackend
+
+### ConfigurableStateBackend
+
+* 提供通过额外配置参数构建状态后端，通过`configure(ReadableConfig config, ClassLoader classLoader)`接口配置化构建状态后端
+
+```java
+@Internal
+public interface ConfigurableStateBackend extends StateBackend {
+    StateBackend configure(ReadableConfig config, ClassLoader classLoader)
+            throws IllegalConfigurationException;
+}
+```
+
+### AbstractChangelogStateBackend
+
+* Changelog状态后端基础类，包含创建对于Changelog `Keyed`、`Operator`状态后端方法，其子类DeactivatedChangelogStateBackend、ChangelogStateBackend重写`restore`方法进行Changelog状态恢复
+
+```java
+// 核心方法restore，其实现类为DeactivatedChangelogStateBackend、ChangelogStateBackend
+protected abstract <K> CheckpointableKeyedStateBackend<K> restore(
+            Environment env,
+            String operatorIdentifier,
+            KeyGroupRange keyGroupRange,
+            TtlTimeProvider ttlTimeProvider,
+            MetricGroup metricGroup,
+            Collection<ChangelogStateBackendHandle> stateBackendHandles,
+            BaseBackendBuilder<K> baseBackendBuilder)
+            throws Exception;
+```
+
+### ChangelogStateBackend
+
+* Changelog状态后端，将工作状态保存在最底层的委托状态后端中(state table statebacked)，然后转发state更改为ChangelogState
+
+```java
+public class ChangelogStateBackend extends AbstractChangelogStateBackend
+        implements ConfigurableStateBackend {
+
+    private static final long serialVersionUID = 1000L;
+
+    ChangelogStateBackend(StateBackend stateBackend) {
+        super(stateBackend);
+    }
+
+    @Override
+    public StateBackend configure(ReadableConfig config, ClassLoader classLoader)
+            throws IllegalConfigurationException {
+
+        // 如果委托类实现了ConfigurableStateBackend接口，直接创建ChangelogStateBackend
+        if (delegatedStateBackend instanceof ConfigurableStateBackend) {
+            return new ChangelogStateBackend(
+                    ((ConfigurableStateBackend) delegatedStateBackend)
+                            .configure(config, classLoader));
+        }
+
+        return this;
+    }
+
+    /**
+     * 恢复快照逻辑
+     *
+     * @param env 执行环境
+     * @param operatorIdentifier 算子标识
+     * @param keyGroupRange keyGroupRange
+     * @param ttlTimeProvider ttl配置
+     * @param metricGroup 指标配置
+     * @param stateBackendHandles 状态后端处理器
+     * @param baseBackendBuilder
+     * @param <K>
+     *
+     * @return
+     *
+     * @throws Exception
+     */
+    @Override
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    protected <K> CheckpointableKeyedStateBackend<K> restore(
+            Environment env,
+            String operatorIdentifier,
+            KeyGroupRange keyGroupRange,
+            TtlTimeProvider ttlTimeProvider,
+            MetricGroup metricGroup,
+            Collection<ChangelogStateBackendHandle> stateBackendHandles,
+            BaseBackendBuilder<K> baseBackendBuilder)
+            throws Exception {
+        StateChangelogStorage<?> changelogStorage =
+                Preconditions.checkNotNull(
+                        env.getTaskStateManager().getStateChangelogStorage(),
+                        "Changelog storage is null when creating and restoring"
+                                + " the ChangelogKeyedStateBackend.");
+
+        String subtaskName = env.getTaskInfo().getTaskNameWithSubtasks();
+        ExecutionConfig executionConfig = env.getExecutionConfig();
+
+        ChangelogStateFactory changelogStateFactory = new ChangelogStateFactory();
+      // 核心类ChangelogBackendRestoreOperation
+        CheckpointableKeyedStateBackend<K> keyedStateBackend =
+                ChangelogBackendRestoreOperation.restore(
+                        env.getTaskManagerInfo().getConfiguration(),
+                        env.getUserCodeClassLoader().asClassLoader(),
+                        env.getTaskStateManager(),
+                        stateBackendHandles,
+                        baseBackendBuilder,
+                        (baseBackend, baseState) ->
+                                new ChangelogKeyedStateBackend(
+                                        baseBackend,
+                                        subtaskName,
+                                        executionConfig,
+                                        ttlTimeProvider,
+                                        new ChangelogStateBackendMetricGroup(metricGroup),
+                                        changelogStorage.createWriter(
+                                                operatorIdentifier,
+                                                keyGroupRange,
+                                                env.getMainMailboxExecutor()),
+                                        baseState,
+                                        env.getCheckpointStorageAccess(),
+                                        changelogStateFactory)
+                                        .getChangelogRestoreTarget());
+        // build changelogKeyed状态后端
+        ChangelogKeyedStateBackend<K> changelogKeyedStateBackend =
+                (ChangelogKeyedStateBackend<K>) keyedStateBackend;
+        // build 定期Materialization管理器
+        PeriodicMaterializationManager periodicMaterializationManager =
+                new PeriodicMaterializationManager(
+                        checkNotNull(env.getMainMailboxExecutor()),
+                        checkNotNull(env.getAsyncOperationsThreadPool()),
+                        subtaskName,
+                        (message, exception) ->
+                                env.failExternally(new AsynchronousException(message, exception)),
+                        changelogKeyedStateBackend,
+                        new ChangelogMaterializationMetricGroup(metricGroup),
+                        executionConfig.getPeriodicMaterializeIntervalMillis(),
+                        executionConfig.getMaterializationMaxAllowedFailures(),
+                        operatorIdentifier);
+
+        // keyedStateBackend is responsible to close periodicMaterializationManager
+        // This indicates periodicMaterializationManager binds to the keyedStateBackend
+        // However PeriodicMaterializationManager can not be part of keyedStateBackend
+        // because of cyclic reference
+        changelogKeyedStateBackend.registerCloseable(periodicMaterializationManager);
+
+        // 启动定期Materialization管理器
+        periodicMaterializationManager.start();
+
+        return keyedStateBackend;
+    }
+}
+```
+
+* **ChangelogBackendRestoreOperation**:Changelog状态后端restore操作类
+
+## Changelog Restore
+
+* Changelog涉及到原始状态后端和Changelog增量变更状态，如何进行状态Restore是一个问题？
+* 
