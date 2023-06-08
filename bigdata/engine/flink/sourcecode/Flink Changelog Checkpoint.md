@@ -277,5 +277,8 @@ public class ChangelogStateBackend extends AbstractChangelogStateBackend
 
 ## Changelog Restore
 
-* Changelog涉及到原始状态后端和Changelog增量变更状态，如何进行状态Restore是一个问题？
-* 
+* Changelog涉及到原始状态后端和Changelog增量变更状态，如何进行状态Restore是一个问题？具体流程如下图：
+
+![](../img/flinkchangelogRestore.png)
+
+##
