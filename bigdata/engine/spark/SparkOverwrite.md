@@ -8,13 +8,13 @@
 
 #### 中间结果
 
-* 基于MR的计算引擎通常将中间结果输出到磁盘，以达到存储和容错的目的。因此涉及到中间结果的迭代处理就会导致多个MR任务串联执行，此时就会导致数据处理延迟缓慢等问题。
-* Spark将执行操作抽象成DAG，将多个Stage任务串联或并行执行，无需将Stage中间结果存储到HDFS。
+* 基于MR的计算引擎通常将**中间结果输出到磁盘，以达到存储和容错的目的**。因此涉及到中间结果的迭代处理就会导致多个MR任务串联执行，此时就会导致数据处理延迟缓慢等问题。
+* Spark将执行操作抽象成DAG，**将多个Stage任务串联或并行执行，无需将Stage中间结果存储到HDFS**。
 
 #### 执行策略
 
-* MapReduce在数据Shuffle之间需要在Map阶段需要进行分区`快排`并且在merge阶段时也需要对map输出阶段的`各个文件进行归并排序`，在shuffle拷贝文件也需要通过归并排序进行合并，此时就导致Shuffle十分消耗性能。
-* Spark提供Bypass机制和不同模式numMapsForShuffle机制，会根据stage属性和配置决定shuffle过程是否需要排序，并且中间结果可以直接缓存在内存中。
+* MapReduce**在数据Shuffle之间需要在Map阶段需要进行分区快排并且在merge阶段时也需要对map输出阶段的`各个文件进行归并排序`，在shuffle拷贝文件也需要通过归并排序进行合并，此时就导致Shuffle十分消耗性能**。
+* Spark提供**Bypass机制和不同模式numMapsForShuffle机制，会根据stage属性和配置决定shuffle过程是否需要排序，并且中间结果可以直接缓存在内存中**。
 
 #### 任务调度开销
 
@@ -45,8 +45,8 @@
 
 * Client:提交应用的客户端
 * Driver:执行Application中的main函数并创建SparkContext
-* ClusterManager:在Yarn中为RM，在Standalone模式为Master，控制整个集群。
-* Worker:从节点，负责控制计算节点，启动Executor或Driver，在yarn模式中为NM
+* **ClusterManager**:在Yarn中为**ResouceManager**，在Standalone模式为Master，控制整个集群。
+* Worker:从节点，负责控制计算节点，启动Executor或Driver，在yarn模式中为**NodeManager**
 * Executor:在计算节点执行任务的组件。
 * SparkContext:应用的上下文，控制应用的生命周期。
 * RDD:弹性分布式数据集，Spark的基本计算单元，一组RDD可形成有向无环图。
@@ -298,7 +298,7 @@ worker3
 * RDD 拥有一个用于计算分区的函数 compute；
 * RDD 会保存彼此间的依赖关系，RDD 的每次转换都会生成一个新的依赖关系，这种 RDD 之间的依赖关系就像流水线一样。在部分分区数据丢失后，可以通过这种依赖关系重新计算丢失的分区数据，而不是对 RDD 的所有分区进行重新计算；
 * Key-Value 型的 RDD 还拥有 Partitioner(分区器)，用于决定数据被存储在哪个分区中，目前 Spark 中支持 HashPartitioner(按照哈希分区) 和 RangeParationer(按照范围进行分区);
-* 一个优先位置列表 (可选)，用于存储每个分区的优先位置 (prefered location)。对于一个 HDFS 文件来说，这个列表保存的就是每个分区所在的块的位置，按照“移动数据不如移动计算“的理念，Spark 在进行任务调度的时候，会尽可能的将计算任务分配到其所要处理数据块的存储位置。
+* 一个优先位置列表 (可选)，用于存储每个分区的优先位置 (prefered location)。对于一个 HDFS 文件来说，这个列表保存的就是每个分区所在的块的位置，按照"移动数据不如移动计算"的理念(数据本地化)，Spark 在进行任务调度的时候，会尽可能的将计算任务分配到其所要处理数据块的存储位置。
 
 ### 深入理解RDD
 
@@ -312,8 +312,8 @@ worker3
 
 #### RDD容错性
 
-* 常用容错方式为日志记录和数据复制，这两种方式都比较昂贵。
-* RDD因为本身是不变的数据集，天然支持容错，RDD之间可以通过lineage产生依赖，RDD能够记住它的DAG图，当worker执行失败时，直接通过操作图获得之前执行的操作，重新计算。
+* 常用容错方式为**日志记录和数据复制**，这两种方式都比较昂贵。
+* RDD因为本身是不变的数据集，天然支持容错，RDD之间可以通过**lineage**产生依赖，RDD能够记住它的DAG图，当worker执行失败时，直接通过操作DAG图获得之前执行的操作，重新计算。
 
 #### RDD高效性
 
@@ -331,13 +331,13 @@ worker3
 
 ![RDD分区结构](./源码分析/img/Spark的程序模型.jpg)
 
-* 对RDD的操作都会造成RDD的变换，其中RDD的每个逻辑分区Partition都应用BlockManager中的物理数据块Block。RDD核心是元数据结构，保存了逻辑分区与物理数据块之间的映射关系，以及父辈RDD的依赖转换。
+* 对RDD的操作都会造成RDD的变换，其中RDD的每个逻辑分区Partition都应用BlockManager中的物理数据块Block。RDD核心是元数据结构，保存了逻辑分区与物理数据块之间的映射关系，以及parent RDD的依赖转换。
 
 # Spark机制原理
 
 ## Spark应用执行机制分析
 
-* Spakr允许方式分为Cluster模式和Client模式
+* Spark运行方式分为**Cluster模式**和**Client模式**以及Local模式
 
 ### 基础组件
 
@@ -364,20 +364,20 @@ worker3
 * Driver进程运行在Client端，对应用进行管理监控
 * 用户启动Client端，在Client端启动Driver进程。在Driver中启动或实例化DAGScheduler等组件
   * Driver向Master注册
-  * Worker向Master注册，Master通过指令让那个Worker启动Executor。
+  * Worker向Master注册，Master通过指令让Worker启动Executor。
   * Worker通过创建ExecutorRunner线程，进而ExecutorRunner线程启动ExecutBackend进程。
-  * ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进行就可以发现计算资源。
+  * ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进程就可以发现计算资源。
   * Driver的DAGScheduler解析应用中的RDD DAG并生成Stage，每个Stage包含的Taskset通过TaskScheduler分配给Executor。在Executor内部启动线程池并行化启动Task。
 
 ### Cluster模式
 
 * Master节点指定某个Worker节点启动Driver进程，负责监控整个应用的执行。
 
-1. Master调度应用，指定一个Worker节点启动Driver，即Schduler-Backend
+1. Master调度应用，指定一个Worker节点启动Driver，即SchdulerBackend
 2. Worker接收到Master命令后创建DriverRunner线程，在DriverRunner线程内创建SchedulerBackend进程。Driver充当整个作业主控进程。
 3. Master指定其他Worker节点启动Executor。
 4. Worker通过创建ExecutorRunner线程，进而ExecutorRunner现场启动ExecutBackend进程。
-5. ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进行就可以发现计算资源。
+5. ExecutorBackend启动后，向Client端Driver进程内的SchedulerBackend注册，因此Driver进程就可以发现计算资源。
 6. Driver的DAGScheduler解析应用中的RDD DAG并生成Stage，每个Stage包含的Taskset通过TaskScheduler分配给Executor。在Executor内部启动线程池并行化启动Task。
 
 ### Job的调度
@@ -396,13 +396,13 @@ worker3
 
 #### Stage调度
 
-* 执行Action算子的RDD所在的Stage称为Final Stage，提交Stage，DAGScheduler会先判断该Stage的父Stage的执行结果是否可用，如果所有父Stage的执行结果可用，则提交该Stage。如果存在任意一个父Stage的结果不可用，则尝试迭代提交该父Stage。`不可用的Stage将会加入到waiting队列,等待执行`。
+* 执行Action算子的RDD所在的Stage称为**Final Stage**，提交Stage，DAGScheduler会先判断该Stage的Parent Stage的执行结果是否可用，如果所有Parent Stage的执行结果可用，则提交该Stage。如果存在任意一个Parent Stage的结果不可用，则尝试迭代提交该Parent Stage。`不可用的Stage将会加入到waiting队列,等待执行`。
 
 ![Stage执行顺序](./源码分析/img/Stage执行顺序.jpg)
 
 #### TaskSetManager
 
-* DAGScheduler会将Stage转换成Taskset，最后提交给TaskScheduler，在taskScheduler内部创建`taskSetManager`来管理TaskSet的生命周期。可以说每个`stage`对应一个`taskManager`。taskScheduler在得到集群计算资源时，taskSetManager会分配task到具体worker节点执行。
+* DAGScheduler会将Stage转换成Taskset，最后提交给TaskScheduler，在TaskScheduler内部创建`taskSetManager`来管理TaskSet的生命周期。可以说每个`stage`对应一个`taskManager`。TaskScheduler在得到集群计算资源时，`taskSetManager`会分配task到具体worker节点执行。
 
 ## Spark存储与IO
 
@@ -447,7 +447,7 @@ worker3
 
 #### Lineage机制
 
-* RDD除了包含分区信息外，还包含父辈RDD变换过来的步骤，以及如何重建某一块数据的信息，RDD这种容错机制称为血统机制。
+* RDD除了包含分区信息外，还包含Parent RDD变换过来的步骤，以及如何重建某一块数据的信息，RDD这种容错机制称为Lineage机制。
 * RDD的Lineage记录是粗粒度的特定数据Transformation操作。当RDD的部分数据丢失，可以通过Lineage获取足够的信息重新计算和恢复丢失的数据分区。
 
 ## Shuffle机制
@@ -456,19 +456,19 @@ worker3
 
 ### Shuffle的影响
 
-* Shuffle 是一项昂贵的操作，因为它通常会跨节点操作数据，这会涉及磁盘 I/O，网络 I/O，和数据序列化。某些 Shuffle 操作还会消耗大量的堆内存，因为它们使用堆内存来临时存储需要网络传输的数据。Shuffle 还会在磁盘上生成大量中间文件，从 Spark 1.3 开始，这些文件将被保留，直到相应的 RDD 不再使用并进行垃圾回收，这样做是为了避免在计算时重复创建 Shuffle 文件。如果应用程序长期保留对这些 RDD 的引用，则垃圾回收可能在很长一段时间后才会发生，这意味着长时间运行的 Spark 作业可能会占用大量磁盘空间，通常可以使用 `spark.local.dir` 参数来指定这些临时文件的存储目录。
+* Shuffle 是一项昂贵的操作，因为它通常会跨节点操作数据，这会涉及磁盘 I/O，网络 I/O，和数据序列化。某些 Shuffle 操作还会消耗大量的堆内存，因为它们使用堆内存来临时存储需要网络传输的数据。Shuffle 还会在磁盘上生成大量中间文件，从 Spark 1.3 开始，这些文件将被保留，直到相应的 RDD 不再使用并进行垃圾回收，这样做是为了避免在计算时重复创建 Shuffle 文件。如果应用程序长期保留对这些 RDD 的引用，则垃圾回收可能在很长一段时间后才会发生，这意味着长时间运行的 Spark 作业可能会占用大量磁盘空间，通常可以使用 `spark.local.dir` 参数来指定这些临时文件的存储目录。可以通过**Remote Shuffle Service**来减缓对计算节点的磁盘IO、网络IO的消耗。
 
 ### 基于key的Hash方式
 
 ![Spark Shuffle](./源码分析/img/Spark Shuffle.jpg)
 
 * 每个MapTask会根据ReduceTask的数量创建出相应的bucket，bucket的数量是M x R，其中M是Map的个数，R是Reduce的个数。
-* MapTask产生的结果会根据`partition算法`填充到每个bucket中,ReduceTask启动时会根据task的id和所依赖的Mapper的id从远端或本地的block manager中取得响应的bucket作为Reducer的输入进行处理。
+* MapTask产生的结果会根据`partition算法`填充到每个bucket中,ReduceTask启动时会根据task的id和所依赖的Mapper的id从远端或本地的block manager中取得相应的bucket作为Reducer的输入进行处理。
 
 #### Spark Shuffle过程
 
-* 将数据分成bucket，并将其写入磁盘的过程称为Shuffle Write
-* 在存储Shuffle数据的节点Fetch数据，并执行用户定义的聚集操作，这个过程为Shuffle Fetch。
+* 将数据分成bucket，并将其写入磁盘的过程称为**Shuffle Write**
+* 在存储Shuffle数据的节点Fetch数据，并执行用户定义的聚合操作，这个过程为**Shuffle Fetch**。
 
 #### 存在的问题
 
@@ -488,5 +488,5 @@ worker3
 
 ![Spark Shuffle](./源码分析/img/Shuffle Fetch.jpg)
 
-* Shuffle fetch过来的数据会进行归并排序，根据相同key下不同的value会发送到同一个reducer使用，Aggregator本质是HashMap，它以map output的key为key，以所要的combine的类型为value的hashmap。shuffle fetch到的每一个key-value对更新或插入hashmap中，这样就不需要预先把所有的key-value进行merge sort，而是来一个处理一个省去外部排序的阶段。
+* Shuffle fetch过来的数据会进行**归并排序**，根据相同key下不同的value会发送到同一个reducer使用，Aggregator本质是HashMap，它以map output的key为key，以所要的combine的类型为value的hashmap。shuffle fetch到的每一个key-value对更新或插入hashmap中，这样就不需要预先把所有的key-value进行merge sort，而是来一个处理一个省去外部排序的阶段。
 
