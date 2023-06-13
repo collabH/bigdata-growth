@@ -1,4 +1,4 @@
-*  Spark部署方式灵活多变，包含Local、Standalone、Mesos和Yarn、K8s的比你难过，如果是单机部署可以使用Local或者伪分布式模式运行。
+*  Spark部署方式灵活多变，包含Local、Standalone、Mesos和Yarn、K8s，如果是单机部署可以使用Local或者伪分布式模式运行。
 
 # 作业提交
 
@@ -53,10 +53,10 @@ Standalone 是 Spark 提供的一种内置的集群模式，采用内置的资�
 
 ## 环境设置
 
-* 首先需要保证 Spark 已经解压在两台主机的相同路径上。然后进入 hadoop001 的 `${SPARK_HOME}/conf/` 目录下，拷贝配置样本并进行相关配置：
+* 首先需要保证 Spark 已经解压在两台主机的相同路径上。然后进入 hadoop001 的 `${SPARK_HOME}/conf/` 目录下，拷贝spark-env配置模版并进行相关配置：
 
 ```shell
-# cp spark-env.sh.template spark-env.sh
+cp spark-env.sh.template spark-env.sh
 ```
 
 * 在 `spark-env.sh` 中配置 JDK 的目录，完成后将该配置使用 scp 命令分发到 hadoop002 上：
@@ -68,10 +68,10 @@ JAVA_HOME=/usr/java/jdk1.8.0_201
 
 ## 集群配置
 
-* 在 `${SPARK_HOME}/conf/` 目录下，拷贝集群配置样本并进行相关配置：
+* 在 `${SPARK_HOME}/conf/` 目录下，拷贝slaves集群配置模版并进行相关配置：
 
 ```shell
-# cp slaves.template slaves
+cp slaves.template slaves
 ```
 
 * 指定所有 Worker 节点的主机名：
@@ -130,7 +130,7 @@ spark-submit \
 
 ![Yarn架构图](./img/Yarn架构.jpg)
 
-* ResourceManager(RN):负责全局资源管理。接收Client端任务请求，接收和监控NodeManager的资源情况汇报，负责资源的分配与调度，启动和监控ApplicationMaster。
+* ResourceManager(RM):负责全局资源管理。接收Client端任务请求，接收和监控NodeManager的资源情况，负责资源的分配与调度，启动和监控ApplicationMaster。
 * NodeManager(NM):可以看作节点上的资源和任务管理器，启动Container运行Task计算，汇报资源、Container情况给RM，汇报任务处理情况给AM。
 * ApplicationMaster(AM):主要是的那个Application(JOB)的Task管理和调度，向RM申请资源，向NM发送launch Container指令，接收NM的Task处理状态信息。
 * Container:YARN中的资源分配的单位。资源使用Container表示，每个任务占用一个Container，在Container中运行。
@@ -146,7 +146,7 @@ spark-submit \
 * RM分配给AM Container资源后，AM根据Container内描述的资源信息，向对应的Nodemanager请求启动Container。
 * NM启动Container并运行Task，各个Task在运行过程中向AM汇报进度状态信息，同时NM也会定时向RM汇报Container的使用情况。
 * 在Job执行过程中，Client可以和AM通信，获取Application相关的进度和状态信息。
-* 在Job完成后，AM通知RM清楚自己的相关信息，并释放Container资源。
+* 在Job完成后，AM通知RM清理自己的相关信息，并释放Container资源。
 
 # Spark on YARN部署模式
 
@@ -158,7 +158,7 @@ spark-submit \
 
 ### yarn-cluster
 
-* Spark Driver运行在被YARN管理的ApplicationMaster进程中，在应用启动之后，Client端可以推出。
+* Spark Driver运行在被YARN管理的ApplicationMaster进程中，在应用启动之后，Client端可以退出。
 
 ####  架构
 
@@ -169,7 +169,7 @@ spark-submit \
 ```shell
 spark-submit --class xxxx --master yarn-cluster \
 [options] \
-app jar \
+app_jar \
 [app options] \
 
 # 例如
@@ -185,7 +185,7 @@ spark.jar 10
 
 ### yarn-client
 
-* Driver运行在Client进程中，并且该模式下，ApplicationMaster只用于向YARN请求资源。，Client的Driver包含DAGScheduler及TaskScheduler因此必须等到应用执行完毕才能退出。
+* Driver运行在Client进程中，并且该模式下，ApplicationMaster只用于向YARN请求资源。Client的Driver包含DAGScheduler及TaskScheduler因此必须等到应用执行完毕才能退出。
 
 #### 架构
 
@@ -234,7 +234,7 @@ spark.jar 10
 
 ### Container log处理
 
-* 如果log application开启(yarn.log-aggregation-enable)，`container log`会复制到`HDFS`中，然后在本地删除。这些log可以通过yarn logs -applicationId查看。也可以在HDFS shell或API查看container log文件，这些log文件目录通过以下参数指定
+* 如果log application开启(`yarn.log-aggregation-enable`)，`container log`会复制到`HDFS`中，然后在本地删除。这些log可以通过`yarn logs -applicationId`查看。也可以在HDFS shell或API查看container log文件，这些log文件目录通过以下参数指定
 
 ```properties
 yarn.nodemanger.remote-app-log-dir
