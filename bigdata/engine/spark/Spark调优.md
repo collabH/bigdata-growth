@@ -41,7 +41,7 @@ val conf=new SparkConf()
 
 ### Java序列化
 
-* 默认情况下，Java采用Java的ObjectOutputStream序列化一个对象。该方式适用于所有实现的java.io.Serializable的类。通过继承`java.io.Externalizable`，能进一步控制序列化的性能。Java序列化非常灵活，但是速度较慢，序列化结果也较大会产生一些spark不需要的类的相关信息。
+* 默认情况下，Java采用Java的ObjectOutputStream序列化一个对象。该方式适用于所有实现的`java.io.Serializable`的类。通过继承`java.io.Externalizable`，能进一步控制序列化的性能。Java序列化非常灵活，但是速度较慢，序列化结果也较大会产生一些spark不需要的类的相关信息。
 
 ### Kryo序列化
 
@@ -71,7 +71,7 @@ val conf=new SparkConf()
 * 访问对象的消耗
 * 垃圾回收占用的内存开销
 
-```
+```tex
 java对象的访问速度虽然快，但是占用的空间通常比内部的属性数据大2～5倍，属于空间换时间的策略。
 
 1.Java对象包含一个“对象头部（object header），该头部大约占16字节，包含了指向对象对应的类的指针等信息。”
@@ -123,7 +123,7 @@ spark.yarn.driver.memoryOverhead
 
 ## 数据本地化
 
-* 数据本地化堆Spark job有着重要的影响，如果数据和计算逻辑放在一起那么运算速度会更快减少了数据的网络传输。
+* 数据本地化堆Spark job有着重要的影响，如果数据和计算逻辑放在一起那么运算速度会更快，减少数据的网络传输。
 
 ### Spark的本地化层级
 
@@ -144,7 +144,7 @@ spark.yarn.driver.memoryOverhead
 
 ### 并行度设置
 
-* 通常集群中为每个CPU核分配2～3个任务比较合适。
+* 通常集群中为每个CPU核分配2～3个任务比较合适。yarn vCore比例1:2或1:3
 
 ### Reduce Task的内存使用
 
@@ -154,7 +154,7 @@ spark.yarn.driver.memoryOverhead
 
 #### 数据倾斜
 
-* 一般为partition key取的存在问题，替换其他的并行处理方式，中间可以加入一步aggregation。
+* 一般为partition key取的存在问题，替换其他的并行处理方式，中间可以加入一步aggregation。预聚合
 
 #### worker倾斜
 
@@ -162,8 +162,8 @@ spark.yarn.driver.memoryOverhead
 
 ### shuffle磁盘IO时间长
 
-* 设置组磁盘。`spark.local.dir=/dir1,/dir2,/dir3`
+* 设置组磁盘。`spark.local.dir=/dir1,/dir2,/dir3` 目前大部门基于`remote shuffle service`该问题偏少
 
 ## Shuffle过程优化
 
-* `spark.shuffle.memoryFraction`:用于设置Shuffle读阶段Task从上一个阶段拉取到内存的AppendOnlyMap中做聚合计算可使用的内存大小，当内存中的AppendOnlyMap装满时会将数据溢写到磁盘中。默认是Executor内存的0.2倍，如果Task拉取的数据量过大可以增大改值。
+* `spark.shuffle.memoryFraction`:用于设置Shuffle读阶段Task从上一个阶段拉取到内存的AppendOnlyMap中做聚合计算可使用的内存大小，当内存中的AppendOnlyMap装满时会将数据溢写到磁盘中。默认是Executor内存的0.2倍，如果Task拉取的数据量过大可以增大该值，减轻spill disk的情况
