@@ -955,7 +955,7 @@ private def maybeSpillCollection(usingMap: Boolean): Unit = {
 ```scala
 protected def maybeSpill(collection: C, currentMemory: Long): Boolean = {
     var shouldSpill = false
-    // 如果当前内存大小大于内存的上线
+    // 如果当前内存大小大于内存的上限
     if (elementsRead % 32 == 0 && currentMemory >= myMemoryThreshold) {
       // Claim up to double our current memory from the shuffle memory pool
       val amountToRequest = 2 * currentMemory - myMemoryThreshold
@@ -1461,7 +1461,7 @@ override def getWriter[K, V](
 
 ![](./img/map端缓存和reduce端聚合.jpg)
 
-## map端缓存和reduce端部组合
+## map端缓存和reduce端不聚合
 
 ### 满足的条件
 
