@@ -447,7 +447,7 @@ class RDDInfo(
 #### compare
 
 ```scala
-# 比较传入的rdd和当前rdd的大小关系,用于排序
+// 比较传入的rdd和当前rdd的大小关系,用于排序
 override def compare(that: RDDInfo): Int = {
     this.id - that.id
   }
