@@ -284,6 +284,10 @@
 * [SparkStreaming](bigdata/engine/spark/spark%20streaming/Spark%20Steaming.xmind)
 * [SparkStreaming整合Flume](bigdata/engine/spark/spark%20streaming/SparkStreaming整合Flume.md)
 
+##### Native SQL Engine
+
+* [Spark Native SQL Engine概览](bigdata/engine/spark/native%20sql%20engine/Spark%20Native%20SQL%20Engine%20Overview.md)
+
 ##### 源码解析
 
 * [从浅到深剖析Spark源码](bigdata/engine/spark/从浅到深剖析Spark源码.md)
