@@ -23,7 +23,7 @@
 ### 依赖划分原则
 
 * 一个RDD包含多个分区，每个分区实际是一个数据集合的片段。在构建DAG的过程中，会将RDD串联起来，每个RDD都有其依赖项（最顶级RDD的依赖是空列表），这些依赖分为窄依赖（即NarrowDependency）和Shuffle依赖（即ShuffleDependency，也称为宽依赖）两种。
-* NarrowDependency会被划分到同一个Stage中，这样它们就能以管道的方式迭代执行。ShuffleDependency由于所依赖的分区Task不止一个，所以往往需要跨节点传输数据。从容灾角度讲，它们恢复计算结果的方式不同。NarrowDependency只需要重新执行父RDD的丢失分区的计算即可恢复，而ShuffleDependency则需要考虑恢复所有父RDD的丢失分区。(通过DFS方式遍历父RDD进行恢复)
+* NarrowDependency会被划分到同一个Stage中，这样它们就能以pipeline的方式迭代执行。ShuffleDependency由于所依赖的分区Task不止一个，所以往往需要跨节点传输数据。从容灾角度讲，它们恢复计算结果的方式不同。NarrowDependency只需要重新执行父RDD的丢失分区的计算即可恢复，而ShuffleDependency则需要考虑恢复所有父RDD的丢失分区。(通过DFS方式遍历父RDD进行恢复)
 
 ### 数据处理效率
 
@@ -39,7 +39,7 @@
 ### RDD类属性
 
 * _sc:SparkContext
-* deps:DEpendency的序列，用于存储当前RDD的依赖
+* deps:Dependency的序列，用于存储当前RDD的依赖
 * partitioner:当前RDD的分区计算器。
 * id:当前RDD的唯一身份标识。
 * name:RDD的名称
@@ -342,7 +342,7 @@ abstract class Partitioner extends Serializable {
 def defaultPartitioner(rdd: RDD[_], others: RDD[_]*): Partitioner = {
     // 将可变参数放入到一个Seq中
     val rdds: Seq[RDD[_]] = (Seq(rdd) ++ others)
-    // 筛选出不存在分区的RDD
+    // 筛选出存在分区的RDD
     val hasPartitioner: Seq[RDD[_]] = rdds.filter(_.partitioner.exists(_.numPartitions > 0))
 
     // 获取最大分区的RDD
