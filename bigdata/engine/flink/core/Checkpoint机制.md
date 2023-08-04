@@ -227,7 +227,108 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 * 默认情况下RocksDB状态后端使用Flink管理的RocksDBs缓冲区和缓存的内存预算`state.backend.rocksdb.memory.managed: true`
 * 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率，writebuffer占用总内存的比例，有助于state写入的性能
 
-## 状态一致性剖析
+# Aligned Checkpoint和Unaligned Checkpoint
+
+## Aligned Checkpoint
+
+### Checkpoint导致的问题
+
+1. Flink通过Checkpoint恢复时间长，会导致服务可用率降低。
+2. 非幂等或非事务场景，导致大量业务数据重复。
+3. Flink 任务如果持续反压严重，可能会进入死循环，永远追不上 lag。因为反压严重会导致 Flink Checkpoint 失败，Job 不能无限容忍 Checkpoint 失败，所以 Checkpoint 连续失败会导致 Job 失败。Job 失败后任务又会从很久之前的 Checkpoint 恢复开始追 lag，追 lag 时反压又很严重，Checkpoint 又会失败。从而进入死循环，任务永远追不上 Lag。
+4. 在一些大流量场景中，SSD 成本很高，所以 Kafka 只会保留最近三小时的数据。如果 Checkpoint 持续三小时内失败，任务一旦重启，数据将无法恢复。
+
+### Checkpoint为什么会失败？
+
+* **Checkpoint Barrier** 从 Source 生成，并且 Barrier 从 Source 发送到 Sink Task。当 Barrier 到达 Task 时，该 Task 开始 Checkpoint。当这个 Job 的所有 Task 完成 Checkpoint 时，这个 Job 的 Checkpoint 就完成了。
+* Task 必须处理完 Barrier 之前的所有数据，才能接收到 Barrier。例如 一个任务的某个 Task 处理数据慢，Task 不能快速消费完 Barrier 前的所有数据，所以不能接收到 Barrier。最终 这个Task 的 Checkpoint 就会失败，从而导致 Job 的 Checkpoint 失败。
+
+## **Unaligned Checkpoint**
+
+### UC Vs AC
+
+* UC 的核心思路是 Barrier 超越这些 ongoing data，即 Buffer 中的数据，并快照这些数据。由此可见，当 Barrier 超越 ongoing data 后，快速到达了 Sink Task。与此同时，这些数据需要被快照，防止数据丢失。
+
+![](../img/AcVsUc.jpg)
+
+* 上图是 UC 和 AC 的简单对比，对于 AC，Offset 与数据库 Change log 类似。对于 UC，Offset 和 data 与数据库的 Change log 类似。Offset6 和 data 的组合，可以认为是 Offset4。其中，Offset4 和 Offset5 的数据从 State 中恢复，Offset6 以及以后的数据从 Kafka 中恢复。
+
+### Unaligned Checkpoint底层原理
+
+* 假设当前 Task 的上游 Task 并行度为 3，下游 Task 并行度为 2。Task 会有三个 InputChannel 和两个 SubPartition。紫红色框表示 Buffer 中的一条条数据。
+* UC 开始后，Task 的三个 InputChannel 会陆续收到上游发送的 Barrier。如图所示，InputChannel 0 先收到了 Barrier，其他 Inputchannel 还没有收到 Barrier。当某一个 InputChannel 接收到 Barrier 时，Task 会直接开始 UC 的第一阶段，即：**UC 同步阶段**。
+* 只要有任意一个 Barrier 进入 Task 网络层的输入缓冲区，Task 就会直接开始 UC，不用等其他 InputChannel 接收到 Barrier，也不需要处理完 InputChannel 内 Barrier 之前的数据。
+
+#### UC同步阶段
+
+![](../img/UC同步流程.jpg)
+
+* UC 同步阶段的核心思路是：**Barrier 超越所有的 data Buffer**，并对这些**超越的 data Buffer 快照**。我们可以看到 Barrier 被直接发送到所有 SubPartition 的头部，超越了所有的 input 和 output Buffer，从而 Barrier 可以被快速发送到下游 Task。这也解释了为什么反压时 UC 可以成功：
+
+  - 从 Task 视角来看，Barrier 可以在 Task 内部快速超车。
+
+  - 从 Job 视角来看，如果每个 Task 都可以快速超车，那么 Barrier 就可以从 Source Task 快速超车到 Sink Task。
+
+* 为了保证数据一致性，在 UC 同步阶段 Task 不能处理数据。同步阶段主要的流程如下。
+
+  * Barrier 超车：保证 Barrier 快速发送到下游 Task。
+  * 对 Buffer 进行引用：这里只是引用，真正的快照会在异步阶段完成。
+  * 调用 Task 的 SnapshotState 方法。
+  * State backend 同步快照。
+
+#### UC异步阶段
+
+![](../img/UC异步流程.jpg)
+
+* 当 UC 同步阶段完成后，会继续处理数据。与此同时，开启 UC 的第二阶段：**Barrier 对齐和 UC 异步阶段。**异步阶段要**快照同步阶段引用的所有 input 和 output Buffer，以及同步阶段引用的算子内部的 State**。
+* UC也需要进行Barrier对齐，当 Task 开始 UC 时，有很多 Inputchannel 没接收到 Barrier。**这些 InputChannel Barrier 之前的 Buffer，可能也 需要快照**。UC的异步阶段需要等待所有InputChannel的Barrier到达，且Barrier之前的Buffer都需要快照，这就是**UC Barrier对齐**。这个速度理论上是比较快的，只需要把Barrier超越发送到下游算子即可。
+* UC 异步阶段流程。异步阶段需要写三部分数据到 FileSystem，分别是：
+  - 同步阶段引用的算子内部的 State。
+  - 同步阶段引用的所有 input 和 output Buffer。
+  - 以及其他 input channel Barrier 之前的 Buffer。
+* 当这三部分数据写完后，Task 会将结果汇报给 JobManager，Task 的异步阶段结束。其中算子 State 和汇报元数据流程与 Aligned Checkpoint 一致。
+
+### UC性能调优
+
+####  UC失败场景
+
+##### output buffer不足
+
+![](../img/UCBuffer不足.jpg)
+
+* 如果 Task 处理一条数据并写入到 output Buffer 需要十分钟。那么在这 10 分钟期间，就算 UC Barrier 来了，Task 也不能进行 Checkpoint，所以 UC 还是会超时。通常处理一条数据不会很慢，**但写入到 output Buffer 里，可能会比较耗时。因为反压严重时，Task 的 output Buffer 经常没有可用的 Buffer，导致 Task 输出数据时经常卡在 request memory 上**。
+
+###### 空闲buffer检测
+
+* 社区在Flink-14396引入空闲buffer检测机制，如果buffer非空闲则不写output buffer，不做空闲检测前，Task 会卡在第五步的数据处理环节，不能及时响应 UC。空闲buffer检测后，Task 会卡在第三步，在这个环节接收到 UC Barrier 时，也可以快速开始 UC。
+* 第三步，只检查是否有一个空闲 Buffer**。所以当处理一条数据需要多个 Buffer 的场景，Task 处理完数据输出结果时，可能仍然会卡在第五步，导致 Task 不能处理 UC**。例如单条数据较大，flatmap 算子、window 触发以及广播 watermark，都是处理一条数据，需要多个 Buffer 的场景。这些场景 Task 仍然会卡在 request memory 上。
+
+######  **Overdraft Buffer**(1.6版本支持)
+
+* Task 处理数据时有三步，即拉数据、处理数据以及输出结果。**透支 Buffer** 的思路是，在输出结果时，如果 output Buffer pool 中的 Buffer 不足，且 Task 有足够的 network Buffer。则**当前 Task 会向 TM 透支一些 Buffer**，从而完成数据处理环节，防止 Task 阻塞。
+* 优化后处理一条数据需要多个 Buffer 的场景，UC 也可以较好的工作。默认每个 gate 可以透支五个 Buffer，可以调节 `taskmanager.network.memory.max-overdraft-buffers-per-gate` 参数来控制可以透支的 Buffer 量。
+
+### UC风险点
+
+* **Schema升级:**schema升级后，如果序列化不兼容，UC无法恢复；
+* **链接改变:**算子之间的链接发送变化，UC无法恢复
+* **小文件:**Data Buffer会写大量的filesystem小文件
+
+#### 利用Aligned Timeout混合使用AC+UC
+
+* 配置`execution.checkpointing.aligned-checkpoint-timeout` ck对齐超时时间，超时后会由AC切换至UC
+
+#### 利用Task共享文件解决小文件问题
+
+* 为了解决小文件的问题的优化思路是，同一个 TM 的多个 Task，不再单独创建文件，而是共享一个文件。
+
+* 默认 **execution.checkpointing.unaligned.max-subTasks-per-channel-state-file** 是 5，即五个 Task 共享一个 UC 文件。UC 文件个数就会减少为原来的 1/5。五个 Task 只能串行写文件，来保证数据正确性，所以耗时会增加。
+
+* 从生产经验来看，大量的 UC 小文件都会在 1M 以内，所以 20 个 Task 共享一个文件也是可以接受的。如果系统压力较小，且 Flink Job 更追求写效率，可以设置该参数为 1，表示 Task 不共享 UC 文件。
+
+  **Flink 1.17 已经支持了 UC 小文件合并的 feature。**
+
+# 状态一致性剖析
 
 ### 什么是状态一致性
 
@@ -301,3 +402,4 @@ StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(m
 * 当所有算子任务的快照完成，也就是checkpoint完成时，jobmanager会向所有任务发送通知，确认这次checkpoint完成，sink任务收到确认通知，正式提交事务，kafka中未确认数据改为"已确认"
 
 ![kafka](../img/kafka俩阶段提交.jpg)
+
