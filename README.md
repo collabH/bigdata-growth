@@ -94,6 +94,15 @@
 * [IceBerg整合Hive](bigdata/datalake/iceberg/icebergWithHive.md)
 * [IceBerg整合Spark](bigdata/datalake/iceberg/IcebergWithSpark.md)
 
+### rss
+
+**remote shuffle service**
+
+#### celeborn
+
+* [celeborn概述](bigdata/rss/celeborn/CelebornOverview.md)
+
+
 ### store
 
 **存储相关，包含rocksdb、Hbase、BookKeeper、Zookeeper等**
