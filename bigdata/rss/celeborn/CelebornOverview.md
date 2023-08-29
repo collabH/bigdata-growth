@@ -239,7 +239,84 @@ Celeborn支持俩种类型的分区:
 
 * MapPartition数据文件由几个Region(默认为64MiB)组成，每个Region按分区id排序。每个Region都有一个内存索引，它指向每个分区的起始位置。当从某个分区请求数据时，Worker从每个区域读取分区数据。
 
+### Local Disk和Memory Buffer
+
+* `Worker`定期检查磁盘健康状态，隔离不健康或无空间的磁盘，并通过心跳向`Master`报告。在接收到`ReserveSlots`请求后，`Worker`首先会尝试创建一个`FileWriter`在提示的磁盘上，如果该磁盘不可用，`Worker`将会选择一个健康的磁盘。
+* 在接收到`PushData`或者`PushMergedData`请求后，`Worker`解包数据(用于PushMergedData),并在逻辑上附加到每个PartitionLocation的缓冲数据(没有物理内存副本)。如果缓冲区超过阈值(默认为256KiB)，数据将被异步刷新到文件中。
+* 如果数据重分区开启，`Worker`将会异步地向副本发送数据.只有当Worker从副本接收到ACK后，它才会将ACK返回给ShuffleClient。注意，不要求在发送ACK之前将数据刷新到文件中。
+* 在接收到`CommitFiles`请求之后，Worker将会刷新RPC中指定的PartitionLocation的所有缓存数据并关闭文件，然后响应成功和失败的PartitionLocation列表。
+
+### Trigger Split
+
+* 在接收到`PushData`(当前接收到`PushMergedData`不会触发Split)请求之后，`Worker`检查磁盘使用量是否超过磁盘阈值(默认为5GiB)。如果超过，`Worker`将向`ShuffleClient`响应`Split`。
+* Celeborn支持两种可配置的split方式：
+  * **HARD_SPRIT**:这意味着旧的PartitionLocation epoch拒绝接受任何数据，并且只有在新的PartitionLocation epoch准备好之后，PartitionLocation的未来数据才会被推送。
+  * **SOFT_SPLIT**:这意味着旧的PartitionLocation epoch继续接受数据，当新epoch准备好时，ShuffleClient透明地切换到新位置
+
+### Self Check
+
+* 在每个磁盘上有着额外的健康检测和空间容量检测，`Worker`手机这些信息指标反馈给`Master`为了更好的进行slot分配:
+  * 最近一个时间窗口的平均flush耗时
+  * 最近一个时间窗口的平均fetch耗时
+
+### 多层存储
+
+*  Celeborn的目标是将数据存储在多层，即内存，Local Disk和分布式文件系统(或对象存储，如S3, OSS)。当前Celeborn仅支持Local Disk和HDFS。
+* 数据防止原则：
+  * 尝试缓存小数据到内存
+  * 通常优先更快的存储
+  * 在更快的存储空间和数据移动成本之间进行权衡
+
+![](./img/多级存储架构.jpg)
+
+* `Worker`的内存分为两个逻辑区域:`Push Region`和`Cache Region`。`ShuffleClient`将数据推入`Push Region`，如①所示。每当`PartitionLocation`的`PushRegion`中的缓冲数据超过阈值(`默认为256KiB`)时，`Worker`将其刷新到某个存储层。数据移动策略如下:
+  * 如果`PartitionLocation`不在`Cache Region`中，且`Cache Region`空间足够，则逻辑上将数据移动到`Cache Region`中。注意，这只是计算缓存区域中的数据，而不是物理地进行内存复制。如②所示。
+  * 如果`PartitionLocation`在`Cache Region`中，则逻辑上追加当前数据，如图③所示。
+  * 如果`PartitionLocation`不在`Cache Region`中，且`Cache Region`没有足够的内存，则按照④的方法将数据刷新到本地磁盘。
+  * 如果`PartitionLocation`不在`Cache Region`中，并且`Cache Region`和本地磁盘都没有足够的内存，则按照⑤的步骤将数据刷新到DFS/OSS中。
+  * 如果缓存区域超过阈值，请选择最大的`PartitionLocation`并将其刷新到本地磁盘，如图⑥所示。
+  * 如果本地磁盘没有足够的内存，也可以选择split `PartitionLocation`并退出到HDFS/OSS。
+
 ## 流量控制
+
+* 流量控制的设计目标是在不损害性能的情况下防止Worker OOM。同时，Celeborn试图在不损害性能的情况下实现公平。Celeborn通过背压和拥塞控制实现了这一目标。
+
+### Data Flow
+
+* 从`Worker`的角度看有俩个数据来源
+  * 将主数据推送到主`Worker`的`ShuffleClient`
+  * 向副本`Worker`发送数据复制的主`Worker`
+* 当满足以下条件时，可以释放Worker的缓冲内存:
+  * 数据被刷新到文件
+  * 如果启用复制，则在主数据写入到连接之后
+* 基本思想是，当Worker处于高内存压力下时，减慢或停止接受数据，同时强制刷新以释放内存。
+
+### 背压
+
+* 背压定义了三种watermark
+  * `Push Receive`watermark(默认0.85).如果使用的direct memory超过此值，Worker将暂停从ShuffleClient接收数据，并强制将缓冲的数据刷新到文件中。
+  * `Pause Replicate`(默认为0.95)。如果使用的direct memory超过此值，Worker将暂停接收来自ShuffleClient的数据和来自primary Worker的副本数据，并强制将缓冲的数据刷新到文件中。
+  * `Resume`(默认为0.5)。当触发Pause Receive或Pause replication以恢复从ShuffleClient接收数据时，使用的直接内存比率应在此水印下减小。
+* `Worker`高频率检查使用的direct memory比率，并触发相应的暂停接收，暂停复制和恢复。状态机如下:
+
+![](./img/背压状态图.jpg)
+
+* 背压是基本的流量控制功能，不能关闭。用户可以通过以下配置对这三个水印进行调优。调整`celeborn.worker.directMemoryRatio*`参数控制
+
+### 拥塞控制
+
+* 拥塞控制是流量控制的一种可选机制，目的是在内存压力大的情况下减慢来自ShuffleClient的推送速率，抑制在最近一个时间窗口内占用资源最多的用户。它定义了两个水印:
+  * `Low Watermark`, 在这种情况下一切正常
+  * `High Watermark`, 当超过此值时，占用资源过多的用户将被拥塞控制
+* Celeborn使用`UserIdentifier`来标识用户。Worker收集在最后一个时间窗口内从每个用户推送的字节。当使用的直接内存超过高水位时，占用资源超过平均占用量的用户将收到拥塞控制消息。
+* `ShuffleClient`以一种非常类似于TCP拥塞控制的方式控制推送比。最初，它处于缓慢启动阶段，推送率低，但增长很快。当达到阈值时，进入拥塞避免阶段，缓慢提高推送速率。接收到拥塞控制后，回到慢启动阶段。
+* 拥塞控制可以通过以下配置启用和调优:`celeborn.worker.congestionControl.*`
+
+# Client
+
+* Celeborn的客户端包含俩个组件：
+  * `LifecycleManger`负责管理应用程序的所有`shuffle`元数据，类似于Spark的`Driver`或Flink的`JobMaster`
+  * `ShuffleClient`负责从Workers中读写数据，类似于Spark的`Executor`或Flink的`TaskManager`
 
 # 部署
 
