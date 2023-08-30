@@ -318,6 +318,27 @@ Celeborn支持俩种类型的分区:
   * `LifecycleManger`负责管理应用程序的所有`shuffle`元数据，类似于Spark的`Driver`或Flink的`JobMaster`
   * `ShuffleClient`负责从Workers中读写数据，类似于Spark的`Executor`或Flink的`TaskManager`
 
+## LifecycleManger
+
+* `LifecycleManger`维护应用程序的每次shuffle信息:
+  * 全部活跃的shuffle id集合
+  * 为每次shuffle提供服务的Worker，以及每个Worker上的PartitionLocation
+  * 每次shuffle的状态，即未提交、正在提交、已提交、数据丢失、过期
+  * 具有每个分区id的最大epoch的最新的PartitionLocation
+  * 此应用的用户标识，来区分top占用资源用户提供给拥塞控制
+* LifecycleManager通过ShuffleClient和Celeborn Master处理控制消息，它接收处理以下ShuffleClient请求：
+  * RegisterShuffle
+  * Revive/PartitionSplit
+  * MapperEnd/StageEnd
+  * GetReducerFileGroup
+* 为了处理请求，LifecycleManager将向Master和Workers发送请求:
+  * Heartbeat to `Master`
+  * RequestSlots to `Master`
+  * UnregisterShuffle to `Master`
+  * ReserveSlots to `Worker`
+  * CommitFiles to `Worker`
+  * DestroyWorkerSlots to `Worker`
+
 # 部署
 
 ## 服务器部署
