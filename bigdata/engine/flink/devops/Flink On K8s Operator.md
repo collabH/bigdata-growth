@@ -9,15 +9,15 @@
   * 有状态和无状态的应用程序升级
   * 触发和管理savepoints
   * 处理错误，回滚异常的升级
-* **支持多版本flink:v1.13，v1.14，v1.15**
+* **支持多版本flink:v1.13，v1.14，v1.15，v1.16，v1.17**
 * **多种部署模式支持**
   * Application Cluster
   * Session Cluster
   * Session Job
-* **支持高可用**
+* [**支持高可用**](https://nightlies.apache.org/flink/flink-docs-master/docs/deployment/ha/kubernetes_ha/)
 * **可扩展的架构**
-  * 自定义校验器
-  * 自定义资源监听器
+  * [自定义校验器](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.6/docs/operations/plugins/#custom-flink-resource-validators)
+  * [自定义资源监听器](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.6/docs/operations/plugins/#custom-flink-resource-listeners)
 * **更先进的配置管理**
   * 默认配置动态更新
   * 预配置job
@@ -25,6 +25,11 @@
 * **支持pod template增强pod**
   * native kubernetes pod定义
   * 分层 (Base/JobManager/TaskManager overrides)
+* [**作业自动资源分配**](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.6/docs/custom-resource/autoscaler/)
+  * 收集滞后和利用率指标
+  * 将作业vertices缩放到理想的并行度
+  * 随着负载的变化而上下缩放
+
 
 ## Operations
 
