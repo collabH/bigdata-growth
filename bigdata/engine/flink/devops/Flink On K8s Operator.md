@@ -39,7 +39,7 @@
   * 详细资源和Kubernetes API访问指标
 * 完全自定义log
   * 默认log配置
-  * per job log配置
+  * job预配置log
   * 基于Sidecar的日志转发器
 * Flink web ui和rest入口访问
   * 支持flink native k8s的全部expose type
@@ -77,8 +77,8 @@ brew install k9s
 # 在Kubernetes集群中安装证书管理器来添加webhook组件(每个Kubernetes集群只需要添加一次):
 kubectl create -f https://github.com/jetstack/cert-manager/releases/download/v1.8.2/cert-manager.yaml
 # 添加flink k8s operator helm chart，这里选择1.0.1版本的operator
-helm repo add flink-operator-repo https://downloads.apache.org/flink/flink-kubernetes-operator-1.1.0
-helm install flink-kubernetes-operator flink-operator-repo/flink-kubernetes-operator
+helm repo add flink-operator-repo160 https://downloads.apache.org/flink/flink-kubernetes-operator-1.6.0/
+helm install flink-kubernetes-operator flink-operator-repo160/flink-kubernetes-operator
 ```
 
 * **kubectl get pods**查看flink-kubernetes-operator是否启动成功
@@ -90,11 +90,13 @@ helm install flink-kubernetes-operator flink-operator-repo/flink-kubernetes-oper
 
 ```shell
 # 创建测试flink任务
-kubectl create -f https://raw.githubusercontent.com/apache/flink-kubernetes-operator/release-1.1/examples/basic.yaml
+kubectl create -f https://raw.githubusercontent.com/apache/flink-kubernetes-operator/release-1.6/examples/basic.yaml
 # 查看容器日志
 kubectl logs -f deploy/basic-example
 # 暴露对应任务web port
 kubectl port-forward svc/basic-example-rest 8081
+# 删除作业
+kubectl delete flinkdeployment/basic-example
 ```
 
 * 通过localhost:8081就可以访问flink web dashboard，basic文件含义
