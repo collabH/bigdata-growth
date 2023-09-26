@@ -151,7 +151,7 @@ spec:
 
 # Architecture
 
-* Flink Kubernetes Operator (Operator)作为一个**控制平台**，管理Apache Flink应用的整个**部署生命周期**。**Operator**可以通过**Helm**安装在**Kubernetes**集群上。在大多数生产环境中，它通常部署在指定的**namespace**中，并在一个或多个托管**namespace**中控制Flink的部署。
+* Flink Kubernetes Operator (Operator)作为一个**控制平台**，管理Apache Flink应用的整个**部署生命周期**。**Operator**可以通过**Helm**安装在**Kubernetes**集群上。在大多数生产环境中，它通常部署在指定的**namespace**中，并在一个或多个托管**namespace**中控制Flink的deployment。
 
 ![](../img/flinkk8sopeartor架构.jpg)
 
@@ -181,6 +181,15 @@ spec:
 - ROLLED_BACK : The resource is deployed with the last stable spec
 - FAILED : The job terminally failed
 
+## Admission Control
+
+* 除了编译的准入插件，一个名为`Flink Kubernetes Operator Webhook (Webhook)`的自定义准入插件可以作为扩展启动并作为Webhook运行。
+* Webhook遵循Kubernetes的原则，特别是动态准入控制。
+* 当使用Helm将Operator安装在Kubernetes集群上时，默认会部署它。
+* Webhook默认使用TLS协议进行通信。当keystore文件发生更改时，它会自动加载/重新加载keystore文件，并提供以下端点:
+
+![](../img/k8soperator-webhook.jpg)
+
 # Custom Resource
 
 * Flink Kubernetes操作员面向用户的核心API是FlinkDeployment和FlinkSessionJob自定义资源(CR)。自定义资源是k8s api的扩展和定义一个新的对象类型。FlinkDeployment CR(自定义资源)定义一个Flink Application和Session集群deployments。FlinkSessionJob的CR定义一个session任务在Session集群并且每个session集群可以运行多个FlinkSessionJob。
@@ -205,7 +214,7 @@ spec:
 * 查看FlinkDeployment具体yaml配置
 
 ```shell
-kubectl get flinkdeployment basic-example -o yaml
+w
 ```
 
 ### FlinkDeployment spec描述
