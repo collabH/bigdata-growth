@@ -442,15 +442,17 @@ kubectl delete flinkdeployment/flinksessionjob my-deployment
   * **savepoint:** 使用savepoint来升级。
   * **last-state: **在任何应用程序状态下(即使作业失败)进行快速升级，都不需要健康的作业，因为它总是使用最后检查点信息。当HA元数据丢失时，可能需要手动恢复。
 
-|                        | Stateless               | Last State                                 | Savepoint                              |
-| ---------------------- | ----------------------- | ------------------------------------------ | -------------------------------------- |
-| Config Requirement     | None                    | Checkpointing & Kubernetes HA Enabled      | Checkpoint/Savepoint directory defined |
-| Job Status Requirement | None                    | HA metadata available                      | Job Running*                           |
-| Suspend Mechanism      | Cancel / Delete         | Delete Flink deployment (keep HA metadata) | Cancel with savepoint                  |
-| Restore Mechanism      | Deploy from empty state | Recover last state using HA metadata       | Restore From savepoint                 |
-| Production Use         | Not recommended         | Recommended                                | Recommended                            |
+|                 | Stateless       | Last State                                 | Savepoint                              |
+| --------------- | --------------- | ------------------------------------------ | -------------------------------------- |
+| **必需配置**    | 无              | **Checkpointing & Kubernetes HA Enabled**  | Checkpoint/Savepoint directory defined |
+| **Job状态要求** | 无              | HA元数据可用                               | Job运行状态                            |
+| **暂停机制**    | Cancel / Delete | Delete Flink deployment (keep HA metadata) | 通过Savepoint取消任务                  |
+| **恢复机制**    | 从空状态部署    | 使用HA元数据恢复最新ck                     | Restore From savepoint                 |
+| **生产使用**    | 不推荐          | 推荐                                       | 推荐                                   |
 
 #### last-state yaml配置
+
+* **last-state**模式仅支持`FlinkDeployment`类型作业
 
 ```yaml
 apiVersion: flink.apache.org/v1beta1
@@ -539,9 +541,31 @@ flinkConfiguration:
 		kubernetes.operator.savepoint.history.max.count: 5
 ```
 
+* `kubernetes.operator.savepoint.cleanup.enabled: false`可以关闭savepoint清理能力
+
 ### Recovery of missing job deployments
 
-* 当启用Kubernetes HA时，操作员可以在用户或某些外部进程意外删除Flink集群部署的情况下恢复它。可以通过设置`kubernetes.operator.jm-deployment-recovery.enabled`在配置中关闭部署恢复。启用为false，但是建议保持该设置为默认的true值。
+* 当启用Kubernetes HA时，operator可以在用户或某些外部进程意外删除Flink集群部署的情况下恢复它。可以通过设置`kubernetes.operator.jm-deployment-recovery.enabled`在配置中关闭部署恢复。启用为false，但是建议保持该设置为默认的true值。
+
+### 不健康job deployment的重启
+
+* 当开启HA时，当Flink集群部署被认为不健康时，operator可以重新启动它。通过设置`kubernetes.operator.cluster.health-check`为true启用不健康的部署重启(默认为false)。要使此功能发挥作用，必须启用`kubernetes.operator.jm-deployment-recovery.enabled`。
+* 目前以下俩种情况被认为是不健康的job:
+  * Flink job在`kubernetes.operator.cluster.health-check.restart`的时间窗口内。窗口(默认:2分钟)重启次数超过`kubernetes.operator.cluster.health-check.restarts.threshold`配置,默认64。
+  * `cluster.health-check.checkpoint-progress`设置为true，并且Flink的成功检查点计数在`kubernetes.operator.cluster.health-check.checkpoint-progress`的时间窗口内没有变化。窗口(默认为5分钟)。
+
+### 重新启动失败的job deployment
+
+* operator可以重新启动失败的Flink作业，当作业主任务能够重新配置作业以处理这些故障时，当`kubernetes.operator.job.restart.faile`设置为true时，当作业状态设置为`FAILED`时，**kubernetes opeartor将删除当前作业，并使用最新成功的检查点重新部署作业。**
+
+### 手动恢复
+
+* 手动恢复作业步骤：
+  * 在配置ck/sp的路径找到最新的ck/sp
+  * 删除`FlinkDeployment`资源应用
+  * 校验是否存在需要恢复的savepoint，确认`FlinkDeployment`应用是否完全删除
+  * 修改`FlinkDeployment`yaml配置中的jobSpec,指定`initialSavepointPath`位置为需要恢复的savepoint路径
+  * 重新创建`FlinkDeployment`
 
 ## Pod Template
 
@@ -555,17 +579,17 @@ metadata:
   namespace: default
   name: pod-template-example
 spec:
-  image: flink:1.15
-  flinkVersion: v1_15
+  image: flink:1.17
+  flinkVersion: v1_17
   flinkConfiguration:
     taskmanager.numberOfTaskSlots: "2"
+  serviceAccount: flink
   podTemplate:
     apiVersion: v1
     kind: Pod
     metadata:
       name: pod-template
     spec:
-      serviceAccount: flink
       containers:
         # Do not change the main container name
         - name: flink-main-container
@@ -599,10 +623,74 @@ spec:
         initContainers:
           # Sample sidecar container
           - name: busybox
-            image: busybox:latest
+            image: busybox:1.35.0
             command: [ 'sh','-c','echo hello from task manager' ]
   job:
     jarURI: local:///opt/flink/examples/streaming/StateMachineExample.jar
     parallelism: 2
 ```
+
+# Autoscaler
+
+* 作业自动扩缩容功能可以**收集Flink作业的各种指标**，并自动缩放单个作业vertexes(chained operator groups)，以消除反压力，满足用户设定的利用率目标。通过调整作业vertexes级别的并行度(与作业并行度相反)，我们可以有效地自动扩展复杂和异构的流应用程序。
+* 关键特性如下：
+  * 更好的集群资源利用率和更低的运维成本
+  * 自动并行调优，甚至复杂的流管道
+  * 自动适应不断变化的负载模式
+  * 用于性能调试的详细利用率指标
+
+## 概览
+
+* 自动扩缩容依赖于Flink度量系统为单个任务提供的度量，指标直接从Flink作业查询，收集的度量指标如下:
+  * 每个source的backlog信息
+  * source数据的传入数据速率(例如:records/sec 写入kafka的速度)
+  * 每个job的vertex每秒处理的记录数
+  * 每个job的vertex每秒的繁忙时间(**目前的利用率**)
+* 该算法从source开始，递归地计算pipeline中每个operator所需的处理能力(目标数据率)。在source vertices，目标数据速率等于传入数据速率(来自Kafka主题)。
+* 对于下游算子，计算目标数据速率为输入(上游)算子沿着处理图中给定边缘的输出数据速率的总和。
+
+![](../img/k8sautoscaler.jpg)
+
+* 用户可以配置管道中operator的目标利用率，例如将所有operators的繁忙度保持在60% - 80%之间。然后，autoscaler找到一个并行配置，使所有操作的输出速率与其所有下游操作的输入速率在目标利用率上匹配。
+* 如下图所示，可以看出来autoscaler如何影响pipeline：
+
+![](../img/k8sautoscaler1.jpg)
+
+* 类似地，当负载减少时，autoscaler会调整单个opeartor的并行度水平，以匹配当前随时间变化的速率。
+
+![](../img/k8sautoscaler2.jpg)
+
+## autoscaler配置
+
+* 默认情况下，autoscaler使用operator内置的作业升级机制来执行自动扩缩容，详见 [Job Management and Stateful upgrades](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.6/docs/custom-resource/job-management/).
+
+### Flink 1.18和autoscaler支持
+
+* 即将发布的Flink 1.18版本通过新的资源需求rest端点对扩展操作的速度进行了非常显著的改进。这允许autoscaler在不执行完整作业升级周期的情况下就地缩放顶点。
+* 要尝试此实验性功能，请使用当前可用的Flink 1.18快照基础映像来构建应用程序docker映像。此外，确保在`FlinkDeployment` yaml中将`Flink version`设置为`v1_18`，并启用该特性所需的自适应调度器。
+
+```yaml
+jobmanager.scheduler: adaptive
+```
+
+## Job的要求和限制
+
+### 要求
+
+* Autoscaler目前只适用于Flink 1.17和更高版本的Flink镜像，或者在将以下修复程序反向移植到1.15/1.16 Flink image后:
+  * Job vertex parallelism overrides (must have)
+    - [Add option to override job vertex parallelisms during job submission](https://github.com/apache/flink/commit/23ce2281a0bb4047c64def9af7ddd5f19d88e2a9)
+    - [Change ForwardPartitioner to RebalancePartitioner on parallelism changes](https://github.com/apache/flink/pull/21443) (consists of 5 commits)
+    - [Fix logic for determining downstream subtasks for partitioner replacement](https://github.com/apache/flink/commit/fb482fe39844efda33a4c05858903f5b64e158a3)
+  * [Support timespan for busyTime metrics](https://github.com/apache/flink/commit/a7fdab8b23cddf568fa32ee7eb804d7c3eb23a35) (good to have)
+
+### 限制
+
+* 默认情况下，Autoscaler可用于处理图中的所有job vertices。
+* source scaling要求source符合一下特性：
+  * 使用最新的 [Source API](https://cwiki.apache.org/confluence/display/FLINK/FLIP-27%3A+Refactor+Source+Interface) 并且暴露繁忙时间指标 (强需要，大部分连接器都已经符合)
+  * 暴露 [standardized connector metrics](https://cwiki.apache.org/confluence/display/FLINK/FLIP-33%3A+Standardize+Connector+Metrics) 访问 backlog信息 (good to have, extra capacity will be added for catching up with backlog)
+* 在当前状态下，Autoscaler与Kafka source最适配，因为kafka source暴露了所有标准化的指标。当使用Kafka时，还带来了一些额外的好处，比如自动检测和限制源最大并行度与Kafka分区的数量。
+
+## 配置指南
 
