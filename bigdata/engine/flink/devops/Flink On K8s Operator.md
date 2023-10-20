@@ -700,3 +700,67 @@ jobmanager.scheduler: adaptive
   * 目标利用率和灵活的边界
   * 目标追赶持续时间和重新启动时间
 
+> 自动缩放器还支持被动/仅指标模式，它只收集和评估与缩放相关的性能指标，但不会触发任何作业升级。这可以用来获得对模块的信任，而不会对正在运行的应用程序产生任何影响。
+>
+> 要禁用autoscaler操作，设置:kubernetes.operator.job.autoscaler.scaling.enabled: "false"
+
+### 作业和每个operator的最大并行度
+
+* 在计算缩放的并行度时，autoscaler总是考虑每个 job vertex的最大并行度设置，**以确保它不会引入不必要的数据倾斜**。计算的并行度将始终是最大并行度数的除数。
+* 因此，为了确保灵活的缩放，建议选择具有许多除数的最大并行度设置，而不是依赖于Flink提供的默认值。通过`pipeline.max-parallelism`配置设置作业的最大并行度
+* 最大并行度的一些好数字是:120、180、240、360、720等。也可以在每个opeartor级别上设置maxParallelism，如果我们想要避免缩放某些sources/sinks超过一定数量，会很有作用。
+
+### 稳定和指标收集间隔
+
+* autoscaler通过查看由`kubernetes.operator.job.autoscaler.metrics.window`定义的收集时间窗口中的平均指标。此窗口的大小决定了小的波动将如何影响自动缩放器。窗口越大，我们得到的平滑和稳定性就越好，但我们对突然的负载变化的反应可能会更慢。我们建议您尝试将其设置在`3-60`分钟之间。
+* 为了允许作业在恢复后稳定，用户可以通过设置`kubernetes.operator.job.autoscaler.stabilization.interval`来配置一个稳定窗口。在此期间，不会收集任何指标，也不会采取任何缩放操作。
+
+### 目标利用率和灵活边界
+
+* 为了提供稳定的作业性能和对负载波动的一些缓冲，autoscaler允许用户为作业设置目标利用率级别(`kubernetes.operator.job.autoscaler.target.utilization`)。0.6的目标意味着job vertex的利用率/负载为60%。
+
+* 一般来说，不建议将目标利用率设置为接近100%，因为在大多数实际系统中，当我们达到容量限制时，性能通常会下降。
+
+  除了利用率目标之外，我们还可以设置一个利用率边界，作为额外的缓冲区，以避免在负载波动时立即进行扩展。设置`kubernetes.operator.job.autoscaler.target.utilization.boundary`为0.2表示允许在触发缩放操作之前与目标利用率有20%的偏差。
+
+### 目标追赶持续时间和重启时间
+
+* 在做出扩展决策时，opeartor需要考虑到在扩展操作期间创建的积压所需的额外容量。额外容量的大小由以下2个配置自动确定:`kubernetes.operator.job.autoscaler.restart.time`:通常重启应用程序所需的时间`kubernetes.operator.job.autoscaler.catch-up.duration`:预计到作业的时间将在扩展后赶上
+* 未来，autoscaler可能能够自动确定重新启动时间，但目标追赶持续时间取决于用户的SLO。通过降低追赶持续时间，自动缩放器将不得不为缩放操作保留更多的额外容量。我们建议根据你的实际目标来设定，比如10分钟、30分钟、60分钟等等。
+
+### 基础配置案例
+
+```yaml
+...
+flinkVersion: v1_17
+flinkConfiguration:
+    kubernetes.operator.job.autoscaler.enabled: "true"
+    kubernetes.operator.job.autoscaler.stabilization.interval: 1m
+    kubernetes.operator.job.autoscaler.metrics.window: 5m
+    kubernetes.operator.job.autoscaler.target.utilization: "0.6"
+    kubernetes.operator.job.autoscaler.target.utilization.boundary: "0.2"
+    kubernetes.operator.job.autoscaler.restart.time: 2m
+    kubernetes.operator.job.autoscaler.catch-up.duration: 5m
+    pipeline.max-parallelism: "720"
+```
+
+### 高级配置参数
+
+* autoscaler还公开了影响缩放操作的各种更高级的配置参数:
+  * 顶点放大后缩小前的最小时间
+  * 最大并行度在缩小时发生变化
+  * 最小/最大并行度
+* 选项列表可能会增长，以涵盖更复杂的扩展场景。[general configuration page](https://nightlies.apache.org/flink/flink-kubernetes-operator-docs-release-1.6/docs/operations/configuration/#autoscaler-configuration)
+
+## Metrics
+
+* opeartor上报有关已评估的Flink作业指标的详细作业顶点级别指标，这些指标被收集并用于autoscaler决策。
+  * 利用率、输入率、目标率指标
+  * 扩展阈值
+  * 并行度和最大并行度随时间变化
+* 这些指标在Kubernetes操作员资源指标组下报告:
+
+```
+[resource_prefix].Autoscaler.[jobVertexID].[ScalingMetric].Current/Average
+```
+
