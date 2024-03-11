@@ -185,9 +185,9 @@
 * [Data Source](bigdata/engine/flink/core/Data%20Source.xmind)
 * [Table API](bigdata/engine/flink/core/TABLE%20API.xmind)
 * [Flink SQL](bigdata/engine/flink/core/FlinkSQL.xmind)
-* [Flink Hive](bigdata/engine/flink/core/Flink%20Hive.xmind)
+* [Flink Hive](bigdata/engine/flink/core/Flink%20SQL%20Hive.xmind)
 * [Flink CEP](bigdata/engine/flink/core/Flink%20Cep.xmind)
-* [Flink Function](bigdata/engine/flink/core/Flink%20Function.xmind)
+* [Flink Function](bigdata/engine/flink/core/Flink%20SQL%20Function.xmind)
 * [DataSource API](bigdata/engine/flink/core/Data%20Source.xmind)
 
 ##### SourceCode
