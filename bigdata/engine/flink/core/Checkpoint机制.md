@@ -1,4 +1,110 @@
-# Checkpoint机制剖析
+
+
+# Checkpointing
+
+* Flink 中的每个方法或算子都能够是**有状态的**。 状态化的方法在处理单个 元素/事件 的时候存储数据，让状态成为使各个类型的算子更加精细的重要部分。 为了让状态容错，Flink 需要为状态添加 **checkpoint（检查点）**。Checkpoint 使得 Flink 能够恢复状态和在流中的位置，从而向应用提供和无故障执行时一样的语义。
+
+## 前提条件
+
+* Flink的checkpoint机制需要河持久化存储进行交互，读写状态，需要具备以下能力：
+  * 能够回放一段时间内数据的持久化数据源，例如持久化消息队列（例如 Apache Kafka、RabbitMQ、 Amazon Kinesis、 Google PubSub 等）或文件系统（例如 HDFS、 S3、 GFS、 NFS、 Ceph 等）。
+  * 存放状态的持久化存储，通常为分布式文件系统（比如 HDFS、 S3、 GFS、 NFS、 Ceph 等）。
+
+## 开启与配置Checkpoint
+
+* checkpoint默认情况下`是被禁用的`。通过可调用 `StreamExecutionEnvironment` 的 `enableCheckpointing(n)` 来启用 checkpoint，里面的 *n* 是进行 checkpoint 的间隔，单位毫秒。
+
+**Checkpoint的属性包括：**
+
+* *Checkpoint存储：*设置检查点快照的持久化位置。默认情况下，Flink使用JobManger的堆。生产中应该为持久性文件系统。
+* *精确一次（exactly-once）对比至少一次（at-least-once）*：通过 `enableCheckpointing(long interval, CheckpointingMode mode)` 方法中传入一个模式来选择使用两种保证等级中的哪一种。 对于大多数应用来说，精确一次是较好的选择。至少一次可能与某些延迟超低（始终只有几毫秒）的应用的关联较大。
+* *checkpoint 超时*：如果 checkpoint 执行的时间超过了该配置的阈值，还在进行中的 checkpoint 操作就会被抛弃。
+* *checkpoints 之间的最小时间*：该属性定义在 checkpoint 之间需要多久的时间，以确保流应用在 checkpoint 之间有足够的进展。如果值设置为了 *5000*， 无论 checkpoint 持续时间与间隔是多久，在前一个 checkpoint 完成时的至少五秒后会才开始下一个 checkpoint。**注意这个值也意味着并发 checkpoint 的数目是*一*。**
+* *checkpoint 可容忍连续失败次数*：该属性定义可容忍多少次连续的 checkpoint 失败。超过这个阈值之后会触发作业错误 fail over。 默认次数为“0”，这意味着不容忍 checkpoint 失败，作业将在第一次 checkpoint 失败时fail over。可容忍的checkpoint失败仅适用于下列情形：Job Manager的IOException、TaskManager做checkpoint时异步部分的失败、checkpoint超时等；TaskManager做checkpoint时同步部分的失败会直接触发作业fail over。其它的checkpoint失败（如一个checkpoint被另一个checkpoint包含）会被忽略掉。
+* *并发 checkpoint 的数目*: 默认情况下，在上一个 checkpoint 未完成（失败或者成功）的情况下，系统不会触发另一个 checkpoint。这确保了拓扑不会在 checkpoint 上花费太多时间，从而影响正常的处理流程。 不过允许多个 checkpoint 并行进行是可行的，**对于有确定的处理延迟（例如某方法所调用比较耗时的外部服务），但是仍然想进行频繁的 checkpoint 去最小化故障后重跑的 pipelines 来说，是有意义的。** 注意： **不能和 “checkpoints 间的最小时间"同时使用。**
+* *externalized checkpoints*: 你可以配置周期存储 checkpoint 到外部系统中。Externalized checkpoints 将他们的元数据写到持久化存储上并且在 job 失败的时候*不会*被自动删除。 这种方式下，如果你的 job 失败，你将会有一个现有的 checkpoint 去恢复。
+* *非对齐 checkpoints*: 你可以启用[非对齐 checkpoints](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/checkpointing_under_backpressure/#非对齐-checkpoints) 以在背压时大大减少创建checkpoint的时间。这仅适用于精确一次（exactly-once）checkpoints 并且只有一个并发检查点。
+* *部分任务结束的 checkpoints*： 默认情况下，即使DAG的部分已经处理完它们的所有记录，Flink也会继续执行 checkpoints。
+
+```java
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+// 每 1000ms 开始一次 checkpoint
+env.enableCheckpointing(1000);
+
+// 高级选项：
+
+// 设置模式为精确一次 (这是默认值)
+env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+
+// 确认 checkpoints 之间的时间会进行 500 ms
+env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
+
+// Checkpoint 必须在一分钟内完成，否则就会被抛弃
+env.getCheckpointConfig().setCheckpointTimeout(60000);
+
+// 允许两个连续的 checkpoint 错误
+env.getCheckpointConfig().setTolerableCheckpointFailureNumber(2);
+        
+// 同一时间只允许一个 checkpoint 进行
+env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
+
+// 使用 externalized checkpoints，这样 checkpoint 在作业取消后仍就会被保留
+env.getCheckpointConfig().setExternalizedCheckpointCleanup(
+        ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+
+// 开启实验性的 unaligned checkpoints
+env.getCheckpointConfig().enableUnalignedCheckpoints();
+```
+
+### Checkpoint相关配置
+
+| Key                                    | Default | Type       | Description                                                  |
+| :------------------------------------- | :------ | :--------- | :----------------------------------------------------------- |
+| state.backend.incremental              | false   | Boolean    | 是否开启增量Checkpoint，默认为false。对于增量Checkpoint，只存储与前一个Checkpoint的差异，而不是完整的Checkpoint状态。一旦启用，在web UI中显示的状态大小或从Rest API中获取的状态大小只代表增量Checkpoint大小，而不是完整的Checkpoint大小。一些状态后端可能不支持增量检查点并忽略此选项。 |
+| state.backend.local-recovery           | false   | Boolean    | 状态后端是否开启本地恢复。默认情况为fasle本地恢复。目前只支持keyed state backends(包括EmbeddedRocksDBStateBackend和HashMapStateBackend)。 |
+| state.checkpoint-storage               | (none)  | String     | 用于指定checkpoint所用的存储，支持'jobmanager'和'filesystem'以及'rocksdb' |
+| state.checkpoint.cleaner.parallel-mode | true    | Boolean    | 是否使用并行过期状态清理器                                   |
+| state.checkpoints.create-subdir        | true    | Boolean    | 是否要在'state.checkpoints.dir'下创建**由Job ID命名的子目录以存储检查点的数据文件和元数据**。默认为true，可以在相同检查点目录下运行多个作业。 |
+| state.checkpoints.dir                  | (none)  | String     | 用于将检查点的数据文件和元数据存储在flink支持的文件系统中的默认目录。需要支持Taskmanger和Jobmanager访问。 |
+| state.checkpoints.num-retained         | 1       | Integer    | 警告：这是一种高级配置。如果设置为false，则用户必须确保没有使用相同检查点目录运行多个作业，并且在启动新作业时恢复当前作业所需的文件之外，没有其他文件。The maximum number of completed checkpoints to retain. |
+| state.savepoints.dir                   | (none)  | String     | savepoint的存储目录.                                         |
+| state.storage.fs.memory-threshold      | 20 kb   | MemorySize | 状态数据文件的最小大小。小于该值的所有状态块都内联存储在根检查点元数据文件中。此配置的最大内存阈值为1MB。 |
+| state.storage.fs.write-buffer-size     | 4096    | Integer    | 写入文件系统的检查点流的写缓冲区的默认大小。实际写缓冲区大小为该配置和'state.storage.fso.fs.memory-threshold'的最大值。 |
+| taskmanager.state.local.root-dirs      | (none)  | String     | 为本地恢复的存储基于文件的状态定义根目录的配置参数。本地恢复目前仅涵盖键控状态后端。如果未配置，它将默认为<WORKING_DIR>/localState。可以通过`process.taskmanager.working-dir`配置<WORKING_DIR> |
+
+* **设置重启策略**
+  * noRestart
+  * fallBackRestart:回滚
+  * fixedDelayRestart: 固定延迟时间重启策略，在固定时间间隔内重启
+  * failureRateRestart: 失败率重启
+
+##### checkpoint存储目录
+
+* checkpoint由元数据文件、数据文件组成。通过`state.checkpoints.dir`配置元数据文件和数据文件存储路径，也可以在代码中设置。
+
+```shell
+/user-defined-checkpoint-dir
+    /{job-id}
+        |
+        + --shared/
+        + --taskowned/
+        + --chk-1/
+        + --chk-2/
+        + --chk-3/
+        ...
+```
+
+* 其中 **SHARED** 目录保存了可能被多个 checkpoint 引用的文件，**TASKOWNED** 保存了不会被 JobManager 删除的文件，**EXCLUSIVE** 则保存那些仅被单个 checkpoint 引用的文件。
+
+* 从保留的checkpoint中恢复状态
+
+```shell
+$ bin/flink run -s :checkpointMetaDataPath [:runArgs]
+```
+
+### 
+
 ## 容错与状态
 
 ### Checkpoint
@@ -43,97 +149,6 @@
   ![checkpoint1](../img/checkpoint2.jpg)
 
   ![checkpoint1](../img/checkpoint3.jpg)
-
-#### checkpoint配置
-
-* checkpoint默认情况下`仅用于恢复失败的作业，并不保留，当程序取消时checkpoint就会被删除`。可以通过配置来保留checkpoint，保留的checkpoint在作业失败或取消时不会被清除。
-
-* **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
-* **`ExternalizedCheckpointCleanup.DELETE_ON_CANCELLATION`**：当作业取消时，删除作业的 checkpoint。仅当作业失败时，作业的 checkpoint 才会被保留。
-
-```java
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-
-// 每 1000ms 开始一次 checkpoint
-env.enableCheckpointing(1000);
-
-// 高级选项：
-// 设置模式为精确一次 (这是默认值)
-env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
-
-//  各个checkpoint之间最小的暂停时间  500 ms
-env.getCheckpointConfig().setMinPauseBetweenCheckpoints(500);
-
-// Checkpoint 必须在60000ms内完成，否则就会被抛弃
-env.getCheckpointConfig().setCheckpointTimeout(60000);
-
-// 同一时间只允许一个 checkpoint 进行
-env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);
-
-// 开启在 job 中止后仍然保留的 externalized checkpoints
-env.getCheckpointConfig().enableExternalizedCheckpoints(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
-
-// 允许在有更近 savepoint 时回退到 checkpoint
-env.getCheckpointConfig().setPreferCheckpointForRecovery(true);
-
-// 部分任务结束后的 Checkpoint，1.15之后默认为开启，当失败的任务为有限数据源时，不会影响其他正常任务做ck。
-Configuration config = new Configuration();
-config.set(ExecutionCheckpointingOptions.ENABLE_CHECKPOINTS_AFTER_TASKS_FINISH, false);
-StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
-```
-
-* **设置重启策略**
-    * noRestart
-    * fallBackRestart:回滚
-    * fixedDelayRestart: 固定延迟时间重启策略，在固定时间间隔内重启
-    * failureRateRestart: 失败率重启
-
-##### checkpoint存储目录
-
-* checkpoint由元数据文件、数据文件组成。通过`state.checkpoints.dir`配置元数据文件和数据文件存储路径，也可以在代码中设置。
-
-```shell
-/user-defined-checkpoint-dir
-    /{job-id}
-        |
-        + --shared/
-        + --taskowned/
-        + --chk-1/
-        + --chk-2/
-        + --chk-3/
-        ...
-```
-
-* 其中 **SHARED** 目录保存了可能被多个 checkpoint 引用的文件，**TASKOWNED** 保存了不会被 JobManager 删除的文件，**EXCLUSIVE** 则保存那些仅被单个 checkpoint 引用的文件。
-
-* 从保留的checkpoint中恢复状态
-
-```shell
-$ bin/flink run -s :checkpointMetaDataPath [:runArgs]
-```
-
-##### flink-conf容错配置
-
-```yaml
-state.backend: rocksdb
-# 异步checkpoint
-state.backend.async: true
-state.checkpoints.dir: hdfs://hadoop:8020/flink1.11.1/checkpoints
-state.savepoints.dir: hdfs://hadoop:8020/flink1.11.1/savepoints
-state.backend.incremental: true
-# 故障转移策略，默认为region，按照区域恢复
-jobmanager.execution.failover-strategy: region
-# checkpoint文件最小值
-state.backend.fs.memory-threshold: 20kb
-# 写到文件系统的检查点流的写缓冲区的默认大小。实际的写缓冲区大小被确定为这个选项和选项'state.backend.fs.memory-threshold'的最大值。
-state.backend.fs.write-buffer-size: 4096
-# 本地恢复当前仅涵盖键控状态后端。 当前，MemoryStateBackend不支持本地恢复，请忽略此选项。
-state.backend.local-recovery: true
-# 要保留的已完成检查点的最大数量。
-state.checkpoints.num-retained: 1
-# 定义根目录的配置参数，用于存储用于本地恢复的基于文件的状态。本地恢复目前只覆盖键控状态后端。目前，MemoryStateBackend不支持本地恢复并忽略此选项
-taskmanager.state.local.root-dirs: hdfs://hadoop:8020/flink1.11.1/tm/checkpoints
-```
 
 ### savepoint
 
