@@ -79,31 +79,38 @@ env.getCheckpointConfig().enableUnalignedCheckpoints();
   * fixedDelayRestart: 固定延迟时间重启策略，在固定时间间隔内重启
   * failureRateRestart: 失败率重启
 
-##### checkpoint存储目录
+## 配置State Backend
 
-* checkpoint由元数据文件、数据文件组成。通过`state.checkpoints.dir`配置元数据文件和数据文件存储路径，也可以在代码中设置。
+* Flink的checkpoint机制会将timer和stateful的operator进行快照，然后进行存储(connector、windows以及用户自定义的状态)。checkpoint存储在哪里主要根据配置的State Backend决定(Jobmanager memory、file system、database)
 
-```shell
-/user-defined-checkpoint-dir
-    /{job-id}
-        |
-        + --shared/
-        + --taskowned/
-        + --chk-1/
-        + --chk-2/
-        + --chk-3/
-        ...
+```java
+Configuration config = new Configuration();
+config.set(StateBackendOptions.STATE_BACKEND, "hashmap");
+env.configure(config);
 ```
 
-* 其中 **SHARED** 目录保存了可能被多个 checkpoint 引用的文件，**TASKOWNED** 保存了不会被 JobManager 删除的文件，**EXCLUSIVE** 则保存那些仅被单个 checkpoint 引用的文件。
+## 部分任务结束后的 Checkpoint
 
-* 从保留的checkpoint中恢复状态
+* 为了解决1.14版本之前存在的一旦有算子Finished状态后就没办法继续正常Checkpoint，从而导致无法保证Exactly Once语义；
 
-```shell
-$ bin/flink run -s :checkpointMetaDataPath [:runArgs]
-```
+  ```java
+  Configuration config = new Configuration();
+  config.set(ExecutionCheckpointingOptions.ENABLE_CHECKPOINTS_AFTER_TASKS_FINISH, false);
+  StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
+  ```
 
-### 
+* 在这种情况下，结束的任务不会参与 Checkpoint 的过程。在实现自定义的算子或者 UDF （用户自定义函数）时需要考虑这一点
+* 为了支持部分任务结束后的 Checkpoint 操作，我们调整了 [任务的生命周期](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/internals/task_lifecycle/) 并且引入了 [StreamOperator#finish ](https://nightlies.apache.org/flink/flink-docs-release-1.19/api/java//org/apache/flink/streaming/api/operators/StreamOperator.html#finish--)方法。 在这一方法中，用户需要写出所有缓冲区中的数据。在 finish 方法调用后的 checkpoint 中，这一任务一定不能再有缓冲区中的数据，因为在 `finish()` 后没有办法来输出这些数据。 在大部分情况下，`finish()` 后这一任务的状态为空，唯一的例外是如果其中某些算子中包含外部系统事务的句柄（例如为了实现恰好一次语义）， 在这种情况下，在 `finish()` 后进行的 checkpoint 操作应该保留这些句柄，并且在结束 checkpoint（即任务退出前所等待的 checkpoint）时提交。 一个可以参考的例子是满足恰好一次语义的 sink 接口与 `TwoPhaseCommitSinkFunction`。
+
+### 对 operator state 的影响 
+
+* 在部分 Task 结束后的checkpoint中，Flink 对 `UnionListState` 进行了特殊的处理。 `UnionListState` 一般用于实现对外部系统读取位置的一个全局视图（例如，用于记录所有 Kafka 分区的读取偏移）。 如果我们在算子的某个并发调用 `close()` 方法后丢弃它的状态，我们就会丢失它所分配的分区的偏移量信息。 为了解决这一问题，对于使用 `UnionListState` 的算子我们只允许在它的并发都在运行或都已结束的时候才能进行 checkpoint 操作。
+* `ListState` 一般不会用于类似的场景，但是用户仍然需要注意在调用 `close()` 方法后进行的 checkpoint 会丢弃算子的状态并且 这些状态在算子重启后不可用。
+* 任何支持并发修改操作的算子也可以支持部分并发实例结束后的恢复操作。从这种类型的快照中恢复等价于将算子的并发改为正在运行的并发实例数。
+
+### 任务结束前等待最后一次 Checkpoint
+
+* 为了保证使用两阶段提交的算子可以提交所有的数据，任务会在所有算子都调用 `finish()` 方法后等待下一次 checkpoint 成功后退出。 需要注意的是，这一行为可能会延长任务运行的时间，如果 checkpoint 周期比较大，这一延迟会非常明显。 极端情况下，如果 checkpoint 的周期被设置为 `Long.MAX_VALUE`，那么任务永远不会结束，因为下一次 checkpoint 不会进行。
 
 ## 容错与状态
 
@@ -122,16 +129,16 @@ $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
 
 #### 检查点算法
 
-* 一种简单的想法
+* **一种简单的想法**
 
-    * 暂停应用，保存状态到检查点，再重新恢复应用。
+    * 暂停应用，保存状态到检查点，再重新恢复应用，程序存在中断状态
 
-* Flink实现方式
+* **Flink实现方式**
 
     * 基于`Chandy-Lamport`算法的分布式快照
     * 将检查点的保存和数据处理分离开，不暂停整个应用，对Source进行`checkpoint barrier`控制
 
-* 检查点屏障(Checkpoint Barrier)
+* **检查点屏障(Checkpoint Barrier)**
 
     * Flink的检查点算法用到一种称为屏障(barrier)的特殊数据形式，用来把一条流上数据按照不同的检查点分开。
     * Barrier之前到来的数据导致的状态更改，都会被包含在当前分界线所属的检查点中；基于barrier之后的数据导致的所有更改，就会被包含在之后的检查点中。
@@ -139,7 +146,7 @@ $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
 * **检查点barrier流程**
 
     * 有两个输入流的应用程序，并行的两个Source任务来读取，JobManager会向每个Source任务发送一个带有新checkpoint ID的消息，通过这种方式来启动checkpoint。
-    * 数据源将它们的状态写入checkpoint，并发出一个`checkpointbarrier`，状态后端在状态存入checkpoint之后，会返回通知给source任务，source任务就会向JobManager确认checkpoint完成。
+    * 数据源将它们的状态写入checkpoint，并发出一个`checkpoint barrier`，状态后端在状态存入checkpoint之后，会返回通知给source任务，source任务就会向JobManager确认checkpoint完成。
     * **barrier对齐**：barrier向下游传递，sum任务会等待所有输入分区的barrier达到，对于barrier已经到达的分区，继续到达的数据会`被缓存`，而barrier尚未到达的分区，数据会被正常处理。
     * 当收到所有输入分区的barrier时，任务就将其状态保存到`状态后端的checkpoint中`，然后将barrier继续向下游转发，下游继续正常处理数据。
     * Sink任务向JobManager确认状态保存到checkpoint完毕，当所有任务都确认已成功将状态保存到checkpoint时，checkpoint完毕。
@@ -150,7 +157,68 @@ $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
 
   ![checkpoint1](../img/checkpoint3.jpg)
 
-### savepoint
+### 保留 Checkpoint
+
+Checkpoint 在默认的情况下仅用于恢复失败的作业，并不保留，当程序取消时 checkpoint 就会被删除。当然，你可以通过配置来保留 checkpoint，这些被保留的 checkpoint 在作业失败或取消时不会被清除。这样，你就可以使用该 checkpoint 来恢复失败的作业。
+
+```java
+CheckpointConfig config = env.getCheckpointConfig();
+config.setExternalizedCheckpointCleanup(ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+```
+
+`ExternalizedCheckpointCleanup` 配置项定义了当作业取消时，对作业 checkpoint 的操作：
+
+- **`ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION`**：当作业取消时，保留作业的 checkpoint。注意，这种情况下，需要手动清除该作业保留的 checkpoint。
+- **`ExternalizedCheckpointCleanup.DELETE_ON_CANCELLATION`**：当作业取消时，删除作业的 checkpoint。仅当作业失败时，作业的 checkpoint 才会被保留。
+
+#### 目录结构
+
+* 与 [savepoints](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/savepoints/) 相似，checkpoint 由元数据文件、数据文件（与 state backend 相关）组成。可通过配置文件中 'state.checkpoints.dir' 配置项来指定元数据文件和数据文件的存储路径，另外也可以在代码中针对单个作业特别指定该配置项。
+
+```shell
+/user-defined-checkpoint-dir
+    /{job-id}
+        |
+        + --shared/
+        + --taskowned/
+        + --chk-1/
+        + --chk-2/
+        + --chk-3/
+        ...   
+```
+
+* 其中 **SHARED** 目录保存了可能被多个 checkpoint 引用的文件，**TASKOWNED** 保存了不会被 JobManager 删除的文件，**EXCLUSIVE** 则保存那些仅被单个 checkpoint 引用的文件。
+
+#### 通过配置文件全局配置
+
+```yaml
+state.checkpoints.dir: hdfs:///checkpoints/
+```
+
+#### 创建 state backend 对单个作业进行配置
+
+```java
+Configuration config = new Configuration();
+config.set(StateBackendOptions.STATE_BACKEND, "rocksdb");
+config.set(CheckpointingOptions.CHECKPOINT_STORAGE, "filesystem");
+config.set(CheckpointingOptions.CHECKPOINTS_DIRECTORY, "hdfs:///checkpoints-data/");
+env.configure(config);
+```
+
+#### 从保留的checkpoint中恢复状态
+
+```shell
+$ bin/flink run -s :checkpointMetaDataPath [:runArgs]
+```
+
+### 背压下的Checkpointing
+
+* 通常情况下，对齐 Checkpoint 的时长主要受 Checkpointing 过程中的**同步和异步**两个部分的影响。当 Flink 作业正运行在严重的背压下时，Checkpoint 端到端延迟的主要**影响因子将会是传递 Checkpoint Barrier 到所有的算子的时间**。这在 [checkpointing process](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/concepts/stateful-stream-processing/#checkpointing)) 的概述中有说明原因。并且可以通过高 [alignment time and start delay metrics](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/monitoring/checkpoint_monitoring/#history-tab) 观察到。 当这种情况发生并成为一个问题时，有三种方法可以解决这个问题：
+  * 消除背压源头，通过优化 Flink 作业，通过调整 Flink 或 JVM 参数，抑或是通过扩容(增加并行度)。
+  * 减少 Flink 作业中缓冲在 In-flight 数据的数据量（对齐数据）。
+  * 启用非对齐 Checkpoints。 这些选项并不是互斥的，可以组合在一起。
+
+### Savepoint
 
 * Savepoint 由俩部分组成：数据二进制文件的目录（通常很大）和元数据文件（相对较小）。 数据存储的文件表示作业执行状态的数据镜像。 Savepoint 的`元数据文件以（绝对路径）的形式包含（主要）指向作为 Savepoint 一部分的所有数据文件的指针`。
 
