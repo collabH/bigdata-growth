@@ -218,14 +218,95 @@ $ bin/flink run -s :checkpointMetaDataPath [:runArgs]
   * 减少 Flink 作业中缓冲在 In-flight 数据的数据量（对齐数据）。
   * 启用非对齐 Checkpoints。 这些选项并不是互斥的，可以组合在一起。
 
+#### 缓冲区Debloating
+
+* Flink 1.14 引入了一个新的工具，用于自动控制在 Flink 算子/子任务之间缓冲的 **In-flight 数据的数据量**。缓冲区 Debloating 机制可以通过将属性`taskmanager.network.memory.buffer-debloat.enabled`设置为`true`来启用。
+* 此特性**对对齐和非对齐 Checkpoint 都生效**，并且在这两种情况下**都能缩短 Checkpointing 的时间**，不过 Debloating 的效果对于 对齐 Checkpoint 最明显。 当在非对齐 Checkpoint 情况下使用缓冲区 Debloating 时，额外的好处是 Checkpoint 大小会更小，并且恢复时间更快 (需要保存 和恢复的 In-flight 数据更少)。
+* 有关缓冲区 Debloating 功能如何工作以及如何配置的更多信息，可以参考 [network memory tuning guide](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/memory/network_mem_tuning/)。 
+
+#### 非对齐Checkpoints
+
+* 从**Flink 1.11**开始，Checkpoint 可以是非对齐的。 [Unaligned checkpoints](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/concepts/stateful-stream-processing/#unaligned-checkpointing) 包含 In-flight 数据(例如，存储在缓冲区中的数据)作为 Checkpoint State的一部分，允许 Checkpoint Barrier 跨越这些缓冲区。因此， Checkpoint 时长变得与当前吞吐量无关，因为 Checkpoint Barrier 实际上已经不再嵌入到数据流当中。
+* 如果您的 Checkpointing 由于背压导致周期非常的长，您应该使用非对齐 Checkpoint。这样，Checkpointing 时间基本上就与端到端延迟无关。请注意，非对齐 Checkpointing 会增加状态存储的 I/O，因此当状态存储的 I/O 是整个 Checkpointing 过程当中真正的瓶颈时，您不应当使用非对齐 Checkpointing。
+* 为了启用非对齐 Checkpoint，您可以：
+
+```java
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+// 启用非对齐 Checkpoint
+env.getCheckpointConfig().enableUnalignedCheckpoints();
+```
+
+* 或者在 `flink-conf.yml` 配置文件中增加配置：
+
+```yaml
+execution.checkpointing.unaligned: true
+```
+
+##### 对齐Checkpoint的超时
+
+* 在启用非对齐 Checkpoint 后，你依然可以通过编程的方式指定对齐 Checkpoint 的超时：
+
+```java
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.getCheckpointConfig().setAlignedCheckpointTimeout(Duration.ofSeconds(30));
+```
+
+* 或是在 `flink-conf.yml` 配置文件中配置：
+
+```yaml
+execution.checkpointing.aligned-checkpoint-timeout: 30 s
+```
+
+* 在启动时，每个 Checkpoint 仍然是 aligned checkpoint，但是当全局 Checkpoint 持续时间超过 `aligned-checkpoint-timeout` 时， 如果 aligned checkpoint 还没完成，那么 Checkpoint 将会转换为 Unaligned Checkpoint。
+
+##### 限制
+
+###### 并发 Checkpoint
+
+* Flink 当前并不支持并发的非对齐 Checkpoint。然而，由于更可预测的和更短的 Checkpointing 时长，可能也根本就不需要并发的 Checkpoint。此外，Savepoint 也不能与非对齐 Checkpoint 同时发生，因此它们将会花费稍长的时间。
+
+###### 与 Watermark 的相互影响
+
+* 非对齐 Checkpoint 在恢复的过程中改变了关于 Watermark 的一个隐式保证。目前，Flink 确保了 Watermark 作为恢复的第一步， 而不是将最近的 Watermark 存放在 Operator 中，以方便扩缩容。在非对齐 Checkpoint 中，这意味着当恢复时，**Flink 会在恢复 In-flight 数据后再生成 Watermark**。如果您的 Pipeline 中使用了**对每条记录都应用最新的 Watermark 的算子**将会相对于使用对齐 Checkpoint产生**不同的结果**。如果您的 Operator 依赖于最新的 Watermark 始终可用，解决办法是将 Watermark 存放在 OperatorState 中。在这种情况下，Watermark 应该使用单键 group 存放在 UnionState 以方便扩缩容。
+
 ### Savepoint
 
 * Savepoint 由俩部分组成：数据二进制文件的目录（通常很大）和元数据文件（相对较小）。 数据存储的文件表示作业执行状态的数据镜像。 Savepoint 的`元数据文件以（绝对路径）的形式包含（主要）指向作为 Savepoint 一部分的所有数据文件的指针`。
 
 #### 与checkpoint的区别
 
-* **checkpoint**类似于恢复日志的概念(redolog), Checkpoint 的主要目的是`为意外失败的作业提供恢复机制`。 Checkpoint 的生命周期由 Flink 管理，即 Flink 创建，管理和删除 Checkpoint - 无需用户交互。 作为一种恢复和定期触发的方法，Checkpoint 实现有两个设计目标：`i）轻量级创建和 ii）尽可能快地恢复`。
-* Savepoint 由用户创建，拥有和删除。 通过手动备份和恢复,恢复成本相对于checkpoint会更高一些，相对checkpoint更重量一些。
+* **Checkpoint**类似于恢复日志的概念(redo log)，Checkpoint 的主要目的是`为意外失败的作业提供恢复机制`。 Checkpoint 的生命周期由 Flink 管理，即 Flink 创建、管理和删除 Checkpoint无需用户交互。 作为一种恢复和定期触发的方法，Checkpoint 实现有两个设计目标：`i）轻量级创建和 ii）尽可能快地恢复`。
+* Savepoint 由用户创建、拥有和删除。 通过手动备份和恢复，恢复成本相对于checkpoint会更高一些，相对checkpoint更重量一些。
+* Savepoint和Checkpoint的区别
+  * ✓ - Flink 完全支持这种类型的快照
+  * x - Flink 不支持这种类型的快照
+  * ! - 虽然这些操作目前有效，但 Flink 并未正式保证对它们的支持，因此它们存在一定程度的风险
+
+
+| 操作                     | 标准 Savepoint | 原生 Savepoint | 对齐 Checkpoint | 非对齐 Checkpoint |
+| :----------------------- | :------------- | :------------- | :-------------- | :---------------- |
+| 更换状态后端             | ✓              | x              | x               | x                 |
+| State Processor API (写) | ✓              | x              | x               | x                 |
+| State Processor API (读) | ✓              | !              | !               | x                 |
+| 自包含和可移动           | ✓              | ✓              | x               | x                 |
+| Schema 变更              | ✓              | !              | !               | !                 |
+| 任意 job 升级            | ✓              | ✓              | ✓               | x                 |
+| 非任意 job 升级          | ✓              | ✓              | ✓               | ✓                 |
+| Flink 小版本升级         | ✓              | ✓              | ✓               | x                 |
+| Flink bug/patch 版本升级 | ✓              | ✓              | ✓               | ✓                 |
+| 扩缩容                   | ✓              | ✓              | ✓               | ✓                 |
+
+- [更换状态后端](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/) - 配置与创建快照时使用的不同的状态后端。
+- [State Processor API (写)](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/libs/state_processor_api/#writing-new-savepoints) - 通过 State Processor API 创建这种类型的新快照的能力。
+- [State Processor API (读)](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/libs/state_processor_api/#reading-state) - 通过 State Processor API 从该类型的现有快照中读取状态的能力。
+- 自包含和可移动 - 快照目录包含从该快照恢复所需的所有内容，并且不依赖于其他快照，这意味着如果需要的话，它可以轻松移动到另一个地方。
+- [Schema 变更](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/datastream/fault-tolerance/serialization/schema_evolution/) - 如果使用支持 Schema 变更的序列化器（例如 POJO 和 Avro 类型），则可以更改*状态*数据类型。
+- 任意 job 升级 - 即使现有算子的 [partitioning 类型](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/datastream/operators/overview/#physical-partitioning)（rescale, rebalance, map, 等）或运行中数据类型已经更改，也可以从该快照恢复。
+- 非任意 job 升级 - 如果作业图拓扑和运行中数据类型保持不变，则可以使用变更后的 operator 恢复快照。
+- Flink 小版本升级 - 从更旧的 Flink 小版本创建的快照恢复（1.x → 1.y）。
+- Flink bug/patch 版本升级 - 从更旧的 Flink 补丁版本创建的快照恢复（1.14.x → 1.14.y）。
+- 扩缩容 - 使用与快照制作时不同的并发度从该快照恢复。
 
 #### 分配算子ID
 
@@ -241,14 +322,99 @@ datasource.uid("network-source").map(new WordCountMapFunction())
                 .print().setParallelism(1);
 ```
 
-#### savepoint操作
+##### Savepoint状态
 
-* 触发savepoint,`flink savepoint :jobId [:targetDirctory]`
-* 使用YARN触发Savepoint,`flink savepoint :jobId [:targetDirctory] -yid :yarnAppId`
-* 使用savepoint取消作业,`flink cancel -s [:targetDirectory] :jobId`
-* 从savepoint恢复,`flink run -s :savepointPath [:runArgs]`
-    * --allowNoRestoredState 跳过无法映射到新程序的状态
-* 删除savepoint,`flink savepoint -d :savepointPath`
+* 你可以将 Savepoint 想象为每个有状态的算子保存一个映射“**算子 ID ->状态**”:
+
+```plain
+Operator ID | State
+------------+------------------------
+source-id   | State of StatefulSource
+mapper-id   | State of StatefulMapper
+```
+
+在上面的示例中，print sink 是无状态的，因此不是 Savepoint 状态的一部分。默认情况下，我们尝试将 Savepoint 的每个条目映射回新程序。
+
+#### 触发Savepoint操作
+
+* 触发Savepoint
+
+```shell
+$ bin/flink savepoint :jobId [:targetDirectory]
+# 这将触发 ID 为 :jobId 的作业的 Savepoint，并返回创建的 Savepoint 路径。 你需要此路径来恢复和删除 Savepoint 。你也可以指定创建 Savepoint 的格式。如果没有指定，会采用标准格式创建 Savepoint。
+$ bin/flink savepoint --type [native/canonical] :jobId [:targetDirectory]
+# 使用上述命令触发savepoint时，client需要等待savepoint制作完成，因此当任务的状态较大时，可能会导致client出现超时的情况。在这种情况下可以使用detach模式来触发savepoint。
+$ bin/flink savepoint :jobId [:targetDirectory] -detached
+# 使用该命令时，client拿到本次savepoint的trigger id后立即返回，可以通过REST API来监控本次savepoint的制作情况。
+```
+
+* 使用YARN触发Savepoint
+
+```shell
+$ bin/flink savepoint :jobId [:targetDirectory] -yid :yarnAppId
+# 这将触发 ID 为 :jobId 和 YARN 应用程序 ID :yarnAppId 的作业的 Savepoint，并返回创建的 Savepoint 的路径。
+```
+
+* 使用Savepoint停止作业
+
+```shell
+$ bin/flink stop --type [native/canonical] --savepointPath [:targetDirectory] :jobId
+# 这将自动触发 ID 为 :jobid 的作业的 Savepoint，并停止该作业。此外，你可以指定一个目标文件系统目录来存储 Savepoint 。该目录需要能被 JobManager(s) 和 TaskManager(s) 访问。你也可以指定创建 Savepoint 的格式。如果没有指定，会采用标准格式创建 Savepoint。如果你想使用detach模式触发Savepoint，在命令行后添加选项-detached即可。
+```
+
+* 从Savepoint恢复
+
+```shell
+$ bin/flink run -s :savepointPath [:runArgs]
+# 跳过跳过无法映射的状态恢复
+默认情况下，resume 操作将尝试将 Savepoint 的所有状态映射回你要还原的程序。 如果删除了运算符，则可以通过 --allowNonRestoredState（short：-n）选项跳过无法映射到新程序的状态：
+# Restore 模式
+Restore模式决定了在 restore 之后谁拥有Savepoint 或者 externalized checkpoint的文件的所有权。在这种语境下 Savepoint 和 externalized checkpoint 的行为相似。 这里我们将它们都称为“快照”，除非另有明确说明。
+如前所述，restore 模式决定了谁来接管我们从中恢复的快照文件的所有权。快照可被用户或者 Flink 自身拥有。如果快照归用户所有，Flink 不会删除其中的文件，而且 Flink 不能依赖该快照中文件的存在，因为它可能在 Flink 的控制之外被删除。
+每种 restore 模式都有特定的用途。尽管如此，我们仍然认为默认的 NO_CLAIM 模式在大多数情况下是一个很好的折中方案，因为它在提供明确的所有权归属的同时只给恢复后第一个 checkpoint 带来较小的代价。
+你可以通过如下方式指定 restore 模式：
+$ bin/flink run -s :savepointPath -restoreMode :mode -n [:runArgs]
+```
+
+* 删除savepoint
+
+```shell
+$ bin/flink savepoint -d :savepointPath
+```
+
+##### **Savepoint存储结构**
+
+```shell
+# Savepoint 目标目录
+/savepoint/
+
+# Savepoint 目录
+/savepoint/savepoint-:shortjobid-:savepointid/
+
+# Savepoint 文件包含 Checkpoint元数据
+/savepoint/savepoint-:shortjobid-:savepointid/_metadata
+
+# Savepoint 状态
+/savepoint/savepoint-:shortjobid-:savepointid/...
+```
+
+##### Savepoint格式
+
+- **标准格式** - 一种在所有 state backends 间统一的格式，允许你使用一种状态后端创建 savepoint 后，使用另一种状态后端恢复这个 savepoint。这是最稳定的格式，旨在与之前的版本、模式、修改等保持最大兼容性。
+- **原生格式** - 标准格式的缺点是它的创建和恢复速度通常很慢。原生格式以特定于使用的状态后端的格式创建快照（例如 RocksDB 的 SST 文件）。
+
+> 以原生格式创建 savepoint 的能力在 Flink 1.15 中引入，在那之前 savepoint 都是以标准格式创建的。
+
+#### 配置
+
+你可以通过 `state.savepoints.dir` 配置 savepoint 的默认目录。 触发 savepoint 时，将使用此目录来存储 savepoint。 你可以通过使用触发器命令指定自定义目标目录来覆盖缺省值（请参阅[`:targetDirectory`参数](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/savepoints/#触发-savepoint-1)）。
+
+```yaml
+# 默认 Savepoint 目标目录
+state.savepoints.dir: hdfs:///flink/savepoints
+```
+
+如果既未配置缺省值也未指定自定义目标目录，则触发 Savepoint 将失败。
 
 ### 状态快照
 
