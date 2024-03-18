@@ -420,23 +420,70 @@ state.savepoints.dir: hdfs:///flink/savepoints
 
 #### 概念
 
-- *快照* – 是 Flink 作业状态全局一致镜像的通用术语。快照包括指向每个数据源的指针（例如，数据文件或 Kafka 分区的偏移量）以及每个作业的有状态运算符的状态副本，该状态副本是处理了 sources 偏移位置之前所有的事件后而生成的状态。
+- *快照* – 是 Flink 作业状态全局一致镜像的通用术语。快照包括指向每个数据源的指针（例如，数据文件或 Kafka 分区的偏移量）以及每个作业的有状态operator的状态副本，该状态副本是处理了 sources 偏移位置之前所有的事件后而生成的状态。
 - *Checkpoint* – 一种由 Flink 自动执行的快照，其目的是能够从故障中恢复。Checkpoints 可以是增量的，并为快速恢复进行了优化。
 - *外部化的 Checkpoint* – 通常 checkpoints 不会被用户操纵。Flink 只保留作业运行时的最近的 *n* 个 checkpoints（*n* 可配置），并在作业取消时删除它们。但你可以将它们配置为保留，在这种情况下，你可以手动从中恢复。
 - *Savepoint* – 用户出于某种操作目的（例如有状态的重新部署/升级/缩放操作）手动（或 API 调用）触发的快照。Savepoints 始终是完整的，并且已针对操作灵活性进行了优化
 
-#### 原理
+#### Checkpoint Barrier原理
 
-* 基于异步barrier快照(asynchronous barrier snapshotting),当 checkpoint coordinator（job manager 的一部分）指示 taskManager开始checkpoint 时，它会让所有 sources 记录它们的偏移量，并将编号的 *checkpoint barriers* 插入到它们的流中。这些 barriers 流经 job graph，标注每个 checkpoint 前后的流部分。
+* 基于异步barrier快照(asynchronous barrier snapshotting),当 checkpoint coordinator（job manager 的一部分）指示 taskManager开始checkpoint 时，它会让所有 sources 记录它们的偏移量，并将 *checkpoint barriers* 的编号插入到它们的流中。这些 barriers 流经 job graph，标注每个 checkpoint 前后的流部分。
 
-![Checkpoint barriers are inserted into the streams](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream_barriers.svg)
+![Checkpoint barriers are inserted into the streams](../img/stream_barriers.svg)
 
-* barrier对齐机制
+* **barrier对齐机制**
 
-![Barrier alignment](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/stream_aligning.svg)
+![Barrier alignment](../img/stream_aligning.svg)
 
 * 图中先到达的checkpoint barrier会将后续数据放入到buffers中，后续进行下一次checkpoint时辉县将buffer数据进行对齐。
 * Flink 的 state backends 利用写时复制（copy-on-write）机制允许当异步生成旧版本的状态快照时，能够不受影响地继续流处理。只有当快照被持久保存后，这些旧版本的状态才会被当做垃圾回收。
+
+### State Backends
+
+* 用 [Data Stream API](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/datastream/overview/) 编写的程序通常以各种形式保存状态：
+
+  - 在 Window 触发之前要么收集元素、要么聚合
+
+  - 转换函数可以使用 key/value 格式的状态接口来存储状态
+
+  - 转换函数可以实现 `CheckpointedFunction` 接口，使其本地变量具有容错能力
+
+* 在启动 CheckPoint 机制时，状态会随着 CheckPoint 而持久化，以防止数据丢失、保障恢复时的一致性。 状态内部的存储格式、状态在 CheckPoint 时如何持久化以及持久化在哪里均取决于选择的 **State Backend**。
+
+#### 可用的State Backends
+
+##### HashMapStateBackend
+
+* Flink默认状态后端，在 *HashMapStateBackend* 内部，数据以 Java 对象的形式存储在堆中。 Key/value 形式的状态和窗口算子会持有一个 hash table，其中存储着状态值、触发器。
+
+* **HashMapStateBackend 的适用场景：**
+
+  - 有较大 state，较长 window 和较大 key/value 状态的 Job。
+
+  - 所有的高可用场景。
+
+* 建议同时将 [managed memory](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/memory/mem_setup_tm/#managed-memory) 设为0，以保证将最大限度的内存分配给 JVM 上的用户代码。
+
+**注意：**由于 HashMapStateBackend 将数据以对象形式存储在堆中，因此重用这些对象数据是不安全的。
+
+##### EmbeddedRocksDBStateBackend
+
+* EmbeddedRocksDBStateBackend 将正在运行中的状态数据保存在 [RocksDB](http://rocksdb.org/) 数据库中，RocksDB 数据库默认将数据存储在 TaskManager 的数据目录。 不同于 `HashMapStateBackend` 中的 java 对象，数据被以序列化字节数组的方式存储，这种方式由序列化器决定，因此 key 之间的比较是以字节序的形式进行而不是使用 Java 的 `hashCode` 或 `equals()` 方法。
+* EmbeddedRocksDBStateBackend 会使用异步的方式生成 snapshots。
+* **EmbeddedRocksDBStateBackend 的局限：**
+  - 由于 RocksDB 的 JNI API 构建在 byte[] 数据结构之上, 所以每个 key 和 value 最大支持 2^31 字节。 RocksDB 合并操作的状态（例如：ListState）累积数据量大小可以超过 2^31 字节，但是会在下一次获取数据时失败。这是当前 RocksDB JNI 的限制。
+
+* **EmbeddedRocksDBStateBackend 的适用场景**：
+
+  - 状态非常大、窗口非常长、key/value 状态非常大的 Job。
+
+  - 所有高可用的场景。
+
+**注意：**可以保留的状态大小仅受磁盘空间的限制。与状态存储在内存中的 HashMapStateBackend 相比，EmbeddedRocksDBStateBackend 允许存储非常大的状态。 然而，这也意味着使用 EmbeddedRocksDBStateBackend 将会使应用程序的最大吞吐量降低。 所有的读写都必须序列化、反序列化操作，这个比基于堆内存的 state backend 的效率要低很多。 同时因为存在这些序列化、反序列化操作，重用放入 EmbeddedRocksDBStateBackend 的对象是安全的。
+
+* EmbeddedRocksDBStateBackend 是目前唯一支持增量 CheckPoint 的 State Backend。
+* 可以使用一些 RocksDB 的本地指标(metrics)，但默认是关闭的。你能在 [这里](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/config/#rocksdb-native-metrics) 找到关于 RocksDB 本地指标的文档。
+* 每个 slot 中的 RocksDB instance 的内存大小是有限制的，详情请见 [这里](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/large_state_tuning/)。
 
 ### 大状态与Checkpoint优化
 
