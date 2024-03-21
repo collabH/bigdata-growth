@@ -485,6 +485,141 @@ state.savepoints.dir: hdfs:///flink/savepoints
 * 可以使用一些 RocksDB 的本地指标(metrics)，但默认是关闭的。你能在 [这里](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/config/#rocksdb-native-metrics) 找到关于 RocksDB 本地指标的文档。
 * 每个 slot 中的 RocksDB instance 的内存大小是有限制的，详情请见 [这里](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/large_state_tuning/)。
 
+#### 选择适合的State Backends
+
+* 在选择 `HashMapStateBackend` 和 `RocksDB` 的时候，其实就是在性能与可扩展性之间权衡。`HashMapStateBackend` 是非常快的，因为每个状态的读取和算子对于 objects 的更新都是在 Java 的 heap 上；但是状态的大小受限于集群中可用的内存。 另一方面，`RocksDB` 可以根据可用的 disk 空间扩展，并且只有它支持增量 snapshot。 然而，每个状态的读取和更新都需要(反)序列化，而且在 disk 上进行读操作的性能可能要比基于内存的 state backend 慢一个数量级。
+
+#### 设置State Backend
+
+* 如果没有指定特定State Backend，Flink默认使用`jobmanager`作为默认State Backend，可以通过在`flink-conf.yaml`配置文件中来指定全局State Backend，也可以在Flink作业中配置，配置JOB粒度状态后端
+
+##### 设置每个 Job 的 State Backend
+
+```java
+// 配置hashmap 内存方式作为state backend
+Configuration config = new Configuration();
+config.set(StateBackendOptions.STATE_BACKEND, "hashmap");
+env.configure(config);
+```
+
+* 如果需要在IDE中使用EmbeddedRocksDBStateBackend，需要引入rocksdb的依赖
+
+```xml
+<dependency>
+    <groupId>org.apache.flink</groupId>
+    <artifactId>flink-statebackend-rocksdb</artifactId>
+    <version>1.19.0</version>
+    <scope>provided</scope>
+</dependency>
+```
+
+##### 设置默认的（全局的） State Backend
+
+* 在 [Flink 配置文件](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/config/#flink-配置文件) 可以通过键 `state.backend.type` 设置默认的 State Backend。
+* 可选值包括 *jobmanager* (HashMapStateBackend), *rocksdb* (EmbeddedRocksDBStateBackend)， 或使用实现了 state backend 工厂 [StateBackendFactory ](https://github.com/apache/flink/blob/release-1.19/flink-runtime/src/main/java/org/apache/flink/runtime/state/StateBackendFactory.java)的类的全限定类名， 例如： EmbeddedRocksDBStateBackend 对应为 `org.apache.flink.contrib.streaming.state.EmbeddedRocksDBStateBackendFactory`。
+* `state.checkpoints.dir` 选项指定了所有 State Backend 写 CheckPoint 数据和元数据文件的目录。具体配置如下：
+
+```yaml
+# 用于存储 operator state 快照的 State Backend
+state.backend: hashmap
+# 存储快照的目录
+state.checkpoints.dir: hdfs://namenode:40010/flink/checkpoints
+```
+
+#### RocksDb State Backend进阶
+
+##### 增量快照
+
+* RocksDB 支持*增量快照*。不同于产生一个包含**所有数据的全量备份**，增量快照中**只包含自上一次快照完成之后被修改的记录**，因此可以显著减少快照完成的耗时。
+* 一个增量快照是**基于（通常多个）前序快照构建的**。由于 RocksDB 内部**存在 compaction 机制对 sst 文件进行合并**，Flink 的增量快照也会定期重新设立起点（rebase），因此增量链条不会一直增长，旧快照包含的文件也会逐渐过期并被自动清理。
+* 如何于全量快照的恢复时间相比，如果**网络带宽是瓶颈**，那么基于增量快照恢复**可能会消耗更多时间**，因为增量快照**包含的 sst 文件之间可能存在数据重叠导致需要下载的数据量变大(读放大)**；而**当 CPU 或者 IO 是瓶颈**的时候，基于增量快照恢复会更快，因为从增量快照恢复不需要解析 Flink 的统一快照格式来重建本地的 RocksDB 数据表，而是可以直接基于 sst 文件加载。
+* 虽然状态数据量很大时我们推荐使用增量快照，但这并不是默认的快照机制，您需要通过下述配置手动开启该功能：
+  - 在 [Flink 配置文件](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/config/#flink-配置文件) 中设置：`state.backend.incremental: true` 或者在代码中按照右侧方式配置（来覆盖默认配置）：`EmbeddedRocksDBStateBackend backend = new EmbeddedRocksDBStateBackend(true);`
+
+**注意**，一旦启用了增量快照，网页上展示的 `Checkpointed Data Size` 只代表增量上传的数据量，而不是一次快照的完整数据量。
+
+##### 内存管理
+
+* Flink通过控制整体进程的内存消耗，来确保Flink的TaskManger的内存保障，从而既不会在容器（Docker/Kubernetes, Yarn等）环境中由于**内存超用被杀掉**，也不会因为内存利用率过低导致不必要的数据落盘或是缓存命中率下降，致使性能下降。
+* Flink默认将 RocksDB 的**可用内存配置为任务管理器的单槽（per-slot）托管内存量**，如果需要调整内存只需要简单的增加 Flink 的托管内存即可改善内存相关性能问题。
+* 可以手动为 RocksDB 的每个列族（ColumnFamily）分配内存（**每个算子的每个 state 都对应一个列族**）。请参阅 [large state tuning](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/large_state_tuning/#tuning-rocksdb-memory) 了解有关大状态数据性能调优的一些指导原则。
+
+**RocksDB 使用托管内存**
+
+* Rocksdb使用托管内存默认是打开，可以通过 `state.backend.rocksdb.memory.managed` 来配置
+
+* Flink 并不直接控制 RocksDB 的 native 内存分配，而是通过配置 RocksDB 来确保其使用的内存正好与 Flink 的托管内存预算相同。这是在任务槽（per-slot）级别上完成的（**托管内存以任务槽为粒度计算**）。一个slot一块Rocksdb托管内存
+
+* 为了设置 RocksDB 实例的总内存使用量，Flink 对同一个任务槽上的所有 RocksDB 实例使用共享的 [cache](https://github.com/facebook/RocksDB/wiki/Block-cache) 以及 [write buffer manager](https://github.com/facebook/rocksdb/wiki/write-buffer-manager)。 共享 cache 将对 RocksDB 中内存消耗的[三个主要来源](https://github.com/facebook/rocksdb/wiki/Memory-usage-in-rocksdb)（块缓存、索引和bloom过滤器、MemTables）设置上限。
+
+* Flink还提供了两个参数来控制*写路径*（MemTable）和*读路径*（索引及过滤器，读缓存）之间的内存分配。当您看到 RocksDB 由于缺少写缓冲内存（频繁刷新）或读缓存未命中而性能不佳时，可以使用这些参数调整读写间的内存分配。
+
+  - `state.backend.rocksdb.memory.write-buffer-ratio`，默认值 `0.5`，即 50% 的给定内存会分配给写缓冲区使用。
+
+  - `state.backend.rocksdb.memory.high-prio-pool-ratio`，默认值 `0.1`，即 10% 的 block cache 内存会优先分配给索引及过滤器。 我们强烈建议不要将此值设置为零，以防止索引和过滤器被频繁踢出缓存而导致性能问题。此外，我们默认将L0级的过滤器和索引将被固定到缓存中以提高性能，更多详细信息请参阅 [RocksDB 文档](https://github.com/facebook/rocksdb/wiki/Block-Cache#caching-index-filter-and-compression-dictionary-blocks)。
+
+**注意：**上述机制开启时将覆盖用户在 [`PredefinedOptions`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#predefined-per-columnfamily-options) 和 [`RocksDBOptionsFactory`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#passing-options-factory-to-rocksdb) 中对 block cache 和 write buffer 进行的配置。
+
+**注意：** *仅面向专业用户*：若要手动控制内存，可以将 `state.backend.rocksdb.memory.managed` 设置为 `false`，并通过 [`ColumnFamilyOptions`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#passing-options-factory-to-rocksdb) 配置 RocksDB。 或者可以复用上述 cache/write-buffer-manager 机制，但将内存大小设置为与 Flink 的托管内存大小无关的固定大小（通过 `state.backend.rocksdb.memory.fixed-per-slot`/`state.backend.rocksdb.memory.fixed-per-tm` 选项）。 注意在这两种情况下，用户都需要确保在 JVM 之外有足够的内存可供 RocksDB 使用。
+
+#### 计时器(内存vsRocksDB)
+
+* 计时器（Timer）用于安排稍后的操作（基于事件时间或处理时间），例如触发窗口或回调 `ProcessFunction`。
+* 当选择 RocksDB 作为 State Backend 时，默认情况下**计时器也存储在 RocksDB中** 。这是一种健壮且可扩展的方式，允许应用程序使用很多个计时器。另一方面，在 RocksDB 中维护计时器会有一定的成本，因此 Flink 也提供了将计时器存储在 JVM 堆上而使用 RocksDB 存储其他状态的选项。当计时器数量较少时，基于堆的计时器可以有更好的性能。
+* 您可以通过将 `state.backend.rocksdb.timer-service.factory` 配置项设置为 `heap`（而不是默认的 `rocksdb`）来将计时器存储在堆上。
+
+**注意：** *在 RocksDB state backend 中使用基于堆的计时器的组合当前不支持计时器状态的异步快照。其他状态（如 keyed state）可以被异步快照。*
+
+#### 开启RocksDB原生监控指标配置
+
+* 具体查看文档 [开启 RocksDB 原生监控指标](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#开启-rocksdb-原生监控指标)
+
+#### Changlog
+
+* Changlog Checkpoint用于减少Checkpoint的耗时，以此来解决Exactly Once模式下端到端的延迟；一般情况下 checkpoint 的持续时间受如下因素影响：
+  * Barrier 到达和对齐时间，可以通过 [Unaligned checkpoints](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/checkpointing_under_backpressure/#unaligned-checkpoints) 和 [Buffer debloating](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/checkpointing_under_backpressure/#buffer-debloating) 解决。
+  * 快照制作时间（所谓同步阶段）, 可以通过异步快照解决（如[上文](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#the-embeddedrocksdbstatebackend)所述）。
+  * 快照上传时间（异步阶段）。
+* 可以使用增量Checkpoint来解决上传快照耗时的问题，目前支持增量Checkpoint的状态后端为Rocksdb，后台需要定期Compaction来合并底层的SST文件，这会导致除了新的变更之外还要重新上传旧状态。在大规模部署中，每次 checkpoint 中至少有一个 task 上传大量数据的可能性往往非常高。
+* 开启Changlog后Flink会不断的上传状态变更形成changlog，创建Checkpoint后只有changlog相关的状态才会被上传，而配置的状态后端则会定期在后台进行快照，快照成功上传后，相关的changelog 将会被截断。
+* 异步阶段的持续时间减少（另外因为不需要将数据刷新到磁盘，同步阶段持续时间也减少了），特别是长尾延迟得到了改善。同时，还可以获得一些其他好处：
+  * 更稳定、更低的端到端时延。
+  * Failover 后数据重放更少。
+  * 资源利用更加稳定。
+* 但是，资源使用会变得更高：
+  - 将会在 DFS 上创建更多文件
+  - 将使用更多的 IO 带宽用来上传状态变更
+  - 将使用更多 CPU 资源来序列化状态变更
+  - Task Managers 将会使用更多内存来缓存状态变更
+* Changelog 增加了少量的日常 CPU 和网络带宽资源使用， 但会降低峰值的 CPU 和网络带宽使用量。
+* 另一项需要考虑的事情是恢复时间。取决于 `state.backend.changelog.periodic-materialize.interval` 的设置，changelog 可能会变得冗长，因此重放会花费更多时间。即使这样，恢复时间加上 checkpoint 持续时间仍然可能低于不开启 changelog 功能的时间，从而在故障恢复的情况下也能提供更低的端到端延迟。当然，取决于上述时间的实际比例，有效恢复时间也有可能会增加。
+
+##### 配置
+
+* 全局配置
+
+```yaml
+state.backend.changelog.enabled: true
+state.backend.changelog.storage: filesystem # 当前只支持 filesystem 和 memory（仅供测试用）
+dstl.dfs.base-path: s3://<bucket-name> # 类似于 state.checkpoints.dir
+# 需要设置为默认值
+execution.checkpointing.max-concurrent-checkpoints: 1
+
+```
+
+* 单个JOB粒度
+
+```java
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+env.enableChangelogStateBackend(true);
+```
+
+##### 限制
+
+* 最多同时创建一个 checkpoint
+* 到 Flink 1.15 为止, 只有 filesystem changelog 实现可用
+* 尚不支持 NO_CLAIM 模式
+
 ### 大状态与Checkpoint优化
 
 * checkpoint时间过长导致反压问题
