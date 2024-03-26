@@ -622,41 +622,220 @@ env.enableChangelogStateBackend(true);
 
 ### 大状态与Checkpoint优化
 
-* checkpoint时间过长导致反压问题
+Flink应用想在大规模场景下可靠运行需要俩个条件：
 
-```shell
-# checkpoint开始的延迟时间
-checkpoint_start_delay = end_to_end_duration - synchronous_duration - asynchronous_duration
-```
+* 应用能够可靠地的创建Checkpoints
+* 在应用故障后，需要有足够的资源追赶数据输入流
 
-* 在对齐期间缓冲的数据量，对于exactly-once语义，Flink将接收多个输入流的操作符中的流进行对齐，并缓冲一些数据以实现对齐。理想情况下，缓冲的数据量较低和较高的缓冲量意味着不同的输入流在不同的时间接收检查点屏障。
+#### 监控状态和Checkpoints
 
-#### 优化Chckpoint
+* 可以通过Flink应用UI的Checkpoint部分监控Checkpoint状态，可以通过 [监控 Checkpoint](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/monitoring/checkpoint_monitoring/) 文档来了解具体的监控指标
+* 以下俩个指标都可以在UI的Checkpoint部分查看
+  * 算子收到第一个 checkpoint barrier 的时间。当触发 checkpoint 的耗费时间一直很高时，这意味着 *checkpoint barrier* 需要很**长时间才能从 source 到达 operators**。 这通常表明系统处于**反压下运行**。
+  * **Alignment Duration**，为**处理第一个和最后一个 checkpoint barrier 之间的时间**。在 unaligned checkpoints 下，`exactly-once` 和 `at-least-once` checkpoints 的 subtasks 处理来自上游 subtasks 的所有数据，且没有任何中断。 然而，对于 aligned `exactly-once` checkpoints，已经收到 checkpoint barrier 的通道被阻止继续发送数据，直到所有剩余的通道都赶上并接收它们的 checkpoint barrier（对齐时间）。
+* 理想状态下，上述俩个值都比较低，当出现较高的值意味着存在反压(没有足够的资源来处理传入数据)，导致Checkpoint barriers在作业中的移动速度较慢，可以通过处理记录的端到端延迟来观察到。unaligned checkpoints可以加快Checkpoint barriers的传播但是这并不能解决导致反压的根本(端到端记录延迟仍然很高)。
 
-* checkpoint触发的正常间隔可以在程序配置，当一个检查点完成的时间长于检查点间隔时，下一个检查点在进程中的检查点完成之前不会被触发。默认情况下，下一个checkpoint点将在当前checkpoint完成后立即触发。
-* 当检查点花费的时间经常超过基本间隔时(例如，由于状态增长超过了计划，或者检查点存储的存储空间暂时变慢)，系统就会不断地接受检查点(一旦进行，一旦完成，就会立即启动新的检查点)。这可能意味着太多的资源被持续地占用在检查点上，而算子的进展太少。此行为对使用异步检查点状态的流应用程序影响较小，但仍可能对总体应用程序性能产生影响。
+#### Chckpoint调优
 
-```java
-# 为了防止这种情况，应用程序可以定义检查点之间的最小持续时间，这个持续时间是最近的检查点结束到下一个检查点开始之间必须经过的最小时间间隔。
-StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(milliseconds)
-```
+* 应用程序可以配置定期触发 checkpoints。 当checkpoint**完成时间超过 checkpoint 间隔时**，在正在进行的checkpoint完成之前，不会触发下一个 checkpoint。默认情况下，一旦正在进行的 checkpoint 完成，将立即触发下一个 checkpoint。
 
-![Illustration how the minimum-time-between-checkpoints parameter affects checkpointing behavior.](https://ci.apache.org/projects/flink/flink-docs-release-1.11/fig/checkpoint_tuning.svg)
+* 当 checkpoints 完成的时间经常超过 checkpoints 基本间隔时(例如，因为状态比计划的更大，或者访问 checkpoints 所在的存储系统暂时变慢)， 系统不断地进行 checkpoints（一旦完成，新的 checkpoints 就会立即启动）。这可能意味着过多的资源被不断地束缚在 checkpointing 中，并且 checkpoint 算子进行得缓慢。 此行为对使用 checkpointed 状态的流式应用程序的影响较小，但仍可能对整体应用程序性能产生影响。
+
+* 为了防止这种情况，应用程序可以**定义 checkpoints 之间的*最小等待时间***：
+
+  ```java
+  StreamExecutionEnvironment.getCheckpointConfig().setMinPauseBetweenCheckpoints(milliseconds)
+  ```
+
+* 此持续时间是指从最近一个 checkpoint 结束到下一个 checkpoint 开始之间必须经过的最小时间间隔。下图说明了这如何影响 checkpointing。
+
+![Illustration how the minimum-time-between-checkpoints parameter affects checkpointing behavior.](../img/checkpointinterval.jpg)
+
+***注意：*** 可以配置应用程序（通过`CheckpointConfig`）允许同时进行多个 checkpoints。 对于 Flink 中状态较大的应用程序，这通常会使用过多的资源到 checkpointing。 当手动触发 savepoint 时，它可能与正在进行的 checkpoint 同时进行。
 
 #### 优化RocksDB
 
+* 大型Flink流应用的状态主要存储在Rocksdb State Backend。该backend在主内存之上提供了很强的扩展能力，并且可靠地存储了大的keyed state。
+
 ##### 增量checkpoint
 
-* 开启rocksDB增量checkpoint可以减少checkpoint的时间。
+* 在减少 checkpoints 花费的时间方面，开启增量 checkpoints 应该是首要考虑因素。 与完整 checkpoints 相比，增量 checkpoints 可以显着减少 checkpointing 时间，因为增量 checkpoints 仅存储与先前完成的 checkpoint 不同的增量文件，而不是存储全量数据备份。
+  * 在 [Flink 配置文件](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/config/#flink-配置文件) 中设置：`state.backend.incremental: true` 或者
+  * 在代码中按照右侧方式配置（来覆盖默认配置）：`EmbeddedRocksDBStateBackend backend = new EmbeddedRocksDBStateBackend(true);`
+
 
 ##### 定时器存储在RocksDB或JVM堆
 
-* 默认情况下timers存储在rocksDB中，这是更健壮和可扩展的选择。当性能调优只有少量计时器(没有窗口，在ProcessFunction中不使用计时器)的任务时，将这些计时器放在`jvm heap`中可以提高性能。要小心使用此特性，因为基于堆的计时器可能会增加检查点时间，而且自然不能扩展到内存之外。
+* 计时器（Timer） **默认存储在 RocksDB** 中，这是更健壮和可扩展的选择。
+* 当性能调优作业只有少量计时器(没有窗口，且在 ProcessFunction 中不使用计时器)时，将这些计时器放在堆中可以提高性能。 请谨慎使用此功能，因为基于堆的计时器可能会增加 checkpointing 时间，并且自然无法扩展到内存之外。
+* `state.backend.rocksdb.timer-service.factory`设置为heap
 
-##### 优化RocksDB内存
+##### RocksDB内存调优
 
-* 默认情况下RocksDB状态后端使用Flink管理的RocksDBs缓冲区和缓存的内存预算`state.backend.rocksdb.memory.managed: true`
-* 修改`state.backend.rocksdb.memory.write-buffer-ratio`比率，writebuffer占用总内存的比例，有助于state写入的性能
+* RocksDB State Backend 的性能在很大程度上取决于它可用的内存量。为了提高性能，增加内存会有很大的帮助，或者调整内存的功能。 默认情况下，RocksDB State Backend 将 Flink 的托管内存用于 RocksDB 的缓冲区和缓存（`State.Backend.RocksDB.memory.managed:true`）
+
+  * 尝试提高性能的第一步应该是**增加托管内存的大小。这通常会大大改善这种情况**。 尤其是在容器、进程规模较大的情况下，除非应用程序本身逻辑需要大量的 JVM 堆，否则大部分总内存通常都可以用于 RocksDB 。默认的托管内存比例 *(0.4)* 是保守的，当 TaskManager 进程的内存为很多 GB 时，通常是可以增加该托管内存比例。
+  * 在 RocksDB 中，写缓冲区的数量取决于应用程序中所拥有的状态数量（数据流中所有算子的状态）。每个状态对应一个列族（ColumnFamily），它需要自己写缓冲区。因此，具有多状态的应用程序通常需要更多的内存才能获得相同的性能。
+  * 你可以尝试设置 `state.backend.rocksdb.memory.managed: false` 来使用列族（ColumnFamily）内存的 RocksDB 与使用托管内存的 RocksDB 的性能对比。特别是针对基准测试（假设没有或适当的容器内存限制）或回归测试 Flink 早期版本时，这可能会很有用。 与使用托管内存（固定内存池）相比，不使用托管内存意味着 RocksDB 分配的内存与应用程序中的状态数成比例（内存占用随应用程序的变化而变化）。根据经验，非托管模式（除非使用列族（ColumnFamily）RocksDB）的上限约为 “140MB * 跨所有 tasks 的状态 * slots 个数”。 计时器也算作状态！
+  * 如果你的应用程序有许多状态，并且你看到频繁的 MemTable 刷新（写端瓶颈），但你不能提供更多的内存，你可以增加写缓冲区的内存比例(`state.backend.rocksdb.memory.write-buffer-ratio`)。
+  * 一个高级选项（*专家模式*）是通过 `RocksDBOptionFactory` 来调整 RocksDB 的列族（ColumnFamily）选项（块大小、最大后台刷新线程等），以减少具有多种状态的 MemTable 刷新次数：
+
+  ```java
+  public class MyOptionsFactory implements ConfigurableRocksDBOptionsFactory {
+  
+      @Override
+      public DBOptions createDBOptions(DBOptions currentOptions, Collection<AutoCloseable> handlesToClose) {
+          // increase the max background flush threads when we have many states in one operator,
+          // which means we would have many column families in one DB instance.
+          return currentOptions.setMaxBackgroundFlushes(4);
+      }
+  
+      @Override
+      public ColumnFamilyOptions createColumnOptions(
+          ColumnFamilyOptions currentOptions, Collection<AutoCloseable> handlesToClose) {
+          // decrease the arena block size from default 8MB to 1MB. 
+          return currentOptions.setArenaBlockSize(1024 * 1024);
+      }
+  
+      @Override
+      public OptionsFactory configure(ReadableConfig configuration) {
+          return this;
+      }
+  }
+  ```
+
+#### 容量规划
+
+- 应该有足够的资源保障正常运行时不出现反压，如何检查应用程序是否在反压下运行
+
+- 在无故障时间内无反压运行程序所需的资源之上能够提供一些额外的资源。 需要这些资源来“追赶”在应用程序恢复期间积累的输入数据。 这通常取决于恢复操作需要多长时间（这取决于在故障恢复时需要加载到新 TaskManager 中的状态大小）以及故障恢复的速度。
+
+  *重要提示*：基准点应该在开启 checkpointing 来建立，因为 checkpointing 会占用一些资源（例如网络带宽）。
+
+- 临时反压通常是允许的，在负载峰值、追赶阶段或外部系统(sink 到外部系统)出现临时减速时，这是执行流控制的重要部分。
+
+- 在某些操作下（如大窗口）会导致其下游算子的负载激增： 在有窗口的情况下，下游算子可能在构建窗口时几乎无事可做，而在触发窗口时有负载要做。 下游并行度的规划需要考虑窗口的输出量以及处理这种峰值的速度。
+
+**重要提示**：为了方便以后增加资源，请确保将流应用程序的*最大并行度*设置为一个合理的数字。最大并行度定义了当扩缩容程序时（通过 savepoint ）可以设置程序并行度的上限。
+
+Flink 的内部以*键组(key groups)* 的最大并行度为粒度跟踪分布式状态。 Flink 的设计力求使最大并行度的值达到很高的效率，即使执行程序时并行度很低。
+
+#### 压缩
+
+* Flink 为所有 checkpoints 和 savepoints 提供可选的压缩（默认：关闭）。 目前，压缩只支持 [snappy 压缩算法（版本 1.1.10.x）](https://github.com/xerial/snappy-java)，后续Flink社区会支持自定义压缩算法。 压缩作用于 keyed state 下 key-groups 的粒度，即每个 key-groups 可以单独解压缩，这对于重新缩放很重要。
+
+可以通过 `ExecutionConfig` 开启压缩：
+
+```java
+ExecutionConfig executionConfig = new ExecutionConfig();
+executionConfig.setUseSnapshotCompression(true);
+```
+
+**注意：** 压缩选项对增量快照没有影响，因为它们使用的是 RocksDB 的内部格式，该格式始终使用开箱即用的 snappy 压缩。
+
+#### Task本地恢复
+
+##### 具体问题
+
+* 在 Flink 的 **checkpointing 阶段**，每个 task 都会生成其状态快照，然后将其写入分布式存储。 每个 task 通过发送一个描述分布式存储中的位置状态的句柄，向 jobmanager 确认状态的成功写入。 JobManager 反过来收集所有 tasks 的句柄并将它们捆绑到一个 checkpoint 对象中。
+* 在**checkpoint恢复阶段**，jobmanager 打开最新的 checkpoint 对象并将句柄发送回相应的 tasks，然后可以从分布式存储中恢复它们的状态。 使用分布式存储来存储状态有两个重要的优势。 首先，存储是容错的，其次，分布式存储中的所有状态都可以被所有节点访问，并且可以很容易地重新分配（例如，用于重新扩缩容）。
+* **使用远程分布式存储存在的问题**：所有 tasks 都必须通过网络从远程位置读取它们的状态。 在许多场景中，恢复可能会将失败的 tasks 重新调度到与前一次运行相同的 taskmanager 中(当然也有像机器故障这样的异常)，但我们仍然必须读取远程状态。这可能导致*大状态的长时间恢复*，即使在一台机器上只有一个小故障。
+
+##### 解决方案
+
+* Task 本地状态恢复正是针对这个恢复时间长的问题，其主要思想如下：对于每个 checkpoint ，**每个 task 不仅将 task 状态写入分布式存储中， 而且还在 task 本地存储(例如本地磁盘或内存)中保存状态快照的次要副本**。快照的**主存储仍然必须是分布式存储**，因为本地存储不能确保节点故障下的持久性，也不能为其他节点提供重新分发状态的访问，所以这个功能仍然需要主副本
+* 对于每个 task 可以重新调度到以前的位置进行恢复的 task ，我们可以从次要本地状态副本恢复，并避免远程读取状态的成本。考虑到*许多故障不是节点故障，即使节点故障通常一次只影响一个或非常少的节点*， 在恢复过程中，大多数 task 很可能会重新部署到它们以前的位置，并发现它们的本地状态完好无损。这就是 task 本地恢复有效地减少恢复时间的原因。
+* **注意**，根据所选的 state backend 和 checkpointing 策略，在每个 checkpoint 创建和存储次要本地状态副本时，可能会有一些额外的成本。 例如，在大多数情况下，实现只是简单地将对分布式存储的写操作复制到本地文件。
+
+![jpg](../img/checkpointTask本地恢复.jpg)
+
+##### 主要（分布式存储）和次要（task 本地）状态快照的关系
+
+Task 本地状态始终被视为次要副本，checkpoint 状态始终以分布式存储中的副本为主。 这对 checkpointing 和恢复期间的本地状态问题有影响：
+
+- 对于 checkpointing ，*主副本必须成功*，并且生成*次要本地副本的失败不会使* checkpoint 失败。 如果无法创建主副本，即使已成功创建次要副本，checkpoint 也会失败。
+- 只有主副本由 jobmanager 确认和管理，次要副本属于 taskmanager ，并且它们的生命周期可以独立于它们的主副本。 例如，可以保留 3 个最新 checkpoints 的历史记录作为主副本，并且只保留最新 checkpoint 的 task 本地状态。
+- 对于恢复，如果匹配的次要副本可用，Flink 将始终*首先尝试从 task 本地状态恢复*。 如果在次要副本恢复过程中出现任何问题，Flink 将*透明地重试从主副本恢复 task*。 仅当主副本和（可选）次要副本失败时，恢复才会失败。 在这种情况下，根据配置，Flink 仍可能回退到旧的 checkpoint。
+- Task 本地副本可能仅包含完整 task 状态的一部分（例如，写入一个本地文件时出现异常）。 在这种情况下，Flink 会首先尝试在本地恢复本地部分，非本地状态从主副本恢复。 主状态必须始终是完整的，并且是 *task 本地状态的超集*。
+- Task 本地状态可以具有与主状态不同的格式，它们不需要相同字节。 例如，task 本地状态甚至可能是在堆对象组成的内存中，而不是存储在任何文件中。
+- 如果 taskmanager 丢失，则其所有 task 的本地状态都会丢失。
+
+##### 配置 task 本地恢复
+
+* Task 本地恢复**默认禁用**，可以通过 Flink 的 CheckpointingOptions.LOCAL_RECOVERY 配置中指定的键 state.backend.local-recovery 来启用。 此设置的值可以是 true 以启用或 false（默认）以禁用本地恢复。
+
+**注意**，unaligned checkpoints 目前不支持 task 本地恢复。
+
+##### 不同 state backends 的 task 本地恢复的详细介绍
+
+***限制**：目前，task 本地恢复仅涵盖 keyed state backends。 Keyed state 通常是该状态的最大部分。 未来还将支持算子状态和计时器（timers）。*
+
+- **HashMapStateBackend**: keyed state 支持 task 本地恢复。 该实现会将状态复制到本地文件。 这会引入额外的写入成本并占用本地磁盘空间。 未来可能还会提供一种将 task 本地状态保存在内存中的实现。
+- **EmbeddedRocksDBStateBackend**: 支持 keyed state 的 task 本地恢复。对于*全量 checkpoints*，状态被复制到本地文件。这会引入额外的写入成本并占用本地磁盘空间。对于*增量快照*，本地状态基于 RocksDB 的原生 checkpointing 机制。 这种机制也被用作创建主副本的第一步，这意味着在这种情况下，创建次要副本不会引入额外的成本。我们只是保留本地 checkpoint 目录， 而不是在上传到分布式存储后将其删除。这个本地副本可以与 RocksDB 的工作目录共享现有文件（通过硬链接），因此对于现有文件，增量快照的 task 本地恢复也不会消耗额外的磁盘空间。 使用硬链接还意味着 RocksDB 目录必须与所有可用于存储本地状态和本地恢复目录位于同一节点上，否则建立硬链接可能会失败。 目前，当 RocksDB 目录配置在多个物理设备上时，这也会阻止使用本地恢复。
+
+##### Allocation-preserving 调度
+
+* Task 本地恢复假设在故障下通过 allocation-preserving 调度 task ，其工作原理如下。 每个 task 都会记住其先前的分配，并请求完全相同的 slot 来重新启动恢复。 如果此 slot 不可用，task 将向 resourcemanager 请求一个 新的 slot。 这样，如果 taskmanager 不再可用，则无法返回其先前位置的 task 不会将其他正在恢复的 task 踢出其之前的 slot。 我们的理由是，只有当 taskmanager 不再可用时，前一个 slot 才会消失，在这种情况下，一些 tasks 无论如何都必须请求新的 slot 。 在我们的调度策略中，我们让绝大多数的 tasks 有机会从它们的本地状态中恢复，从而避免了从其他 tasks 处获取它们之前的 slots 的级联效应。
+
+### Task故障恢复
+
+* 当 Task 发生故障时，Flink 需要重启出错的 Task 以及其他受到影响的 Task ，以使得作业恢复到正常执行状态。
+* Flink 通过重启策略和故障恢复策略来控制 Task 重启：重启策略决定是否可以重启以及重启的间隔；故障恢复策略决定哪些 Task 需要重启。
+
+#### 重启策略
+
+* Flink 作业如果没有定义重启策略，则会遵循集群启动时加载的默认重启策略。 如果提交作业时设置了重启策略，该策略将覆盖掉集群的默认策略。
+* 通过 Flink 配置文件来设置默认的重启策略。配置参数` restart-strategy.type` 定义了采取何种策略。 如果没有启用 checkpoint，就采用`不重启`策略。如果启用了 checkpoint 且没有配置重启策略，默认采用 **exponential-delay** (指数延迟) 重启策略，且会使用 exponential-delay 相关配置项的默认值。
+
+| Key                   | Default | Type   | Description                                                  |
+| :-------------------- | :------ | :----- | :----------------------------------------------------------- |
+| restart-strategy.type | (none)  | String | 定义job失败时的重启策略,`disable`, `off`, `none`:关闭重启策略。`fixed-delay, fixeddelay`:固定时间的重启策略。`failure-rate, failurerate`:故障率重启策略。`exponential-delay, exponentialdelay`:指数延迟重启策略。如果检查点功能未启用，则默认值为"未启用"。如果启用了检查点，则默认值为指数延迟，并且将使用指数延迟相关配置选项的默认值。 |
+
+```java
+// 设置固定周期重试策略
+Configuration config = new Configuration();
+config.set(RestartStrategyOptions.RESTART_STRATEGY, "fixed-delay");
+config.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_ATTEMPTS, 3); // 尝试重启的次数
+config.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_DELAY, Duration.ofSeconds(10)); // 延时
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
+```
+
+##### 默认重启策略
+
+当 Checkpoint 开启且用户没有指定重启策略时，[`指数延迟重启策略`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/task_failure_recovery/#exponential-delay-restart-strategy) 是当前默认的重启策略。我们强烈推荐 Flink 用户使用指数延迟重启策略，因为使用这个策略时， 作业偶尔异常可以快速重试，作业频繁异常可以避免外部组件发生雪崩。原因如下所示：
+
+- 所有的重启策略在重启作业时都会延迟一定的时间来避免频繁重试对外部组件的产生较大压力。
+- 除了指数延迟重启策略以外的所有重启策略延迟时间都是固定的。
+  - 如果延迟时间设置的过短，当作业短时间内频繁异常时，会频繁重启访问外部组件的主节点，可能导致外部组件发生雪崩。 例如：大量的 Flink 作业都在消费 Kafka，当 Kafka 集群出现故障时大量的 Flink 作业都在同一时间频繁重试，很可能导致雪崩。
+  - 如果延迟时间设置的过长，当作业偶尔失败时需要等待很久才会重试，从而导致作业可用率降低。
+- 指数延迟重启策略每次重试的延迟时间会指数递增，直到达到最大延迟时间。
+  - 延迟时间的初始值较短，所以当作业偶尔失败时，可以快速重试，提升作业可用率。
+  - 当作业短时间内频繁失败时，指数延迟重启策略会降低重试的频率，从而避免外部组件雪崩。
+- 除此以外，指数延迟重启策略的延迟时间支持抖动因子 (jitter-factor) 的配置项。
+  - 抖动因子会为每次的延迟时间加减一个随机值。
+  - 即使多个作业使用指数延迟重启策略且所有的配置参数完全相同，抖动因子也会让这些作业分散在不同的时间重启。
+
+#### Failover Strategies
+
+Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置文件中的 *jobmanager.execution.failover-strategy* 配置项进行配置。
+
+| 故障恢复策略           | jobmanager.execution.failover-strategy 配置值 |
+| :--------------------- | :-------------------------------------------- |
+| 全图重启               | full                                          |
+| 基于 Region 的局部重启 | region                                        |
+
+##### 全图重启策略
+
+* 在全图重启故障恢复策略下，Task 发生故障时会重启作业中的所有 Task 进行故障恢复。
+
+##### 基于 Region 的局部重启
+
+* 该策略会将作业中的所有 Task 划分为数个 Region。当有 Task 发生故障时，它会尝试找出进行故障恢复需要重启的最小 Region 集合。 相比于全局重启故障恢复策略，这种策略在一些场景下的故障恢复需要重启的 Task 会更少。
+* DataStream/Table/SQL 作业中的数据交换形式会根据 [ExecutionConfig](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/datastream/execution/execution_configuration/) 中配置的 `ExecutionMode` 决定。处于 STREAM 模式时，所有数据交换都是 Pipelined 形式； 处于 BATCH 模式时，所有数据交换默认都是 Batch 形式。
+* 需要重启的 Region 的判断逻辑如下：
+  * 出错 Task 所在 Region 需要重启。
+  * 如果要重启的 Region 需要消费的数据有部分无法访问（丢失或损坏），产出该部分数据的 Region 也需要重启。
+  * 需要重启的 Region 的下游 Region 也需要重启。这是出于保障数据一致性的考虑，因为一些非确定性的计算或者分发会导致同一个 Result Partition 每次产生时包含的数据都不相同
 
 # Aligned Checkpoint和Unaligned Checkpoint
 
