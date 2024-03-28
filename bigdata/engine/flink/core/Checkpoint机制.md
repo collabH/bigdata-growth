@@ -845,13 +845,13 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 
 1. Flink通过Checkpoint恢复时间长，会导致服务可用率降低。
 2. 非幂等或非事务场景，导致大量业务数据重复。
-3. Flink 任务如果持续反压严重，可能会进入死循环，永远追不上 lag。因为反压严重会导致 Flink Checkpoint 失败，Job 不能无限容忍 Checkpoint 失败，所以 Checkpoint 连续失败会导致 Job 失败。Job 失败后任务又会从很久之前的 Checkpoint 恢复开始追 lag，追 lag 时反压又很严重，Checkpoint 又会失败。从而进入死循环，任务永远追不上 Lag。
-4. 在一些大流量场景中，SSD 成本很高，所以 Kafka 只会保留最近三小时的数据。如果 Checkpoint 持续三小时内失败，任务一旦重启，数据将无法恢复。
+3. **Checkpoint失败导致lag无法追上造成死循环：**Flink 任务如果持续反压严重，可能会进入死循环，永远追不上 lag。因为反压严重会导致 Flink Checkpoint 失败，Job 不能无限容忍 Checkpoint 失败，所以 Checkpoint 连续失败会导致 Job 失败。Job 失败后任务又会从很久之前的 Checkpoint 恢复开始追 lag，追 lag 时反压又很严重，Checkpoint 又会失败。**从而进入死循环，任务永远追不上 Lag**。
+4. **Kafka日志过期时间因数据量大不建议存储过长：**在一些大流量场景中，SSD 成本很高，所以 Kafka 只会保留最近三小时的数据。如果 Checkpoint 持续三小时内失败，任务一旦重启，数据将无法恢复。
 
 ### Checkpoint为什么会失败？
 
 * **Checkpoint Barrier** 从 Source 生成，并且 Barrier 从 Source 发送到 Sink Task。当 Barrier 到达 Task 时，该 Task 开始 Checkpoint。当这个 Job 的所有 Task 完成 Checkpoint 时，这个 Job 的 Checkpoint 就完成了。
-* Task 必须处理完 Barrier 之前的所有数据，才能接收到 Barrier。例如 一个任务的某个 Task 处理数据慢，Task 不能快速消费完 Barrier 前的所有数据，所以不能接收到 Barrier。最终 这个Task 的 Checkpoint 就会失败，从而导致 Job 的 Checkpoint 失败。
+* Task 必须处理完 Barrier 之前的所有数据，才能接收到 Barrier。例如 一个任务的某个 Task 处理数据慢，Task 不能快速消费完 Barrier 前的所有数据，所以不能接收到 Barrier。最终这个Task的Checkpoint就会失败，从而导致Job的Checkpoint失败。
 
 ## **Unaligned Checkpoint**
 
@@ -891,7 +891,7 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 ![](../img/UC异步流程.jpg)
 
 * 当 UC 同步阶段完成后，会继续处理数据。与此同时，开启 UC 的第二阶段：**Barrier 对齐和 UC 异步阶段。**异步阶段要**快照同步阶段引用的所有 input 和 output Buffer，以及同步阶段引用的算子内部的 State**。
-* UC也需要进行Barrier对齐，当 Task 开始 UC 时，有很多 Inputchannel 没接收到 Barrier。**这些 InputChannel Barrier 之前的 Buffer，可能也 需要快照**。UC的异步阶段需要等待所有InputChannel的Barrier到达，且Barrier之前的Buffer都需要快照，这就是**UC Barrier对齐**。这个速度理论上是比较快的，只需要把Barrier超越发送到下游算子即可。
+* UC也需要进行Barrier对齐，当 Task 开始 UC 时，有很多 Inputchannel 没接收到 Barrier。**这些 InputChannel Barrier 之前的 Buffer，可能也需要快照**。UC的异步阶段需要等待所有InputChannel的Barrier到达，且Barrier之前的Buffer都需要快照，这就是**UC Barrier对齐**。这个速度理论上是比较快的，只需要把Barrier超越发送到下游算子即可。
 * UC 异步阶段流程。异步阶段需要写三部分数据到 FileSystem，分别是：
   - 同步阶段引用的算子内部的 State。
   - 同步阶段引用的所有 input 和 output Buffer。
@@ -954,7 +954,7 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 
 ### 一致性检查点(Checkpoints)
 
-* Flink使用轻量级快照机制-检查点(checkpoint)来保证exactly-once语义
+* Flink使用`轻量级快照机制-检查点(checkpoint)`来保证`exactly-once`语义
 * 有状态流应用的一致检查点，其实就是所有任务的状态，在某个时间点的一份拷贝，这个时间点，应该是所有任务都恰好处理完一个相同的输入数据的时候，应用状态的一致检查点是flink故障恢复机制的核心。
 
 ### 端到端状态一致性
@@ -979,7 +979,7 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 * 事务写入
     * Write-Ahead-Log WAL
         * 把结果数据先当成状态保存，然后在收到checkpoint完成的通知时，一次性写入sink系统
-        * 简单已于实现，由于数据提前在状态后端中做了缓存，所以无论什么sink系统，都能一批搞定
+        * 简单易于实现，由于数据提前在**状态后端中做了缓存**，所以无论什么sink系统，都能一批搞定
         * DataStream API提供一个模版类:`GenericWriteAheadSink`来实现。
         * 存在的问题，延迟性大，如果存在批量写入失败时需要考虑回滚重放。
     * 2PAC（Two-Phase-Commit）
@@ -990,7 +990,7 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
         * 对外部sink系统的要求
             * 外部sink系统提供事务支持，或者sink任务必须能够模拟外部系统上的事务
             * 在checkpoint的间隔期间，必须能够开启一个事务并接收数据写入
-            * 在收到checkpoint完成的通知之前，事务必须时“等待提交”的状态。在故障恢复情况下，可能需要一些时间。如果这个时候sink系统关闭了事务，那么未提交的数据就丢失了。
+            * 在收到checkpoint完成的通知之前，事务必须是“等待提交”的状态。在故障恢复情况下，可能需要一些时间。如果这个时候sink系统关闭了事务，那么未提交的数据就丢失了。
             * sink任务必须能在进程失败后恢复事务，提交事务时幂等操作。
 
 ### Flink+Kafka端到端一致性保证
@@ -1002,7 +1002,7 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 ### Exactly-once两阶段提交
 
 * JobManager协调各个TaskManager进行checkpoint存储
-* checkpoint保存在StateBackend中，默认StateBackend时内存级，可以修改为文件级别的持久化保存。
+* checkpoint保存在StateBackend中，默认StateBackend是内存级，可以修改为文件级别的持久化保存。
 
 #### 预提交阶段
 
