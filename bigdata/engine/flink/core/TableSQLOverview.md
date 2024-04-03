@@ -13,7 +13,7 @@ StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironm
                 .inStreamingMode()
                 .useBlinkPlanner()
                 .build();
-        StreamTableEnvironment tableEnvironment = StreamTableEnvironment.create(env,settings);
+StreamTableEnvironment tableEnvironment = StreamTableEnvironment.create(env,settings);
 tableEnvironment.createTemporaryView();
 Table table=tableEnvironment.from("tableName").select($("id"));
 table.executeInsert()
@@ -21,38 +21,530 @@ table.executeInsert()
 
 ## 创建TableEnvironment
 
-* 创建表执行环境
+* `TableEnvironment` 是 Table API 和 SQL 的核心概念。它负责:
+  - 在内部的 catalog 中注册 `Table`
+  - 注册外部的 catalog
+  - 加载可插拔模块
+  - 执行 SQL 查询
+  - 注册自定义函数 （scalar、table 或 aggregation）
+  - `DataStream` 和 `Table` 之间的转换(面向 `StreamTableEnvironment` )
+* `Table` 总是与特定的 `TableEnvironment` 绑定。 不能在同一条查询中使用不同 TableEnvironment 中的表，例如，对它们进行 join 或 union 操作。 `TableEnvironment` 可以通过静态方法 `TableEnvironment.create()` 创建。
 
 ```java
-    public static TableEnvironment getEnv() {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
+          EnvironmentSettings settings = EnvironmentSettings
+              .newInstance()
+              .inStreamingMode()
+              //.inBatchMode()
+              .build();
 
-        EnvironmentSettings settings = EnvironmentSettings.newInstance()
-                .inStreamingMode().useBlinkPlanner().build();
-        return StreamTableEnvironment.create(env, settings);
-    }
-
-    public static TableEnvironment getBatchEnv() {
-        EnvironmentSettings settings = EnvironmentSettings.newInstance()
-                .useBlinkPlanner().inBatchMode().build();
-        return TableEnvironment.create(settings);
-    }
+          TableEnvironment tEnv = TableEnvironment.create(settings);
 ```
 
-* 基于TableEnvironment做操作
-  * 注册Catalog
-  * 在Catalog中注册表
-  * 执行SQL查询
-  * 注册UDF
+* 或者，用户可以从现有的 `StreamExecutionEnvironment` 创建一个 `StreamTableEnvironment` 与 `DataStream` API 互操作。
 
-## 表（Table）
+```java
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.EnvironmentSettings;
+import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 
-* TableEnvironment可以注册Catalog，并可以基于Catalog注册表
-* 表是由一个标识符来指定，由catalog名、数据库名和对象名组成。(catalog.database.table)
-* 表可以是常规的，也可以是虚拟表（视图）
-* 常规表一般可以用来描述外部数据，比如文件、数据库或消息队列数据，也可以从DataStream转换而来
-* 视图可以从现有的表中创建，通常是table API或SQL查询的一个结果集。
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+```
+
+## 在Catalog中创建表
+
+* `TableEnvironment` 维护着一个由标识符（identifier）创建的表 catalog 的映射。标识符由三个部分组成：catalog 名称、数据库名称以及对象名称。如果 catalog 或者数据库没有指明，就会使用当前默认值:"default_catalog"、"default_database"
+* `Table` 可以是虚拟的（视图 `VIEWS`）也可以是常规的（表 `TABLES`）。视图 `VIEWS`可以从已经存在的`Table`中创建，一般是 Table API 或者 SQL 的查询结果。 表`TABLES`描述的是外部数据，例如文件、数据库表或者消息队列。
+
+### 临时表（Temporary Table）和永久表（Permanent Table）
+
+* 表可以是临时的，**并与单个 Flink 会话（session）的生命周期相关**，也可以是永久的，**并且在多个 Flink 会话和群集（cluster）中可见**。
+* 永久表需要 [catalog](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/table/catalogs/)（例如 Hive Metastore）以维护表的元数据。**一旦永久表被创建，它将对任何连接到 catalog 的 Flink 会话可见且持续存在，直至被明确删除**。
+* 临时表通常**保存于内存中并且仅在创建它们的 Flink 会话持续期间存在**。这些表对于其它会话是不可见的。它们不与任何 catalog 或者数据库绑定但可以在一个命名空间（namespace）中创建。即使它们对应的数据库被删除，临时表也不会被删除。
+
+#### 屏蔽
+
+* 可以使用与已存在的永久表相同的标识符去注册临时表。**临时表会屏蔽永久表，并且只要临时表存在，永久表就无法访问**。
+* 这可能对实验（experimentation）有用。它允许先对一个临时表进行完全相同的查询，例如只有一个子集的数据，或者数据是不确定的。一旦验证了查询的正确性，就可以对实际的生产表进行查询。
+
+### 创建表
+
+#### 创建临时表
+
+```java
+// 创建 table 执行环境
+TableEnvironment tableEnv = ...;
+
+// 读取X表的xx字段
+Table projTable = tableEnv.from("X").select(...);
+
+// 注册X表的结果projTable为临时表projectedTable
+tableEnv.createTemporaryView("projectedTable", projTable);
+```
+
+**注意：** 从传统数据库系统的角度来看，`Table` 对象与 `VIEW` 视图非常像。也就是，定义了 `Table` 的查询是没有被优化的， 而且会被内嵌到另一个引用了这个注册了的 `Table`的查询中。如果多个查询都引用了同一个注册了的`Table`，那么它会被内嵌每个查询中并被执行多次， 也就是说注册了的`Table`的结果**不会**被共享。
+
+#### 通过Connector Tables
+
+* Connector 描述了存储表数据的外部系统。存储系统例如 Apache Kafka 或者常规的文件系统都可以通过这种方式来声明。
+
+```java
+// 使用TableDescriptor定义datagen Connector表
+final TableDescriptor sourceDescriptor = TableDescriptor.forConnector("datagen")
+    .schema(Schema.newBuilder()
+    .column("f0", DataTypes.STRING())
+    .build())
+    .option(DataGenConnectorOptions.ROWS_PER_SECOND, 100L)
+    .build();
+
+// 创建表
+tableEnv.createTable("SourceTableA", sourceDescriptor);
+tableEnv.createTemporaryTable("SourceTableB", sourceDescriptor);
+
+// 使用DDL创建Connector表
+tableEnv.executeSql("CREATE [TEMPORARY] TABLE MyTable (...) WITH (...)");
+```
+
+### 扩展表标识符
+
+* 表通过三元标识符注册，包括 catalog 名、数据库名和表名。用户可以指定一个catalog和database作为当前catalog和database，后续读表只需要关注其下的表名即可。如果前两部分的标识符没有指定， 那么会使用当前的 catalog 和当前数据库。
+
+```java
+// 设置当前catalog和database
+TableEnvironment tEnv = ...;
+tEnv.useCatalog("custom_catalog");
+tEnv.useDatabase("custom_database");
+
+Table table = ...;
+
+
+// custom_catalog的custom_database下注册exampleView临时表
+tableEnv.createTemporaryView("exampleView", table);
+
+// 在custom_catalog的other_database下注册exampleView临时表
+tableEnv.createTemporaryView("other_database.exampleView", table);
+
+// custom_catalog的custom_database下注册example.View临时表
+tableEnv.createTemporaryView("`example.View`", table);
+
+// 在other_catalog的other_database下注册exampleView临时表
+tableEnv.createTemporaryView("other_catalog.other_database.exampleView", table);
+```
+
+## 查询表
+
+* Table API
+
+```java
+// scan registered Orders table
+Table orders = tableEnv.from("Orders");
+// compute revenue for all customers from France
+Table revenue = orders
+  .filter($("cCountry").isEqual("FRANCE"))
+  .groupBy($("cID"), $("cName"))
+  .select($("cID"), $("cName"), $("revenue").sum().as("revSum"));
+```
+
+* SQL
+
+```java
+// 查询表
+Table revenue = tableEnv.sqlQuery(
+    "SELECT cID, cName, SUM(revenue) AS revSum " +
+    "FROM Orders " +
+    "WHERE cCountry = 'FRANCE' " +
+    "GROUP BY cID, cName"
+  );
+// 插入数据
+tableEnv.executeSql(
+    "INSERT INTO RevenueFrance " +
+    "SELECT cID, cName, SUM(revenue) AS revSum " +
+    "FROM Orders " +
+    "WHERE cCountry = 'FRANCE' " +
+    "GROUP BY cID, cName"
+  );
+```
+
+* Flink也支持Table API和SQL混用
+  * 可以在 SQL 查询返回的 `Table` 对象上定义 Table API 查询。
+  * 在 `TableEnvironment` 中注册的[结果表](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/table/common/#register-a-table)可以在 SQL 查询的 `FROM` 子句中引用，通过这种方法就可以在 Table API 查询的结果上定义 SQL 查询。
+
+## 输出表
+
+* `Table` 通过写入 `TableSink` 输出。`TableSink` 是一个通用接口，用于支持多种文件格式（如 CSV、Apache Parquet、Apache Avro）、存储系统（如 JDBC、Apache HBase、Apache Cassandra、Elasticsearch）或消息队列系统（如 Apache Kafka、RabbitMQ）。
+* 批处理 `Table` 只能写入 `BatchTableSink`，而流处理 `Table` 需要指定写入 `AppendStreamTableSink`，`RetractStreamTableSink` 或者 `UpsertStreamTableSink`。
+* `Table.insertInto(String tableName)` 定义了一个完整的端到端管道将源表中的数据传输到一个被注册的输出表中。 该方法通过名称在 catalog 中查找输出表并确认 `Table` schema 和输出表 schema 一致。 可以通过方法 `TablePipeline.explain()` 和 `TablePipeline.execute()` 分别来解释和执行一个数据流管道。
+
+```java
+// 定义schema
+final Schema schema = Schema.newBuilder()
+    .column("a", DataTypes.INT())
+    .column("b", DataTypes.STRING())
+    .column("c", DataTypes.BIGINT())
+    .build();
+
+// 创建csv格式的table sink
+tableEnv.createTemporaryTable("CsvSinkTable", TableDescriptor.forConnector("filesystem")
+    .schema(schema)
+    .option("path", "/path/to/file")
+    .format(FormatDescriptor.forFormat("csv")
+        .option("field-delimiter", "|")
+        .build())
+    .build());
+
+// 输入结果表
+Table result = ...;
+
+// 结果表写csv table sink
+TablePipeline pipeline = result.insertInto("CsvSinkTable");
+
+// 打印执行计划
+pipeline.printExplain();
+
+// 执行etl任务
+pipeline.execute();
+```
+
+## explain与execute
+
+* 不论输入数据源是流式的还是批式的，Table API 和 SQL 查询都会被转换成 [DataStream](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/datastream/overview/) 程序。 查询在内部表示为逻辑查询计划，并被翻译成两个阶段：
+  * 优化逻辑执行计划
+  * 翻译成 DataStream程序
+
+* Table API 或者 SQL 查询在下列情况下会被翻译：
+
+  - 当 `TableEnvironment.executeSql()` 被调用时。该方法是用来执行一个 SQL 语句，一旦该方法被调用， SQL 语句立即被翻译。
+
+  - 当 `TablePipeline.execute()` 被调用时。该方法是用来执行一个源表到输出表的数据流，一旦该方法被调用， TABLE API 程序立即被翻译。
+
+  - 当 `Table.execute()` 被调用时。该方法是用来将一个表的内容收集到本地，一旦该方法被调用， TABLE API 程序立即被翻译。
+
+  - 当 `StatementSet.execute()` 被调用时。`TablePipeline` （通过 `StatementSet.add()` 输出给某个 `Sink`）和 INSERT 语句 （通过调用 `StatementSet.addInsertSql()`）会先被缓存到 `StatementSet` 中，`StatementSet.execute()` 方法被调用时，所有的 sink 会被优化成一张有向无环图。
+
+  - 当 `Table` 被转换成 `DataStream` 时。转换完成后，它就成为一个普通的 DataStream 程序，并会在调用 `StreamExecutionEnvironment.execute()` 时被执行。
+
+## 查询优化
+
+* Apache Flink **使用并扩展了 Apache Calcite 来执行复杂的查询优化**。 这包括一系列基于规则和成本的优化，例如：
+
+  - 基于 Apache Calcite 的子查询解相关
+
+  - 投影剪裁 （Projection）
+
+  - 分区剪裁
+
+  - 过滤器下推 （PushDown）
+
+  - 子计划消除重复数据以避免重复计算
+
+  - 特殊子查询重写，包括两部分：
+    - 将 IN 和 EXISTS 转换为 left semi-joins
+    - 将 NOT IN 和 NOT EXISTS 转换为 left anti-join
+
+  - 可选 join 重新排序
+    - 通过 `table.optimizer.join-reorder-enabled` 启用
+
+**注意：** 当前仅在子查询重写的结合条件下支持 IN / EXISTS / NOT IN / NOT EXISTS。
+
+* 优化器不仅基于计划，而且还基于可从数据源获得的丰富统计信息以及每个算子（例如 io，cpu，网络和内存）的细粒度成本来做出明智的决策。
+* 高级用户可以通过 `CalciteConfig` 对象提供自定义优化，可以通过调用 `TableEnvironment＃getConfig＃setPlannerConfig` 将其提供给 TableEnvironment。
+
+## 查看执行计划
+
+* Table API可以通过`Table.explain()` 方法或者 `StatementSet.explain()` 方法来查看对应的执行计划，`Table.explain()` 返回一个 Table 的计划。`StatementSet.explain()` 返回多 sink 计划的结果。它返回一个描述三种计划的字符串：
+  * 关系查询的抽象语法树（the Abstract Syntax Tree），即未优化的逻辑查询计划，
+  * 优化的逻辑查询计划，以及
+  * 物理执行计划。
+
+```java
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+
+DataStream<Tuple2<Integer, String>> stream1 = env.fromElements(new Tuple2<>(1, "hello"));
+DataStream<Tuple2<Integer, String>> stream2 = env.fromElements(new Tuple2<>(1, "hello"));
+
+// explain Table API
+Table table1 = tEnv.fromDataStream(stream1, $("count"), $("word"));
+Table table2 = tEnv.fromDataStream(stream2, $("count"), $("word"));
+Table table = table1
+  .where($("word").like("F%"))
+  .unionAll(table2);
+
+System.out.println(table.explain());
+
+// Explain执行计划
+== Abstract Syntax Tree ==
+LogicalUnion(all=[true])
+:- LogicalFilter(condition=[LIKE($1, _UTF-16LE'F%')])
+:  +- LogicalTableScan(table=[[Unregistered_DataStream_1]])
++- LogicalTableScan(table=[[Unregistered_DataStream_2]])
+
+== Optimized Physical Plan ==
+Union(all=[true], union=[count, word])
+:- Calc(select=[count, word], where=[LIKE(word, _UTF-16LE'F%')])
+:  +- DataStreamScan(table=[[Unregistered_DataStream_1]], fields=[count, word])
++- DataStreamScan(table=[[Unregistered_DataStream_2]], fields=[count, word])
+
+== Optimized Execution Plan ==
+Union(all=[true], union=[count, word])
+:- Calc(select=[count, word], where=[LIKE(word, _UTF-16LE'F%')])
+:  +- DataStreamScan(table=[[Unregistered_DataStream_1]], fields=[count, word])
++- DataStreamScan(table=[[Unregistered_DataStream_2]], fields=[count, word])
+```
+
+## DataStream API整合
+
+### Table和Datastream转换
+
+#### 依赖
+
+```xml
+<dependency>
+  <groupId>org.apache.flink</groupId>
+  <artifactId>flink-table-api-java-bridge_2.12</artifactId>
+  <version>1.19.0</version>
+  <scope>provided</scope>
+</dependency>
+```
+
+#### import
+
+```java
+// imports for Java DataStream API
+import org.apache.flink.streaming.api.*;
+import org.apache.flink.streaming.api.environment.*;
+
+// imports for Table API with bridging to Java DataStream API
+import org.apache.flink.table.api.*;
+import org.apache.flink.table.api.bridge.java.*;
+```
+
+#### append-only和insert-only的stream-to-table
+
+```java
+// create environments of both APIs
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+// create a DataStream
+DataStream<String> dataStream = env.fromElements("Alice", "Bob", "John");
+
+// interpret the insert-only DataStream as a Table
+Table inputTable = tableEnv.fromDataStream(dataStream);
+
+// register the Table object as a view and query it
+tableEnv.createTemporaryView("InputTable", inputTable);
+Table resultTable = tableEnv.sqlQuery("SELECT UPPER(f0) FROM InputTable");
+
+// interpret the insert-only Table as a DataStream again
+DataStream<Row> resultStream = tableEnv.toDataStream(resultTable);
+
+// add a printing sink and execute in DataStream API
+resultStream.print();
+env.execute();
+
+// prints:
+// +I[ALICE]
+// +I[BOB]
+// +I[JOHN]
+```
+
+#### changlog的stream-to-table
+
+```java
+// create environments of both APIs
+StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+// create a DataStream
+DataStream<Row> dataStream = env.fromElements(
+    Row.of("Alice", 12),
+    Row.of("Bob", 10),
+    Row.of("Alice", 100));
+
+// interpret the insert-only DataStream as a Table
+Table inputTable = tableEnv.fromDataStream(dataStream).as("name", "score");
+
+// register the Table object as a view and query it
+// the query contains an aggregation that produces updates
+tableEnv.createTemporaryView("InputTable", inputTable);
+Table resultTable = tableEnv.sqlQuery(
+    "SELECT name, SUM(score) FROM InputTable GROUP BY name");
+
+// interpret the updating Table as a changelog DataStream
+DataStream<Row> resultStream = tableEnv.toChangelogStream(resultTable);
+
+// add a printing sink and execute in DataStream API
+resultStream.print();
+env.execute();
+
+// prints:
+// +I[Alice, 12]
+// +I[Bob, 10]
+// -U[Alice, 12]
+// +U[Alice, 112]
+```
+
+# 流式概念
+
+## 流式概念
+
+* Flink的Table API和SQL是流批一体API，这就表示Table API&SQL在无论有限的批式输入还是无限的流式输入下，都具有相同的语义。
+
+### 状态管理
+
+* 流模式下运行的表利用Flink作为有状态处理器的所有能力，一个表程序可以配置一个state backend和多个不同的checkpoint配置以处理对不同状态大小和容错需求，这可以对正在运行的Table API&SQL管道生产Savepoint，并在之后恢复应用程序的状态。
+
+#### 状态使用
+
+* 由于 Table API & SQL 程序是声明式的，管道内的状态会在哪以及如何被使用并不明确。 Planner 会确认是否需要状态来得到正确的计算结果， 管道会被现有优化规则集优化成尽可能少地使用状态。
+
+##### **状态算子**
+
+* 包含join、聚合或去重等操作的SQL语句都需要在Flink中保存状态结果
+  * 例如对两个表进行join操作的普调SQL需要算子保存两个表的全部输入，基于正确的SQL语义，运行时假设两表会在任意时间点进行匹配。Flink提供了优化窗口和internval join聚合来利用watermarks概念来保持较小的状态存储。
+  * 聚合方式计算词频，案例如下：`word` 是用于分组的键，连续查询（Continuous Query）维护了每个观察到的 `word` 次数。 输入 `word` 的值随时间变化。由于这个查询一直持续，Flink 会为每个 `word` 维护一个中间状态来保存当前词频，因此总状态量会随着 `word` 的发现不断地增长。![](../img/wordGroupState.jpg)
+
+```sql
+CREATE TABLE doc (
+    word STRING
+) WITH (
+    'connector' = '...'
+);
+CREATE TABLE word_cnt (
+    word STRING PRIMARY KEY NOT ENFORCED,
+    cnt  BIGINT
+) WITH (
+    'connector' = '...'
+);
+
+INSERT INTO word_cnt
+SELECT word, COUNT(1) AS cnt
+FROM doc
+GROUP BY word;
+```
+
+* 例如`SELECT .... FROM .... WHERE`这种场景的源表的消息类型只包含 *INSERT*，*UPDATE_AFTER* 和 *DELETE*，然而下游要求完整的 changelog（包含 *UPDATE_BEFORE*）。 所以虽然查询本身没有包含状态计算，但是优化器依然隐式地推导出了一个 ChangelogNormalize 状态算子来生成完整的 changelog。
+
+##### 状态空闲维持时间
+
+* 通过`table.exec.state.ttl`来定义状态的键在被更新后要保持多长时间才被移除。例如上述案例word的数目会在配置的时间内未更新时立刻被移除。通过移除状态的键，连续查询会完全忘记历史的键，如果一个状态带有历史被移除状态的键，这条记录将被认为是对应键的第一条记录，例如上述统计词频的cnt将被设置为0开始重新计数；
+
+##### 指定状态TTL的不同方式
+
+| 配置方式                           | TableAPI/SQL 支持    | 生效范围                                                     | 优先级                                                       |
+| :--------------------------------- | :------------------- | :----------------------------------------------------------- | :----------------------------------------------------------- |
+| SET 'table.exec.state.ttl' = '...' | **TableAPI** **SQL** | 作业粒度，默认情况下所有状态算子都会使用该值控制状态生命周期 | 默认配置，可被覆盖                                           |
+| SELECT /*+ STATE_TTL(...) */ ...   | **SQL**              | 有限算子粒度，当前支持连接和分组聚合算子                     | 该值将会优先作用于相应算子的状态生命周期。查阅[状态生命周期提示](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/table/sql/queries/hints/#状态生命周期提示)获取更多信息。 |
+| 修改序列化为 JSON 的 CompiledPlan  | **TableAPI** **SQL** | 通用算子粒度, 可修改任一状态算子的生命周期                   | table.exec.state.ttl 和 STATE_TTL 的值将会序列化到 CompiledPlan，如果作业使用 CompiledPlan 提交，则最终生效的生命周期由最后一次修改的状态元数据决定。 |
+
+##### 配置算子状态粒度的TTL
+
+* 从 Flink v1.18 开始，Table API & SQL 支持配置细粒度的状态 TTL 来优化状态使用，可配置粒度为每个状态算子的入边数。具体而言，`OneInputStreamOperator` 可以配置一个状态的 TTL，而 `TwoInputStreamOperator`（例如双流 join）则可以分别为左状态和右状态配置 TTL。更一般地，对于具有 K 个输入的 `MultipleInputStreamOperator`，可以配置 K 个状态 TTL。
+
+  - 为 [双流 Join](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/table/sql/queries/joins/#regular-joins) 的左右流配置不同 TTL。 双流 Join 会生成拥有两条输入边的 `TwoInputStreamOperator` 的状态算子，它用到了两个状态，分别来保存来自左流和右流的更新。
+
+  - 在同一个作业中为不同的状态计算设置不同 TTL。 举例来说，假设一个 ETL 作业使用 `ROW_NUMBER` 进行[去重](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/table/sql/queries/deduplication/)操作后， 紧接着使用 `GROUP BY` 语句进行[聚合](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/dev/table/sql/queries/group-agg/)操作。 该作业会分别生成两个拥有单条输入边的 `OneInputStreamOperator` 状态算子。您可以为去重算子和聚合算子的状态分别设置不同的 TTL。
+
+**生成Compiled Plan**
+
+> COMPILE PLAN不支持查询语句SELECT....FROM...
+
+* 指定`COMPILE PLAN`语句
+
+```java
+TableEnvironment tableEnv = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
+tableEnv.executeSql(
+    "CREATE TABLE orders (order_id BIGINT, order_line_id BIGINT, buyer_id BIGINT, ...)");
+tableEnv.executeSql(
+    "CREATE TABLE line_orders (order_line_id BIGINT, order_status TINYINT, ...)");
+tableEnv.executeSql(
+    "CREATE TABLE enriched_orders (order_id BIGINT, order_line_id BIGINT, order_status TINYINT, ...)");
+
+// CompilePlan#writeToFile only supports a local file path, if you need to write to remote filesystem,
+// please use tableEnv.executeSql("COMPILE PLAN 'hdfs://path/to/plan.json' FOR ...")
+CompiledPlan compiledPlan = 
+    tableEnv.compilePlanSql(
+        "INSERT INTO enriched_orders \n" 
+       + "SELECT a.order_id, a.order_line_id, b.order_status, ... \n" 
+       + "FROM orders a JOIN line_orders b ON a.order_line_id = b.order_line_id");
+
+compiledPlan.writeToFile("/path/to/plan.json");
+```
+
+* SQL语法,该语句会在指定位置 `/path/to/plan.json` 生成一个 JSON 文件。
+
+```sql
+COMPILE PLAN [IF NOT EXISTS] <plan_file_path> FOR <insert_statement>|<statement_set>;
+
+statement_set:
+    EXECUTE STATEMENT SET
+    BEGIN
+    insert_statement;
+    ...
+    insert_statement;
+    END;
+
+insert_statement:
+    <insert_from_select>|<insert_from_values>
+```
+
+**修改 Compiled Plan**
+
+* 每个状态算子会显式地生成一个名为 “state” 的 JSON 数组，具有如下结构。 理论上一个拥有 k 路输入的状态算子拥有 k 个状态。
+
+```json
+"state": [
+    {
+      "index": 0,
+      "ttl": "0 ms",
+      "name": "${1st input state name}"
+    },
+    {
+      "index": 1,
+      "ttl": "0 ms",
+      "name": "${2nd input state name}"
+    },
+    ...
+  ]
+```
+
+* 找到您需要修改的状态算子，将 TTL 的值设置为一个正整数，注意需要带上时间单位毫秒。举例来说，如果想将当前状态算子的 TTL 设置为 1 小时，您可以按照如下格式修改 JSON：
+
+```json
+{
+  "index": 0,
+  "ttl": "3600000 ms",
+  "name": "${1st input state name}"
+}
+```
+
+* 保存好文件，然后使用 `EXECUTE PLAN` 语句来提交作业。理论上，**下游状态算子的 TTL 不应小于上游状态算子的 TTL**。
+
+**执行 Compiled Plan**
+
+* `EXECUTE PLAN` 语句将会反序列化上述 JSON 文件，进一步生成 JobGraph 并提交作业。 通过 `EXECUTE PLAN` 语句提交的作业，其状态算子的 TTL 的值将会从文件中读取，配置项 `table.exec.state.ttl` 的值将会被忽略。
+* table API
+
+```java
+TableEnvironment tableEnv = TableEnvironment.create(EnvironmentSettings.inStreamingMode());
+tableEnv.executeSql(
+    "CREATE TABLE orders (order_id BIGINT, order_line_id BIGINT, buyer_id BIGINT, ...)");
+tableEnv.executeSql(
+    "CREATE TABLE line_orders (order_line_id BIGINT, order_status TINYINT, ...)");
+tableEnv.executeSql(
+    "CREATE TABLE enriched_orders (order_id BIGINT, order_line_id BIGINT, order_status TINYINT, ...)");
+
+// PlanReference#fromFile only supports a local file path, if you need to read from remote filesystem,
+// please use tableEnv.executeSql("EXECUTE PLAN 'hdfs://path/to/plan.json'").await();
+tableEnv.loadPlan(PlanReference.fromFile("/path/to/plan.json")).execute().await();
+```
+
+* SQL语法
+
+```sql
+EXECUTE PLAN [IF EXISTS] <plan_file_path>;
+```
 
 ## 动态表(Dynamic Tables)
 
