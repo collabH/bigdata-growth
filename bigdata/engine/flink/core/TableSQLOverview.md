@@ -548,37 +548,106 @@ EXECUTE PLAN [IF EXISTS] <plan_file_path>;
 
 ## 动态表(Dynamic Tables)
 
-![Dynamic tables](../img/stream-query-stream.png)
+### DataStream上的关系查询
+
+* 传统关系代数和流处理与输入数据、执行和输出结果的关系
+
+| 关系代数 / SQL                                               | 流处理                                                     |
+| ------------------------------------------------------------ | ---------------------------------------------------------- |
+| 关系(或表)是有界(多)元组集合。                               | 流是一个无限元组序列。                                     |
+| 对批数据(例如关系数据库中的表)执行的查询可以访问完整的输入数据。 | 流式查询在启动时不能访问所有数据，必须“等待”数据流入。     |
+| 批处理查询在产生固定大小的结果后终止。                       | 流查询不断地根据接收到的记录更新其结果，并且始终不会结束。 |
+
+* 尽管关系代数和流处理存在如上差异，但是使用关系代数/SQL查询流并不是不可能的，一些常见的开源OLAP引擎(例如Doris、Clickhouse)提供*物化视图(Materialized Views)* 的特性。物化视图**被定义为一条 SQL 查询，就像常规的虚拟视图一样。与虚拟视图相反，物化视图缓存查询的结果，因此在访问视图时不需要对查询进行计算**。缓存的一个常见难题是**防止缓存为过期的结果提供服务。当其定义查询的基表被修改时，物化视图将过期**。 *即时视图维护(Eager View Maintenance)* **是一种一旦更新了物化视图的基表就立即更新视图的技术**。
+* 类比物化视图的思路，对于SQL查询流数据的前提如下：
+  * 数据库表是 `INSERT`、`UPDATE` 和 `DELETE` DML 语句的 *stream* 的结果，通常称为 *changelog stream* 。
+  * 物化视图被定义为一条 SQL 查询。为了更新视图，查询不断地处理视图的基本关系的changelog 流。
+  * 物化视图是流式 SQL 查询的结果。
+
+### 动态表和连续查询(Continuous Query)
 
 * 动态表是Flink对流数据的Table API和SQL支持的核心概念。
 * 与表示批处理数据的静态表不同，动态表随时间变化的。
-
-### 持续查询（Continuous Query）
-
-* 动态表可以像静态的批处理表一样进行查询，查询一个动态表产生持续查询(Continuous Query)
+* 动态表可以像静态的批处理表一样进行查询，查询一个动态表产生**持续查询(Continuous Query)**
 * 连续查询永远不会终止，并会生成另一个动态表。
-* 查询会不断更新其动态结果表，以反映动态输入表上的更改。
+* 查询会不断更新其动态结果表，以反映动态输入表上的更改。本质上动态查询类似于定义物化视图的查询。
+
+**流、动态表和连续查询的关系**
+
+![Dynamic tables](../img/stream-query-stream.png)
+
+1. 将流转换为动态表。
+2. 在动态表上计算一个连续查询，生成一个新的动态表。
+3. 生成的动态表被转换回流。
+
+**注意：** 动态表首先是一个逻辑概念。在查询执行期间不一定(完全)物化动态表。
+
+### 在流上定义表
+
+* 为了使用关系查询处理流，必须将其转换成 `Table`。从概念上讲，流的每条记录都被解释为对结果表的 `INSERT` 操作。本质上我们正在从一个 `INSERT`-only 的 changelog 流构建表。
+
+![](../img/流转动态表.jpg)
+
+**注意：**在流上定义的表在内部没有物化
+
+#### 连续查询
+
+* 在动态表上计算一个连续查询，并生成一个新的动态表。**与批处理查询不同，连续查询从不终止，并根据其输入表上的更新更新其结果表**。在任何时候，连续查询的结果在语义上与以批处理模式在输入表快照上执行的相同查询的结果相同。
+
+**连续查询案例**
+
+下图查询是一个简单的 `GROUP-BY COUNT` 聚合查询。它基于 `user` 字段对 `clicks` 表进行分组，并统计访问的 URL 的数量。下面的图显示了当 `clicks` 表被附加的行更新时，查询是如何被评估的。
 
 ![Continuous Non-Windowed Query](../img/query-groupBy-cnt.png)
 
-### 流式表查询的处理过程
+* 当查询开始，`clicks` 表(左侧)是空的。当第一行数据被插入到 `clicks` 表时，查询开始计算结果表。第一行数据 `[Mary,./home]` 插入后，**结果表(右侧，上部)**由一行 `[Mary, 1]` 组成。当第二行 `[Bob, ./cart]` 插入到 `clicks` 表时，查询会更新结果表并插入了一行新数据 `[Bob, 1]`。第三行 `[Mary, ./prod?id=1]` 将产生已计算的结果行的更新，`[Mary, 1]` 更新成 `[Mary, 2]`。最后，当第四行数据加入 `clicks` 表时，查询将第三行 `[Liz, 1]` 插入到结果表中。
 
-* 将流转换为动态表。
-* 在动态表上计算一个连续查询，生成一个新的动态表。
-* 生成的动态表被转换回流。
+案例二与案例一类似，除了用户属性之外，还将clicks分组至每小时滚动窗口中，计算每小时url数量。
+
+![](../img/query_count_window.jpg)
+
+* 与前面一样，左边显示了输入表 `clicks`。查询每小时持续计算结果并更新结果表。clicks表包含四行带有时间戳(`cTime`)的数据，时间戳在 `12:00:00` 和 `12:59:59` 之间。查询从这个输入计算出两个结果行(每个 `user` 一个)，并将它们附加到结果表中。对于 `13:00:00` 和 `13:59:59` 之间的下一个窗口，`clicks` 表包含三行，这将导致另外两行被追加到结果表。随着时间的推移，更多的行被添加到 `click` 中，结果表将被更新。
+
+#### 更新和追加查询
+
+* 上述俩个SQL查询有一个不同点
+  * SQL1查询更新先前输出的结果，即定义结果表的changelog流包含`INSERT`和`UPDATE`操作
+  * SQL2查询只附加到结果表，即结果表的changelog流只包含`INSERT`操作。
+* 一个查询是产生一个只追加的表还是一个更新的表有一些特性：
+  * 产生更新更改的查询通常必须维护更多的状态。
+  * 将 append-only 的表转换为流与将已更新的表转换为流是不同的。
+
+#### 查询的限制
+
+* 许多(但不是全部)语义上有效的查询可以作为流上的连续查询进行评估。有些查询代价太高而无法计算，这可能是由于它们**需要维护的状态大小，也可能是由于计算更新代价太高**。
+
+  * **状态大小：** 连续查询在无界流上计算，通常应该运行数周或数月。因此，连续查询处理的数据总量可能非常大。必须更新先前输出的结果的查询需要维护所有输出的行，以便能够更新它们。例如，第一个查询示例需要存储每个用户的 URL 计数，以便能够增加该计数并在输入表接收新行时发送新结果。如果只跟踪注册用户，则要维护的计数数量可能不会太高。但是，如果未注册的用户分配了一个惟一的用户名，那么要维护的计数数量将随着时间增长，并可能最终导致查询失败。
+
+    ```sql
+    SELECT user, COUNT(url)
+    FROM clicks
+    GROUP BY user;
+    ```
+
+  - **计算更新：** 有些查询需要重新计算和更新大量已输出的结果行，即使只添加或更新一条输入记录。显然，这样的查询不适合作为连续查询执行。下面的查询就是一个例子，它根据最后一次单击的时间为每个用户计算一个 `RANK`。一旦 `click` 表接收到一个新行，用户的 `lastAction` 就会更新，并必须计算一个新的排名。然而，由于两行不能具有相同的排名，所以所有较低排名的行也需要更新。
+
+    ```sql
+    SELECT user, RANK() OVER (ORDER BY lastAction)
+    FROM (
+      SELECT user, MAX(cTime) AS lastAction FROM clicks GROUP BY user
+    );
+    ```
 
 ### 表到流的转换
 
-动态表可以像普通数据库表一样通过 `INSERT`、`UPDATE` 和 `DELETE` 来不断修改。它可能是一个只有一行、不断更新的表，也可能是一个 insert-only 的表，没有 `UPDATE` 和 `DELETE` 修改，或者介于两者之间的其他表。
-
-在将动态表转换为流或将其写入外部系统时，需要对这些更改进行编码。Flink的 Table API 和 SQL 支持三种方式来编码一个动态表的变化:
-
-- **Append-only 流：** 仅通过 `INSERT` 操作修改的动态表可以通过输出插入的行转换为流。
-- **Retract 流：** retract 流包含两种类型的 message： *add messages* 和 *retract messages* 。通过将`INSERT` 操作编码为 add message、将 `DELETE` 操作编码为 retract message、将 `UPDATE` 操作编码为更新(先前)行的 retract message 和更新(新)行的 add message，将动态表转换为 retract 流。下图显示了将动态表转换为 retract 流的过程。
+* 动态表可以像普通数据库表一样通过 `INSERT`、`UPDATE` 和 `DELETE` 来不断修改。它可能是一个只有一行、不断更新的表，也可能是一个 insert-only 的表，没有 `UPDATE` 和 `DELETE` 修改，或者介于两者之间的其他表。
+* 在将动态表转换为流或将其写入外部系统时，需要对这些更改进行编码。Flink的 Table API 和 SQL 支持三种方式来编码一个动态表的变化:
+  * **Append-only 流：** 仅通过 `INSERT` 操作修改的动态表可以通过输出插入的行转换为流。
+  * **Retract 流：** retract 流包含两种类型的 message： *add messages* 和 *retract messages* 。通过将`INSERT` 操作编码为 add message、将 `DELETE` 操作编码为 retract message、将 `UPDATE` 操作编码为更新(先前)行的 retract message 和更新(新)行的 add message，将动态表转换为 retract 流。下图显示了将动态表转换为 retract 流的过程。
 
 ![Dynamic tables](../img/undo-redo-mode.png)
 
-- **Upsert 流:** upsert 流包含两种类型的 message： *upsert messages* 和*delete messages*。转换为 upsert 流的动态表需要(可能是组合的)唯一键。通过将 `INSERT` 和 `UPDATE` 操作编码为 upsert message，将 `DELETE` 操作编码为 delete message ，将具有唯一键的动态表转换为流。消费流的算子需要知道唯一键的属性，以便正确地应用 message。与 retract 流的主要区别在于 `UPDATE` 操作是用单个 message 编码的，因此效率更高。下图显示了将动态表转换为 upsert 流的过程。
+- **Upsert 流:** upsert 流包含两种类型的 message： *upsert messages* 和*delete messages*。转换为 upsert 流的动态表需要(可能是组合的)唯一键。通过将 `INSERT` 和 `UPDATE` 操作编码为 upsert message，将 `DELETE` 操作编码为 delete message ，将具有唯一键的动态表转换为流。消费流的算子需要知道唯一键的属性，以便正确地应用 message。与 retract 流的主要区别在于 `UPDATE` 操作是用单个 message 编码的，不需要拆分为`retract message`和`add message`，因此效率更高。下图显示了将动态表转换为 upsert 流的过程。
 
 ![Dynamic tables](../img/redo-mode.png)
 
