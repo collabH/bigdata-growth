@@ -651,6 +651,303 @@ EXECUTE PLAN [IF EXISTS] <plan_file_path>;
 
 ![Dynamic tables](../img/redo-mode.png)
 
+## 时间属性
+
+Flink基于几种不同的时间概念来处理数据
+
+* **处理时间:**执行具体操作时的机器时间（大家熟知的绝对时间, 例如 Java的 `System.currentTimeMillis()`) ）
+* **事件时间:**数据本身携带的时间。这个时间是在事件产生时的时间。
+* **摄入时间:**数据进入 Flink 的时间；在系统内部，会把它当做事件时间来处理。
+
+### 时间属性介绍
+
+* 像窗口这种基于时间的操作，需要时间属性相关信息，因此Table API中的表需要提供`逻辑时间属性`来表示时间，以及支持时间相关的操作。
+* 每种类型的表都可以有时间属性，可以在用*CREATE TABLE DDL*创建表的时候指定、也可以在 `DataStream` 中指定、也可以在定义 `TableSource` 时指定。一旦时间属性定义好，它就可以像普通列一样使用，也可以在时间相关的操作中使用。
+* 只要时间属性没有被修改，而是简单地从一个表传递到另一个表，它就仍然是一个有效的时间属性。时间属性可以像普通的时间戳的列一样被使用和计算。一旦时间属性被用在了计算中，它就会被物化，进而变成一个普通的时间戳。普通的时间戳是无法跟 Flink 的时间以及watermark等一起使用的，所以普通的时间戳就无法用在时间相关的操作中。
+* Table API 程序需要在 streaming environment 中指定时间属性：
+
+```java
+final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+env.setStreamTimeCharacteristic(TimeCharacteristic.ProcessingTime);
+// 或者:
+// env.setStreamTimeCharacteristic(TimeCharacteristic.IngestionTime);
+// env.setStreamTimeCharacteristic(TimeCharacteristic.EventTime);
+```
+
+### 处理时间
+
+* 处理时间**基于机器的本地时间来处理数据**，它不能够提供确定性。它既不需要从数据里获取时间，也不需要生产watermark，有三种方式定义处理时间
+
+#### **DDL中定义**
+
+```sql
+CREATE TABLE user_actions (
+  user_name STRING,
+  data STRING,
+  user_action_time AS PROCTIME() -- 声明一个额外的列作为处理时间属性
+) WITH (
+  ...
+);
+
+SELECT TUMBLE_START(user_action_time, INTERVAL '10' MINUTE), COUNT(DISTINCT user_name)
+FROM user_actions
+GROUP BY TUMBLE(user_action_time, INTERVAL '10' MINUTE);
+```
+
+#### **DataStream转换Table时定义**
+
+```java
+DataStream<Tuple2<String, String>> stream = ...;
+
+// 声明一个额外的字段作为时间属性字段
+Table table = tEnv.fromDataStream(stream, $("user_name"), $("data"), 
+// 定义处理时间
+$("user_action_time").proctime());
+
+WindowedTable windowedTable = table.window(
+        Tumble.over(lit(10).minutes())
+            .on($("user_action_time"))
+            .as("userActionWindow"));
+```
+
+#### **使用TableSource定义**
+
+```java
+// 定义一个由处理时间属性的 table source
+public class UserActionSource implements StreamTableSource<Row>, DefinedProctimeAttribute {
+
+	@Override
+	public TypeInformation<Row> getReturnType() {
+		String[] names = new String[] {"user_name" , "data"};
+		TypeInformation[] types = new TypeInformation[] {Types.STRING(), Types.STRING()};
+		return Types.ROW(names, types);
+	}
+
+	@Override
+	public DataStream<Row> getDataStream(StreamExecutionEnvironment execEnv) {
+		// create stream
+		DataStream<Row> stream = ...;
+		return stream;
+	}
+
+	@Override
+	public String getProctimeAttribute() {
+		// 这个名字的列会被追加到最后，作为第三列
+		return "user_action_time";
+	}
+}
+
+// register table source
+tEnv.registerTableSource("user_actions", new UserActionSource());
+
+WindowedTable windowedTable = tEnv
+	.from("user_actions")
+	.window(Tumble
+	    .over(lit(10).minutes())
+	    .on($("user_action_time"))
+	    .as("userActionWindow"));
+```
+
+### 事件时间
+
+* 事件时间允许程序**按照数据中包含的时间来处理**，这样可以在有乱序或者晚到的数据的情况下产生一致的处理结果。它可以保证从外部存储读取数据后产生可以复现（replayable）的结果。
+* 事件时间可以让程序在流式和批式作业中使用同样的语法。在流式程序中的事件时间属性，在批式程序中就是一个正常的时间字段。
+* 为了能够处理乱序的事件，并且区分正常到达和晚到的事件，Flink 需要从事件中**获取事件时间并且产生 watermark**。事件时间属性也有类似于处理时间的三种定义方式
+
+#### **在DDL中定义**
+
+##### 使用Timestamp定义
+
+Flink 支持和在 TIMESTAMP列和 TIMESTAMP_LTZ(携带时区)  列上定义事件时间。如果源数据中的时间戳数据表示为年-月-日-时-分-秒，则通常为不带时区信息的字符串值，例如 `2020-04-15 20:13:40.564`，建议将事件时间属性定义在 `TIMESTAMP` 列上:
+
+```sql
+CREATE TABLE user_actions (
+  user_name STRING,
+  data STRING,
+  user_action_time TIMESTAMP(3),
+  -- 声明 user_action_time 是事件时间属性，并且用 延迟 5 秒的策略来生成 watermark
+  WATERMARK FOR user_action_time AS user_action_time - INTERVAL '5' SECOND
+) WITH (
+  ...
+);
+
+SELECT TUMBLE_START(user_action_time, INTERVAL '10' MINUTE), COUNT(DISTINCT user_name)
+FROM user_actions
+GROUP BY TUMBLE(user_action_time, INTERVAL '10' MINUTE);
+```
+
+##### 使用TIMESTAMP_LTZ定义
+
+源数据中的时间戳数据表示为一个纪元 (epoch) 时间，通常是一个 long 值，例如 `1618989564564`，建议将事件时间属性定义在 `TIMESTAMP_LTZ` 列上：
+
+```sql
+CREATE TABLE user_actions (
+ user_name STRING,
+ data STRING,
+ ts BIGINT,
+ time_ltz AS TO_TIMESTAMP_LTZ(ts, 3),
+ -- declare time_ltz as event time attribute and use 5 seconds delayed watermark strategy
+ WATERMARK FOR time_ltz AS time_ltz - INTERVAL '5' SECOND
+) WITH (
+ ...
+);
+
+SELECT TUMBLE_START(time_ltz, INTERVAL '10' MINUTE), COUNT(DISTINCT user_name)
+FROM user_actions
+GROUP BY TUMBLE(time_ltz, INTERVAL '10' MINUTE);
+```
+
+##### SQL配置Watermark进阶方式
+
+**注意：**只有实现了`SupportsWatermarkPushDown`接口的源连接器(source connector)（比如kafka、pulsar）才可以使用这些进阶功能。
+
+**配置Watermark生成方式**
+
+* on-periodic: 周期性发射
+* on-event: 每条事件数据发射一次watermark
+
+```sql
+-- ddl中配置
+CREATE TABLE user_actions (
+  ...
+  user_action_time TIMESTAMP(3),
+  WATERMARK FOR user_action_time AS user_action_time - INTERVAL '5' SECOND
+) WITH (
+  'scan.watermark.emit.strategy'='on-event',
+  ...
+);
+-- 通过sql 'OPTIONS' hint配置
+select ... from source_table /*+ OPTIONS('scan.watermark.emit.strategy'='on-periodic') */
+```
+
+**配置数据源(Source)的空闲超时时间**
+
+* 如果数据源中的某一个分区/分片在一段时间内未发送事件数据，则意味着`WatermarkGenerator`也不会获得任何新数据去生成watermark，我们称这类数据源为空闲输入或空闲源。在这种情况下，如果其他某些分区仍然在发送事件数据就会出现问题，因为下游算子watermark的计算方式是取所有上游并行数据源watermark的最小值，由于空闲的分片/分区没有计算新的watermark，任务的watermark将不会发生变化，如果配置了数据源的空闲超时时间，一个分区/分片在超时时间没有发送事件数据就会被标记为空闲，下游计算新的watermark的时候将会忽略这个空闲sourse，从而让watermark继续推进。
+* 在sql中可以通过`table.exec.source.idle-timeout`参数来定义一个全局的超时时间，每个数据源都会生效。但如果你想为每个数据源设置不同的空闲超时时间，可以直接在源表中进行设置：
+
+```sql
+-- ddl中配置
+CREATE TABLE user_actions (
+  ...
+  user_action_time TIMESTAMP(3),
+  WATERMARK FOR user_action_time AS user_action_time - INTERVAL '5' SECOND
+) WITH (
+  'scan.watermark.idle-timeout'='1min',
+  ...
+);
+-- 通过sql 'OPTIONS' hint配置
+select ... from source_table /*+ OPTIONS('scan.watermark.idle-timeout'='1min') */
+```
+
+* 如果用户同时使用`table.exec.source.idle-timeout`参数和`scan.watermark.idle-timeout`参数配置了数据源的空闲超时时间，`scan.watermark.idle-timeout`参数会优先生效。
+
+**Watermark对齐**
+
+* 受到数据分布或者机器负载等各种因素的影响，同一个数据源的不同分区/分片之间可能出现消费速度不一样的情况，不同数据源之间的消费速度也可能不一样，假如下游有一些有状态的算子，这些算子可能需要在状态中缓存更多那些消费更快的数据，等待那些消费慢的数据，状态可能会变得很大；消费速率不一致也可能造成更严重的数据乱序情况，可能会影响窗口的计算准确度。这些场景都可以使用watermark对齐功能，确保源表的某个分片/分块/分区的watermark不会比其他分片/分块/分区增加太快，从而避免上述问题，需要注意的是watermark对齐功能会影响任务的性能，这取决于不同源表之间数据消费差别有多大。
+
+```sql
+-- ddl中配置
+CREATE TABLE user_actions (
+...
+user_action_time TIMESTAMP(3),
+  WATERMARK FOR user_action_time AS user_action_time - INTERVAL '5' SECOND
+) WITH (
+'scan.watermark.alignment.group'='alignment-group-1',
+'scan.watermark.alignment.max-drift'='1min',
+'scan.watermark.alignment.update-interval'='1s',
+...
+);
+-- 通过sql 'OPTIONS' hint配置
+select ... from source_table /*+ OPTIONS('scan.watermark.alignment.group'='alignment-group-1', 'scan.watermark.alignment.max-drift'='1min', 'scan.watermark.alignment.update-interval'='1s') */
+```
+
+* 参数的具体含义：
+  * `scan.watermark.alignment.group`配置对齐组名称，在同一个组的数据源将会对齐
+  * `scan.watermark.alignment.max-drift`配置分片/分块/分区允许偏离对齐时间的最大范围
+  * `scan.watermark.alignment.update-interval`配置计算对齐时间的频率，非必需，默认是1s
+
+#### **在 DataStream 到 Table 转换时定义**
+
+* 事件时间属性可以用 `.rowtime` 后缀在定义 `DataStream` schema 的时候来定义。[时间戳和 watermark](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/concepts/time/) 在这之前一定是在 `DataStream` 上已经定义好了。 在从 DataStream 转换到 Table 时，由于 `DataStream` 没有时区概念，因此 Flink 总是将 `rowtime` 属性解析成 `TIMESTAMP WITHOUT TIME ZONE` 类型，并且将所有事件时间的值都视为 UTC 时区的值。
+* 在从 `DataStream` 到 `Table` 转换时定义事件时间属性有两种方式。取决于用 `.rowtime` 后缀修饰的字段名字是否是已有字段，事件时间字段可以是：
+  - 在 schema 的结尾追加一个新的字段
+  - 替换一个已经存在的字段。
+
+```java
+// Option 1:
+
+// 基于 stream 中的事件产生时间戳和 watermark
+DataStream<Tuple2<String, String>> stream = inputStream.assignTimestampsAndWatermarks(...);
+
+// 声明一个额外的逻辑字段作为事件时间属性
+Table table = tEnv.fromDataStream(stream, $("user_name"), $("data"), $("user_action_time").rowtime());
+
+
+// Option 2:
+
+// 从第一个字段获取事件时间，并且产生 watermark
+DataStream<Tuple3<Long, String, String>> stream = inputStream.assignTimestampsAndWatermarks(...);
+
+// 第一个字段已经用作事件时间抽取了，不用再用一个新字段来表示事件时间了
+Table table = tEnv.fromDataStream(stream, $("user_action_time").rowtime(), $("user_name"), $("data"));
+
+// Usage:
+
+WindowedTable windowedTable = table.window(Tumble
+       .over(lit(10).minutes())
+       .on($("user_action_time"))
+       .as("userActionWindow"));
+```
+
+#### **用 TableSource 定义**
+
+* 事件时间属性可以在实现了 `DefinedRowTimeAttributes` 的 `TableSource` 中定义。`getRowtimeAttributeDescriptors()` 方法返回 `RowtimeAttributeDescriptor` 的列表，包含了描述事件时间属性的字段名字、如何计算事件时间、以及 watermark 生成策略等信息。
+
+  同时需要确保 `getDataStream` 返回的 `DataStream` 已经定义好了时间属性。 只有在定义了 `StreamRecordTimestamp` 时间戳分配器的时候，才认为 `DataStream` 是有时间戳信息的。 只有定义了 `PreserveWatermarks` watermark 生成策略的 `DataStream` 的 watermark 才会被保留。反之，则只有时间字段的值是生效的。
+
+```java
+// 定义一个有事件时间属性的 table source
+public class UserActionSource implements StreamTableSource<Row>, DefinedRowtimeAttributes {
+
+	@Override
+	public TypeInformation<Row> getReturnType() {
+		String[] names = new String[] {"user_name", "data", "user_action_time"};
+		TypeInformation[] types =
+		    new TypeInformation[] {Types.STRING(), Types.STRING(), Types.LONG()};
+		return Types.ROW(names, types);
+	}
+
+	@Override
+	public DataStream<Row> getDataStream(StreamExecutionEnvironment execEnv) {
+		// 构造 DataStream
+		// ...
+		// 基于 "user_action_time" 定义 watermark
+		DataStream<Row> stream = inputStream.assignTimestampsAndWatermarks(...);
+		return stream;
+	}
+
+	@Override
+	public List<RowtimeAttributeDescriptor> getRowtimeAttributeDescriptors() {
+		// 标记 "user_action_time" 字段是事件时间字段
+		// 给 "user_action_time" 构造一个时间属性描述符
+		RowtimeAttributeDescriptor rowtimeAttrDescr = new RowtimeAttributeDescriptor(
+			"user_action_time",
+			new ExistingField("user_action_time"),
+			new AscendingTimestamps());
+		List<RowtimeAttributeDescriptor> listRowtimeAttrDescr = Collections.singletonList(rowtimeAttrDescr);
+		return listRowtimeAttrDescr;
+	}
+}
+
+// register the table source
+tEnv.registerTableSource("user_actions", new UserActionSource());
+
+WindowedTable windowedTable = tEnv
+	.from("user_actions")
+	.window(Tumble.over(lit(10).minutes()).on($("user_action_time")).as("userActionWindow"));
+```
+
 # Flink SQL架构
 
 ## Old Planner架构
