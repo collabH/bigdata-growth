@@ -948,6 +948,124 @@ WindowedTable windowedTable = tEnv
 	.window(Tumble.over(lit(10).minutes()).on($("user_action_time")).as("userActionWindow"));
 ```
 
+## 时态表(Temporal Tables)
+
+* 时态表(Temporal Table)是一张随时间变化的表，在Flink中称为动态表，时态表中的每条记录都关联了一个或多个时间段，所有的 Flink 表都是时态的（动态的）。
+* 时态表包含表的**一个或多个有版本的表快照**，时态表可以是一张跟踪**所有变更记录的表**（例如数据库表的 changelog，包含多个表快照），也可以是**物化所有变更之后的表**（例如数据库表，只有最新表快照）。
+* **版本**: 时态表可以划分成一系列带版本的表快照集合，表快照中的版本代表了快照中所有记录的有效区间，有效区间的开始时间和结束时间可以通过用户指定，根据时态表是否可以追踪自身的历史版本与否，时态表可以分为 `版本表` 和 `普通表`。
+  * **版本表**: 如果时态表中的记录可以追踪和并访问它的历史版本，这种表我们称之为版本表，来自数据库的 changelog 可以定义成版本表。
+  * **普通表**: 如果时态表中的记录仅仅可以追踪并和它的最新版本，这种表我们称之为普通表，来自数据库 或 HBase 的表可以定义成普通表。
+
+### 声明表
+
+#### 版本表
+
+* 定义了主键约束和事件时间属性的表就是版本表
+
+```sql
+-- 定义一张版本表
+CREATE TABLE product_changelog (
+  product_id STRING,
+  product_name STRING,
+  product_price DECIMAL(10, 4),
+  update_time TIMESTAMP(3) METADATA FROM 'value.source.timestamp' VIRTUAL,
+  PRIMARY KEY(product_id) NOT ENFORCED,      -- (1) 定义主键约束
+  WATERMARK FOR update_time AS update_time   -- (2) 通过 watermark 定义事件时间              
+) WITH (
+  'connector' = 'kafka',
+  'topic' = 'products',
+  'scan.startup.mode' = 'earliest-offset',
+  'properties.bootstrap.servers' = 'localhost:9092',
+  'value.format' = 'debezium-json'
+);
+```
+
+* `METADATA FROM 'value.source.timestamp' VIRTUAL`语法的意思是从每条 changelog 中抽取 changelog 对应的数据库表中操作的执行时间，**强烈推荐使用数据库表中操作的执行时间作为事件时间 ，否则通过时间抽取的版本可能和数据库中的版本不匹配**。
+
+#### 版本视图
+
+* 定义版本视图需要一个视图包含主键和事件时间，首先定义一个append-only表
+
+```sql
+-- 定义一张 append-only 表
+CREATE TABLE RatesHistory (
+    currency_time TIMESTAMP(3),
+    currency STRING,
+    rate DECIMAL(38, 10),
+    WATERMARK FOR currency_time AS currency_time   -- 定义事件时间
+) WITH (
+  'connector' = 'kafka',
+  'topic' = 'rates',
+  'scan.startup.mode' = 'earliest-offset',
+  'properties.bootstrap.servers' = 'localhost:9092',
+  'format' = 'json'                                -- 普通的 append-only 流
+)
+-- 数据格式如下
+SELECT * FROM RatesHistory;
+
+currency_time currency  rate
+============= ========= ====
+09:00:00      US Dollar 102
+09:00:00      Euro      114
+09:00:00      Yen       1
+10:45:00      Euro      116
+11:15:00      Euro      119
+11:49:00      Pounds    108
+
+-- 基于append-only表定义版本视图，通过去重查询方式来讲append-only流转换为changelog流
+CREATE VIEW versioned_rates AS              
+SELECT currency, rate, currency_time            -- (1) `currency_time` 保留了事件时间
+  FROM (
+      SELECT *,
+      ROW_NUMBER() OVER (PARTITION BY currency  -- (2) `currency` 是去重 query 的 unique key，可以作为主键
+         ORDER BY currency_time DESC) AS rowNum 
+      FROM RatesHistory )
+WHERE rowNum = 1; 
+
+-- 视图 `versioned_rates` 将会产出如下的 changelog:
+
+(changelog kind) currency_time currency   rate
+================ ============= =========  ====
++(INSERT)        09:00:00      US Dollar  102
++(INSERT)        09:00:00      Euro       114
++(INSERT)        09:00:00      Yen        1
++(UPDATE_AFTER)  10:45:00      Euro       116
++(UPDATE_AFTER)  11:15:00      Euro       119
++(INSERT)        11:49:00      Pounds     108
+
+```
+
+* 视图中去重的`query`会被Flink优化并高效地产出changelog stream，产出的changelog保留了主键约束和事件时间
+
+#### 普通表
+
+* 普通表和Flink建表DDL一致
+
+```sql
+-- 用 DDL 定义一张 HBase 表，然后我们可以在 SQL 中将其当作一张时态表使用
+-- 'currency' 列是 HBase 表中的 rowKey
+ CREATE TABLE LatestRates (   
+     currency STRING,   
+     fam1 ROW<rate DOUBLE>   
+ ) WITH (   
+    'connector' = 'hbase-1.4',   
+    'table-name' = 'rates',   
+    'zookeeper.quorum' = 'localhost:2181'   
+ );
+```
+
+* **注意：** 理论上讲任意都能用作时态表并在基于处理时间的时态表 Join 中使用，但当前支持作为时态表的普通表必须实现接口 `LookupableTableSource`。接口 `LookupableTableSource` 的实例只能作为时态表用于基于处理时间的时态 Join ，这样相当于每次都是直接查询底层时态表。
+* 通过 `LookupableTableSource` 定义的表意味着该表具备了在运行时通过一个或多个 key 去查询外部存储系统的能力，当前支持在 基于处理时间的时态表 join 中使用的表包括 [JDBC](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/connectors/table/jdbc/), [HBase](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/connectors/table/hbase/) 和 [Hive](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/connectors/table/hive/hive_read_write/#temporal-table-join)。
+
+### 时态表函数
+
+* 时态表函数提供了在特定时间点对时态表版本的访问。为了访问时态表中的数据，必须传递一个时间属性，该属性决定将返回的表的版本。Flink使用表函数的SQL语法来提供一种表达它的方法。
+* 与版本表不同的是，时态表函数只能在只允许追加的流上定义，它不支持更改日志输入。此外，不能在纯SQL DDL中定义时态表函数。
+
+#### 定义一个时态表函数
+
+* 时态表函数可以使用table API在仅append-only stream之上定义。表注册了一个或多个键列，以及一个用于版本控制的时间属性。
+
 # Flink SQL架构
 
 ## Old Planner架构
