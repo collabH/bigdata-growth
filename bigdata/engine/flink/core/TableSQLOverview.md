@@ -1066,6 +1066,109 @@ WHERE rowNum = 1;
 
 * 时态表函数可以使用table API在仅append-only stream之上定义。表注册了一个或多个键列，以及一个用于版本控制的时间属性。
 
+```sql
+SELECT * FROM currency_rates;
+
+update_time   currency   rate
+============= =========  ====
+09:00:00      Yen        102
+09:00:00      Euro       114
+09:00:00      USD        1
+11:15:00      Euro       119
+11:49:00      Pounds     108
+-- 基于currency_rates表的update_time和currency字段注册时态表函数rates
+TemporalTableFunction rates = tEnv
+    .from("currency_rates")
+    .createTemporalTableFunction("update_time", "currency");
+ 
+tEnv.createTemporarySystemFunction("rates", rates);       
+```
+
+#### 关联时态表函数
+
+* 一旦定义，时态表函数就被用作标准表函数。在append-only表(左输入/探测端)可以与temporal表(右输入/构建端)join，即随时间变化并跟踪其变化的表，以检索键在特定时间点的值。
+
+```sql
+-- 类似于order表直接和currency_rates进行join
+SELECT
+  SUM(amount * rate) AS amount
+FROM
+  orders,
+  LATERAL TABLE (rates(order_time))
+WHERE
+  rates.currency = orders.currency
+```
+
+## 性能调优
+
+### MiniBatch 聚合
+
+* 默认情况下，无界聚合算子是逐条处理输入的记录，即：（1）从状态中读取累加器，（2）累加/撤回记录至累加器，（3）将累加器写回状态，（4）下一条记录将再次从（1）开始处理。这种处理模式可能会增加 StateBackend 开销（尤其是对于 RocksDB StateBackend ）。此外，生产中非常常见的数据倾斜会使这个问题恶化，并且容易导致 job 发生反压。
+* MiniBatch聚合的核心思想是`将一组输入的数据缓存在聚合算子内部的缓冲区中`，当输入的数据被触发处理时，每个key只需一个操作即可访问状态，这样可以大大减少状态开销并获得更好的吞吐量。
+* 但是，这可能会增加一些延迟，因为它会缓冲一些记录而不是立即处理它们。这是吞吐量和延迟之间的权衡。下图是mini-batch聚合如何减少状态操作的流程对比，可以看出开启mini-batch优化后只需要一次状态操作就可以操作一批数据。
+
+![img](../img/minibatch_agg.png)
+
+* 默认情况下，对于无界聚合算子来说，mini-batch优化是被禁止的。下列参数用于开启mini-batch优化
+
+```java
+TableEnvironment tEnv = ...;
+// 获取flink配置
+TableConfig configuration = tEnv.getConfig();
+// 开启mini-batch优化
+configuration.set("table.exec.mini-batch.enabled", "true"); 
+// 一批数据buffer的时间
+configuration.set("table.exec.mini-batch.allow-latency", "5 s"); 
+// 最大的批次数量
+configuration.set("table.exec.mini-batch.size", "5000"); 
+```
+
+### Local-Global 聚合
+
+* Local-global聚合是为解决数据倾斜问题，通过将一组聚合分为两个阶段，首先在上游进行本地聚合，然后在下游进行全局聚合，类似于MR中的**Combine+Reduce**模式。以下SQL来看
+
+```sql
+SELECT color, sum(id)
+FROM T
+GROUP BY color
+```
+
+* 数据流中的记录可能会倾斜，因此某些聚合算子的实例必须比其他实例处理更多的记录，这会产生**热点问题**。本地聚合可以将一定数量具有相同 key 的输入数据累加到单个累加器中。全局聚合将仅接收 reduce 后的累加器，而不是大量的原始输入数据。这可以大大减少网络 shuffle 和状态访问的成本。每次本地聚合累积的输入数据量基于 mini-batch 间隔。这意味着 local-global 聚合依赖于启用了 mini-batch 优化。
+
+![img](../img/local_agg.png)
+
+```java
+TableEnvironment tEnv = ...;
+// 获取flink配置
+TableConfig configuration = tEnv.getConfig();
+// 开启mini-batch优化
+configuration.set("table.exec.mini-batch.enabled", "true"); 
+// 一批数据buffer的时间
+configuration.set("table.exec.mini-batch.allow-latency", "5 s"); 
+// 最大的批次数量
+configuration.set("table.exec.mini-batch.size", "5000"); 
+// 开启TWO_PHASE local-global聚合
+configuration.set("table.optimizer.agg-phase-strategy", "TWO_PHASE"); 
+```
+
+### 拆分distinct聚合
+
+
+
+### 在 distinct 聚合上使用 FILTER 修饰符
+
+```sql
+SELECT
+ day,
+ COUNT(DISTINCT user_id) AS total_uv,
+ COUNT(DISTINCT user_id) FILTER (WHERE flag IN ('android', 'iphone')) AS app_uv,
+ COUNT(DISTINCT user_id) FILTER (WHERE flag IN ('wap', 'other')) AS web_uv
+FROM T
+GROUP BY day
+```
+
+# 
+
 # Flink SQL架构
 
 ## Old Planner架构
@@ -1666,63 +1769,6 @@ catalog.functionExists("myfunc");
 
 // list functions in a database
 catalog.listFunctions("mydb");
-```
-
-# 流式聚合
-
-* 存在的问题
-
-```
-默认情况下，无界聚合算子是逐条处理输入的记录，即：（1）从状态中读取累加器，（2）累加/撤回记录至累加器，（3）将累加器写回状态，（4）下一条记录将再次从（1）开始处理。这种处理模式可能会增加 StateBackend 开销（尤其是对于 RocksDB StateBackend ）。此外，生产中非常常见的数据倾斜会使这个问题恶化，并且容易导致 job 发生反压。
-```
-
-## MiniBatch 聚合
-
-* `将一组输入的数据缓存在聚合算子内部的缓冲区中`，当输入的数据被触发处理时，每个key只需一个操作即可访问状态，这样可以大大减少状态开销并获得更好的吞吐量。
-* 但是，这可能会增加一些延迟，因为它会缓冲一些记录而不是立即处理它们。这是吞吐量和延迟之间的权衡。
-
-![img](../img/minibatch_agg.png)
-
-### 参数配置开启
-
-```java
-// access flink configuration
-Configuration configuration = tEnv.getConfig().getConfiguration();
-// set low-level key-value options
-configuration.setString("table.exec.mini-batch.enabled", "true"); // enable mini-batch optimization
-configuration.setString("table.exec.mini-batch.allow-latency", "5 s"); // use 5 seconds to buffer input records
-configuration.setString("table.exec.mini-batch.size", "5000"); // the maximum number of records can be buffered by each aggregate operator task
-```
-
-## Local-Global 聚合
-
-* Local-global聚合是为解决数据倾斜问题，通过将一组聚合氛围两个阶段，首先在上游进行本地聚合，然后在下游进行全局聚合，类似于MR中的**Combine+Reduce**模式。
-* 每次本地聚合累积的输入数据量基于 mini-batch 间隔。
-
-![img](../img/local_agg.png)
-
-### 开启配置
-
-```java
-// access flink configuration
-Configuration configuration = tEnv.getConfig().getConfiguration();
-// set low-level key-value options
-configuration.setString("table.exec.mini-batch.enabled", "true"); // local-global aggregation depends on mini-batch is enabled
-configuration.setString("table.exec.mini-batch.allow-latency", "5 s");
-configuration.setString("table.exec.mini-batch.size", "5000");
-configuration.setString("table.optimizer.agg-phase-strategy", "TWO_PHASE"); // enable two-phase, i.e. local-global aggregation
-```
-
-## 在 distinct 聚合上使用 FILTER 修饰符
-
-```sql
-SELECT
- day,
- COUNT(DISTINCT user_id) AS total_uv,
- COUNT(DISTINCT user_id) FILTER (WHERE flag IN ('android', 'iphone')) AS app_uv,
- COUNT(DISTINCT user_id) FILTER (WHERE flag IN ('wap', 'other')) AS web_uv
-FROM T
-GROUP BY day
 ```
 
 # 执行配置
