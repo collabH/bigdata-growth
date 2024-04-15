@@ -1153,9 +1153,60 @@ configuration.set("table.optimizer.agg-phase-strategy", "TWO_PHASE");
 
 ### 拆分distinct聚合
 
+* Local-Global优化可有效消除常规聚合的数据清洗，例如SUM、COUNT、MAX、MIN、AVG。但是在处理distinct聚合时，并不能从根本缓解数据倾斜问题。
 
+```sql
+-- 查询每天登录的uv
+SELECT day, COUNT(DISTINCT user_id)
+FROM T
+GROUP BY day
+```
+
+* 如果 distinct key （即 user_id）的值分布稀疏，则 COUNT DISTINCT 不适合减少数据。即使启用了 local-global 优化也没有太大帮助。因为累加器仍然包含几乎所有原始记录，并且全局聚合将成为瓶颈（大多数繁重的累加器由一个任务处理，即同一天）。
+
+* 这个优化的想法是将不同的聚合（例如 `COUNT(DISTINCT col)`）分为两个级别。第一次聚合由 group key 和额外的 bucket key 进行 shuffle。bucket key 是使用 `HASH_CODE(distinct_key) % BUCKET_NUM` 计算的。`BUCKET_NUM` 默认为1024，可以通过 `table.optimizer.distinct-agg.split.bucket-num` 选项进行配置。第二次聚合是由原始 group key 进行 shuffle，并使用 `SUM` 聚合来自不同 buckets 的 COUNT DISTINCT 值。由于相同的 distinct key 将仅在同一 bucket 中计算，因此转换是等效的。bucket key 充当附加 group key 的角色，以分担 group key 中热点的负担。bucket key 使 job 具有可伸缩性来解决不同聚合中的数据倾斜/热点。拆分 distinct 聚合后，**以上查询将被自动改写为以下查询：**
+
+  ```sql
+  SELECT day, SUM(cnt)
+  FROM (
+      SELECT day, COUNT(DISTINCT user_id) as cnt
+      FROM T
+      GROUP BY day, MOD(HASH_CODE(user_id), 1024)
+  )
+  GROUP BY day
+  ```
+
+* 下图显示了拆分 distinct 聚合如何提高性能（假设颜色表示 days，字母表示 user_id）。
+
+![](../img/count_distinct_optimize.jpg)
+
+* **注意：**上面是可以从这个优化中受益的最简单的示例。除此之外，Flink 还支持拆分更复杂的聚合查询，例如，多个具有不同 distinct key （例如 `COUNT(DISTINCT a), SUM(DISTINCT b)` ）的 distinct 聚合，可以与其他非 distinct 聚合（例如 `SUM`、`MAX`、`MIN`、`COUNT` ）一起使用。当前，拆分优化**不支持包含用户定义的 AggregateFunction 聚合**。
+
+```java
+TableEnvironment tEnv = ...;
+// 开启拆分distinct聚合优化
+tEnv.getConfig()
+  .set("table.optimizer.distinct-agg.split.enabled", "true"); 
+```
 
 ### 在 distinct 聚合上使用 FILTER 修饰符
+
+* 在某些情况下，用户可能需要从不同维度计算 UV（独立访客）的数量，例如来自 Android 的 UV、iPhone 的 UV、Web 的 UV 和总 UV。很多人会选择 `CASE WHEN`，例如：
+
+```sql
+SELECT
+ day,
+ // 计算整体uv
+ COUNT(DISTINCT user_id) AS total_uv,
+ // 计算app端uv
+ COUNT(DISTINCT CASE WHEN flag IN ('android', 'iphone') THEN user_id ELSE NULL END) AS app_uv,
+ // 计算web端uv
+ COUNT(DISTINCT CASE WHEN flag IN ('wap', 'other') THEN user_id ELSE NULL END) AS web_uv
+FROM T
+GROUP BY day
+```
+
+* 在这种情况下，**建议使用 `FILTER` 语法而不是 CASE WHEN**。因为 `FILTER` 更符合 SQL 标准，并且**能获得更多的性能提升**。`FILTER` 是用于聚合函数的修饰符，用于限制聚合中使用的值。将上面的示例替换为 `FILTER` 修饰符，如下所示：
 
 ```sql
 SELECT
@@ -1167,7 +1218,33 @@ FROM T
 GROUP BY day
 ```
 
-# 
+* Flink SQL 优化器可以识别相同的 distinct key 上的不同过滤器参数。例如，在上面的示例中，三个 COUNT DISTINCT 都在 `user_id` 一列上。Flink 可以只使用一个共享状态实例，而不是三个状态实例，以减少状态访问和状态大小。在某些工作负载下，可以获得显著的性能提升。
+
+### MiniBatch Regular Joins
+
+* 默认情况下，regular join 算子是逐条处理输入的记录，即：（1）根据当前输入记录的 join key 关联对方状态中的记录，（2）根据当前记录写入或者撤回状态中的记录，（3）根据当前的输入记录和关联到的记录输出结果。 这种处理模式可能会**增加 StateBackend 的开销**（尤其是对于 RocksDB StateBackend ）。除此之外，这会导致**严重的中间结果放大**。尤其在**多级级联 join 的场景，会产生很多的中间结果从而导致性能降低**。
+* MiniBatch join 主要解决 regular join 存在的中间结果放大和 StateBackend 开销较大的问题。其核心思想是将一组输入的数据缓存在 join 算子内部的缓冲区中，一旦达到时间阈值或者缓存容量阈值，就触发 join 执行流程。 这有两个主要的优化点：
+  * 在缓存中折叠数据，以此**减少 join 的次数**。
+  * 尽最大可能在处理数据时抑制冗余数据下发。
+
+* 以 left join 为例子，左右流的输入都是 join key 包含 unique key 的情况。假设 `id` 为 join key 和 unique key （数字代表 `id`, 字母代表 `content`）, 具体 SQL 如下:
+
+```sql
+-- 和mini batch配置一致
+SET 'table.exec.mini-batch.enabled' = 'true';
+SET 'table.exec.mini-batch.allow-latency' = '5S';
+SET 'table.exec.mini-batch.size' = '5000';
+    
+SELECT a.id as a_id, a.a_content, b.id as b_id, b.b_content
+FROM a LEFT JOIN b
+ON a.id = b.id
+```
+
+* 针对上述场景，mini-batch join 算子的具体处理过程如下图所示。
+
+![img](../img/mini_batch_jpin.jpg)
+
+* 默认情况下，对于 regular join 算子来说，mini-batch 优化是被禁用的。开启这项优化，需要设置选项 `table.exec.mini-batch.enabled`、`table.exec.mini-batch.allow-latency` 和 `table.exec.mini-batch.size`。
 
 # Flink SQL架构
 
