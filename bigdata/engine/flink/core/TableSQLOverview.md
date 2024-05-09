@@ -1246,6 +1246,145 @@ ON a.id = b.id
 
 * 默认情况下，对于 regular join 算子来说，mini-batch 优化是被禁用的。开启这项优化，需要设置选项 `table.exec.mini-batch.enabled`、`table.exec.mini-batch.allow-latency` 和 `table.exec.mini-batch.size`。
 
+## 时区
+
+* Flink为日期和时间提供了丰富的数据类型，包括DATE、TIME、TIMESTAMP、TIMESTAMP_LTZ、INTERVAL YEAR TO MONTH、INTERVAL DAY TO SECOND。Flink支持在session级别设置时区。M
+
+### TIMESTAMP vs TIMESTAMP_LTZ
+
+#### TIMESTAMP 类型
+
+- `TIMESTAMP(p)` 是 `TIMESTAMP(p) WITHOUT TIME ZONE` 的简写， 精度 `p` 支持的范围是0-9， 默认是6。
+- `TIMESTAMP` 用于描述年， 月， 日， 小时， 分钟， 秒 和 小数秒对应的时间戳。
+- `TIMESTAMP` 可以通过一个字符串来指定，例如：
+
+```sql
+Flink SQL> SELECT TIMESTAMP '1970-01-01 00:00:04.001';
++-------------------------+
+| 1970-01-01 00:00:04.001 |
++-------------------------+
+```
+
+#### TIMESTAMP_LTZ 类型
+
+- `TIMESTAMP_LTZ(p)` 是 `TIMESTAMP(p) WITH LOCAL TIME ZONE` 的简写， 精度 `p` 支持的范围是0-9， 默认是6。
+- `TIMESTAMP_LTZ` 用于描述时间线上的绝对时间点， 使用 long 保存从 epoch 至今的毫秒数， 使用int保存毫秒中的纳秒数。 epoch 时间是从 java 的标准 epoch 时间 `1970-01-01T00:00:00Z` 开始计算。 在计算和可视化时， 每个 `TIMESTAMP_LTZ` 类型的数据都是使用的 session （会话）中配置的时区。
+- `TIMESTAMP_LTZ` 没有字符串表达形式因此无法通过字符串来指定， 可以通过一个 long 类型的 epoch 时间来转化(例如: 通过 Java 来产生一个 long 类型的 epoch 时间 `System.currentTimeMillis()`)
+
+```sql
+Flink SQL> CREATE VIEW T1 AS SELECT TO_TIMESTAMP_LTZ(4001, 3);
+Flink SQL> SET 'table.local-time-zone' = 'UTC';
+Flink SQL> SELECT * FROM T1;
++---------------------------+
+| TO_TIMESTAMP_LTZ(4001, 3) |
++---------------------------+
+|   1970-01-01 00:00:04.001 |
++---------------------------+
+
+Flink SQL> SET 'table.local-time-zone' = 'Asia/Shanghai';
+Flink SQL> SELECT * FROM T1;
++---------------------------+
+| TO_TIMESTAMP_LTZ(4001, 3) |
++---------------------------+
+|   1970-01-01 08:00:04.001 |
++---------------------------+
+```
+
+- `TIMESTAMP_LTZ` 可以用于跨时区的计算，因为它是一个基于 epoch 的绝对时间点（比如上例中的 `4001` 毫秒）代表的就是不同时区的同一个绝对时间点。 补充一个背景知识：在同一个时间点， 全世界所有的机器上执行 `System.currentTimeMillis()` 都会返回同样的值。 (比如上例中的 `4001` milliseconds), 这就是绝对时间的定义。
+
+### 时区的作用
+
+* 本地时区定义了当前会话所在的时区,可以通过下述命令配置
+
+```sql
+-- 设置为 UTC 时区
+Flink SQL> SET 'table.local-time-zone' = 'UTC';
+
+-- 设置为上海时区
+Flink SQL> SET 'table.local-time-zone' = 'Asia/Shanghai';
+
+-- 设置为Los_Angeles时区
+Flink SQL> SET 'table.local-time-zone' = 'America/Los_Angeles';
+```
+
+#### 确定时间函数的返回值
+
+* 会话的时区设置对以下函数生效：
+  * LOCALTIME
+  * LOCALTIMESTAMP
+  * CURRENT_DATE
+  * CURRENT_TIME
+  * CURRENT_TIMESTAMP
+  * CURRENT_ROW_TIMESTAMP()
+  * NOW()
+  * PROCTIME()
+
+```sql
+Flink SQL> SET 'sql-client.execution.result-mode' = 'tableau';
+Flink SQL> CREATE VIEW MyView1 AS SELECT LOCALTIME, LOCALTIMESTAMP, CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, CURRENT_ROW_TIMESTAMP(), NOW(), PROCTIME();
+Flink SQL> DESC MyView1;
+-- 设置时区为UTC
+Flink SQL> SET 'table.local-time-zone' = 'UTC';
+Flink SQL> SELECT * FROM MyView1;
+
++-----------+-------------------------+--------------+--------------+-------------------------+-------------------------+-------------------------+-------------------------+
+| LOCALTIME |          LOCALTIMESTAMP | CURRENT_DATE | CURRENT_TIME |       CURRENT_TIMESTAMP | CURRENT_ROW_TIMESTAMP() |                   NOW() |              PROCTIME() |
++-----------+-------------------------+--------------+--------------+-------------------------+-------------------------+-------------------------+-------------------------+
+|  15:18:36 | 2021-04-15 15:18:36.384 |   2021-04-15 |     15:18:36 | 2021-04-15 15:18:36.384 | 2021-04-15 15:18:36.384 | 2021-04-15 15:18:36.384 | 2021-04-15 15:18:36.384 |
++-----------+-------------------------+--------------+--------------+-------------------------+-------------------------+-------------------------+-------------------------+
+
+-- 设置时区为上海
+Flink SQL> SET 'table.local-time-zone' = 'Asia/Shanghai';
+Flink SQL> SELECT * FROM MyView1;
+
++-----------+-------------------------+--------------+--------------+-------------------------+-------------------------+-------------------------+-------------------------+
+| LOCALTIME |          LOCALTIMESTAMP | CURRENT_DATE | CURRENT_TIME |       CURRENT_TIMESTAMP | CURRENT_ROW_TIMESTAMP() |                   NOW() |              PROCTIME() |
++-----------+-------------------------+--------------+--------------+-------------------------+-------------------------+-------------------------+-------------------------+
+|  23:18:36 | 2021-04-15 23:18:36.384 |   2021-04-15 |     23:18:36 | 2021-04-15 23:18:36.384 | 2021-04-15 23:18:36.384 | 2021-04-15 23:18:36.384 | 2021-04-15 23:18:36.384 |
++-----------+-------------------------+--------------+--------------+-------------------------+-------------------------+-------------------------+-------------------------+
+```
+
+#### TIMESTAMP_LTZ字符串表示
+
+* 当一个 `TIMESTAMP_LTZ` 值转为 string 格式时， 会话中配置的时区会生效。 例如打印这个值，将类型强制转化为 `STRING` 类型， 将类型强制转换为 `TIMESTAMP` ，将 `TIMESTAMP` 的值转化为 `TIMESTAMP_LTZ` 
+
+### 时间属性和时区
+
+#### 处理时间和时区
+
+* Flink SQL 使用函数 `PROCTIME()` 来定义处理时间属性， 该函数返回的类型是 `TIMESTAMP_LTZ` 。1.13之前`PROCTIME()`返回的类型为`TIMESTAMP`，返回值是UTC时区下的TIMESTAMP。1.13之后，返回的是本地时区的时间
+
+```sql
+Flink SQL> SET 'table.local-time-zone' = 'UTC';
+Flink SQL> SELECT PROCTIME();
++-------------------------+
+|              PROCTIME() |
++-------------------------+
+| 2021-04-15 14:48:31.387 |
++-------------------------+
+
+-- 切换时区为上海
+Flink SQL> SET 'table.local-time-zone' = 'Asia/Shanghai';
+Flink SQL> SELECT PROCTIME();
++-------------------------+
+|              PROCTIME() |
++-------------------------+
+| 2021-04-15 22:48:31.387 |
++-------------------------+
+```
+
+#### 事件时间和时区
+
+**TIMESTAMP上的事件时间属性**
+
+* 如果 source 中的时间用于表示年-月-日-小时-分钟-秒， 通常是一个不带时区的字符串， 例如: `2020-04-15 20:13:40.564`。 推荐在 `TIMESTAMP` 列上定义事件时间属性。
+* TIMESTAMP定义的事件时间属性不携带时区，会话中设置`table.local-time-zone`不会影响事件时间的值
+
+**TIMESTAMP_LTZ 上的事件时间属性**
+
+* 如果源数据中的时间为一个 epoch 时间， 通常是一个 long 值， 例如: `1618989564564` ，推荐将事件时间属性定义在 `TIMESTAMP_LTZ` 列上。
+* TIMESTAMP_LTZ定义的事件时间属性携带时区，会话中设置`table.local-time-zone`会影响事件时间的值
+
 # Flink SQL架构
 
 ## Old Planner架构
