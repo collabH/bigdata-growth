@@ -251,6 +251,8 @@
 * [Flink踩坑指南](bigdata/engine/flink/practice/Flink踩坑.xmind)
 * [记录一次Flink反压问题](bigdata/engine/flink/practice/记录一次Flink反压问题.md)
 * [Flink SQL实践调优](bigdata/engine/flink/practice/Flink%20SQL调优.xmind)
+* [Flink Runtime核心机制浅入深出](bigdata/engine/flink/practice/Flink%20Runtime核心机制浅入深出.md)
+* [Flink JDBC Driver](bigdata/engine/flink/practice/Flink%20JDBC%20Driver.md)
 
 ##### Connector
 
@@ -397,6 +399,10 @@
 * [Kudu踩坑](bigdata/olap/kudu/Kudu踩坑.xmind)
 * [Kudu存储结构架构图](bigdata/olap/kudu/Kudu存储结构)
 * [Kudu生产实践](bigdata/olap/kudu/Kudu生产实践.md)
+
+#### Flink
+
+* [Flink Olap](bigdata/olap/flink/Flink%20Olap.md)
 
 ##### paper
 
