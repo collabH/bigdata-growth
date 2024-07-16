@@ -64,6 +64,7 @@
 
 ### datalake
 
+
 #### hudi
 
 ##### quick start
@@ -86,6 +87,11 @@
 
 * [Flink基于Apache Hudi+Alluxio的数据湖实践](bigdata/datalake/hudi/article/Flink基于Apache%20Hudi+Alluxio的数据湖实践.md)
 * [Apache Hudi在LakeHouse趋势下的优势](bigdata/datalake/hudi/article/Apache%20Hudi在LakeHouse趋势下的优势.md)
+
+#### Paimin
+
+* [Paimon概览](bigdata/datalake/paimon/PaimonOverview.md)
+* [Paimon实践](bigdata/datalake/paimon/PaimonPractice.md)
 
 #### iceberg
 
@@ -205,11 +211,6 @@
 * [Flink状态管理与检查点机制](bigdata/engine/flink/sourcecode/Flink状态管理与检查点机制.xmind)
 
 ##### zoology
-
-###### Paimin
-
-* [PaimonOverview](bigdata/engine/flink/zoology/paimon/PaimonOverview.md)
-* [PaimonPractice](bigdata/engine/flink/zoology/paimon/PaimonPractice.md)
 
 ###### Flink CDC Connector
 
