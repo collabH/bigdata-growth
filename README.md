@@ -91,6 +91,7 @@
 #### Paimin
 
 * [Paimon概览](bigdata/datalake/paimon/PaimonOverview.md)
+* [Paimon主键表](bigdata/datalake/paimon/PaimonPkTable.md)
 * [Paimon实践](bigdata/datalake/paimon/PaimonPractice.md)
 
 #### iceberg

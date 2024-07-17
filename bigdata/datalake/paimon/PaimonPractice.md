@@ -2,7 +2,7 @@
 
 ## Streaming WareHouse的挑战
 
-![](../../img/paimonSolution.jpg)
+![](../../engine/flink/img/paimonSolution.jpg)
 
 * 全增量一体摄入。在一个流作业中，全量数据读完之后，无缝切换到增量数据再读，数据和流作业一起进入下一个环节。存储在这里遇到的挑战是，既然有数据全增量一体摄入，说明数据量很大，数据乱序很严重。存储能不能撑住？能不能用高吞吐来支撑全增量一体摄入？
 * 消息队列的流读。存储本身作为消息队列需要流写、流读，非常灵活。存储能不能提供全增量一体的流读？能不能指定 timestamp 从历史开始读增量？
@@ -27,7 +27,7 @@
 
 ### 流连接问题
 
-![](../../img/传统双流join.jpg)
+![](../../engine/flink/img/传统双流join.jpg)
 
 * flink常用的流join为双流join或者lookup join。lookup join性能好没有乱序问题，但是无法解决维度表更新的问题；
 
@@ -42,7 +42,7 @@
 
 #### Partial Update join
 
-![](../../img/paimon局部更新.jpg)
+![](../../engine/flink/img/paimon局部更新.jpg)
 
 * 可以帮助 Streaming 来做 Join 能力。**Partial Update 的本质是存储本身，具有通过组件来更新部分列的能力**。如果两张表都有相同主键，它们可以分别进行 Partial Update。它的好处是**性能非常好，给存储很多空间来优化性能。性能较好，成本较低。但它的缺点是需要有同主键。**
 
@@ -78,7 +78,7 @@ select id ,NULL,c2 from t2;
 
 * 以Apache Hudi为例，首先通过Bootstrap操作将全量历史数据写入hudi，然后基于新接入的 CDC 数据进行实时构建。
 
-![](../../img/dataInsertHudi.jpg)
+![](../../engine/flink/img/dataInsertHudi.jpg)
 
 * 实时作业需要通过Bootstrap Index来对全量数据构建Index，这样后续实时数据可以upsert方式入湖。
   * Bootstrap Index 超时及 state 膨胀:以流模式启动 Flink 增量同步作业后，系统会先将全量表导入到 Flink state 来构建 Hoodie key（即主键 + 分区路径）到写入文件的 file group 的索引，此过程会阻塞 checkpoint 完成。而只有在 checkpoint 成功后，写入的数据才可以变为可读状态，故而当全量数据很大时，有可能会出现 checkpoint 一直超时的情况，导致下游读不到数据。另外，由于索引一直保存在 state 内，在增量同步阶段遇到了 insert 类型的记录也会更新索引，需要合理评估 state TTL，配置太小可能会丢失数据，配置过大可能导致 state 膨胀。
@@ -94,7 +94,7 @@ select id ,NULL,c2 from t2;
 
 #### Flink CDC+Paimon方式
 
-![](../../img/cdcInsertPaimon.jpg)
+![](../../engine/flink/img/cdcInsertPaimon.jpg)
 
 * 大吞吐量的更新数据摄取，支持全增量一体入湖
   * 全增量一体化同步入湖的主要挑战在于全量同步阶段产生了大量数据乱序引起的随机写入，导致性能回退、吞吐毛刺及不稳定。Paimon存储格式使用先分区（Partition）再分桶（Bucket），每个桶内各自维护一棵 LSM（Log-structured Merge Tree）的方式，每条记录通过主键哈希落入桶内时就确定了写入路径（Directory），以 KV 方式写入 MemTable 中（类似于 HashMap，Key 就是主键，Value 是记录）。在 flush 到磁盘的过程中，以主键排序合并（去重），以追加方式写入磁盘。Sort Merge 在 buffer 内进行，避免了需要点查索引来判断一条记录是 insert 还是 update 来获取写入文件的 file group 的 tagging [Apache Hudi Technical Specification#Writer Expectations](https://hudi.apache.org/tech-specs/#writer-expectations)[5] 。另外，触发 MemTable flush 发生在 buffer 充满时，不需要额外通过 Auto-File Sizing [Apache Hudi Write Operations#Writing path](https://hudi.apache.org/docs/next/write_operations/#writing-path)[6]（Auto-File Sizing 会影响写入速度 [Apache Hudi File Sizing#Auto-Size During ingestion](https://hudi.apache.org/docs/next/file_sizing/#auto-size-during-ingestion)[7]）来避免小文件产生，整个写入过程都是局部且顺序的 [On Disk IO, Part 3: LSM Trees](https://medium.com/databasss/on-disk-io-part-3-lsm-trees-8b2da218496f) [8]，避免了随机 IO 产生。
