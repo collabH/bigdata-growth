@@ -92,7 +92,8 @@
 
 * [Paimon概览](bigdata/datalake/paimon/PaimonOverview.md)
 * [Paimon主键表](bigdata/datalake/paimon/PaimonPkTable.md)
-* [Paimon非主键表](bigdata/datalake/paimon/PaimonWithoutPkTable)
+* [Paimon非主键表](bigdata/datalake/paimon/PaimonWithoutPkTable.md)
+* [Flink操作Paimon](bigdata/datalake/paimon/PaimonOnFlink.md)
 * [Paimon实践](bigdata/datalake/paimon/PaimonPractice.md)
 
 #### iceberg
