@@ -280,3 +280,101 @@ CREATE TABLE my_table (
 ### 字段默认值
 
 * Paimon表当前支持通过表属性 `'fields.item_id.default-value'`字段设置默认值，注意，分区字段和主键字段不能指定。
+
+## Create Table As Select
+
+```sql
+/* For streaming mode, you need to enable the checkpoint. */
+
+CREATE TABLE my_table (
+    user_id BIGINT,
+    item_id BIGINT
+);
+CREATE TABLE my_table_as AS SELECT * FROM my_table;
+
+/* partitioned table */
+CREATE TABLE my_table_partition (
+     user_id BIGINT,
+     item_id BIGINT,
+     behavior STRING,
+     dt STRING,
+     hh STRING
+) PARTITIONED BY (dt, hh);
+CREATE TABLE my_table_partition_as WITH ('partition' = 'dt') AS SELECT * FROM my_table_partition;
+    
+/* change options */
+CREATE TABLE my_table_options (
+       user_id BIGINT,
+       item_id BIGINT
+) WITH ('file.format' = 'orc');
+CREATE TABLE my_table_options_as WITH ('file.format' = 'parquet') AS SELECT * FROM my_table_options;
+
+/* primary key */
+CREATE TABLE my_table_pk (
+      user_id BIGINT,
+      item_id BIGINT,
+      behavior STRING,
+      dt STRING,
+      hh STRING,
+      PRIMARY KEY (dt, hh, user_id) NOT ENFORCED
+);
+CREATE TABLE my_table_pk_as WITH ('primary-key' = 'dt,hh') AS SELECT * FROM my_table_pk;
+
+
+/* primary key + partition */
+CREATE TABLE my_table_all (
+      user_id BIGINT,
+      item_id BIGINT,
+      behavior STRING,
+      dt STRING,
+      hh STRING,
+      PRIMARY KEY (dt, hh, user_id) NOT ENFORCED 
+) PARTITIONED BY (dt, hh);
+CREATE TABLE my_table_all_as WITH ('primary-key' = 'dt,hh', 'partition' = 'dt') AS SELECT * FROM my_table_all;
+```
+
+## Create Table Like
+
+* 创建与另一个表具有相同模式、分区和表属性的表
+
+```sql
+CREATE TABLE my_table (
+    user_id BIGINT,
+    item_id BIGINT,
+    behavior STRING,
+    dt STRING,
+    hh STRING,
+    PRIMARY KEY (dt, hh, user_id) NOT ENFORCED
+);
+
+CREATE TABLE my_table_like LIKE my_table;
+
+-- Create Paimon Table like other connector table
+CREATE TABLE my_table_like WITH ('connector' = 'paimon') LIKE my_table;
+```
+
+## 使用Flink临时表
+
+* 当前Flink SQL会话只记录临时表，而不管理临时表。如果临时表被删除，它的资源不会被删除。当Flink SQL会话关闭时，也会删除临时表。如果希望将Paimon Catalog与其他表一起使用，但又不希望将它们存储在其他catalog中，则可以创建一个临时表。
+
+```sql
+CREATE CATALOG my_catalog WITH (
+    'type' = 'paimon',
+    'warehouse' = 'hdfs:///path/to/warehouse'
+);
+
+USE CATALOG my_catalog;
+
+-- Assume that there is already a table named my_table in my_catalog
+
+CREATE TEMPORARY TABLE temp_table (
+    k INT,
+    v STRING
+) WITH (
+    'connector' = 'filesystem',
+    'path' = 'hdfs:///path/to/temp_table.csv',
+    'format' = 'csv'
+);
+
+SELECT my_table.k, my_table.v, temp_table.v FROM my_table JOIN temp_table ON my_table.k = temp_table.k;
+```
