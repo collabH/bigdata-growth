@@ -378,3 +378,285 @@ CREATE TEMPORARY TABLE temp_table (
 
 SELECT my_table.k, my_table.v, temp_table.v FROM my_table JOIN temp_table ON my_table.k = temp_table.k;
 ```
+
+# SQL Write
+
+## 语法
+
+```sql
+INSERT { INTO | OVERWRITE } table_identifier [ part_spec ] [ column_list ] { value_expr | query };
+```
+
+## INSERT INTO
+
+* 使用Insert Into可以将记录和更改写入到表里
+
+```sql
+INSERT INTO my_table SELECT ...
+```
+
+* INSERT INTO支持批处理和流模式。在Streaming模式下，默认情况下，它还将在Flink Sink中执行 compaction, snapshot expiration，甚至 partition expiration (如果配置了)。
+
+### Clustering
+
+* 在Paimon中，clustering是一个功能它允许您在写入过程中根据某些列的值对Append Table中的数据进行聚类。这种数据组织可以显著提高读取数据时下游任务的效率，因为它支持更快、更有针对性的数据检索。此特性仅支持Append Table和批处理执行模式。
+
+```sql
+-- 创建表时指定clustering字段
+CREATE TABLE my_table (
+    a STRING,
+    b STRING,
+    c STRING,
+) WITH (
+  'sink.clustering.by-columns' = 'a,b',
+);
+-- 插入数据时通过SQL Hints指定clustering字段
+INSERT INTO my_table /*+ OPTIONS('sink.clustering.by-columns' = 'a,b') */
+SELECT * FROM source;
+```
+
+* 使用自动选择的策略(例如ORDER、ZORDER或HILBERT)对数据进行聚类，可以通过设置`sink.clustering.strategy`手动指定聚类策略。聚类依赖于抽样和排序。如果聚类过程花费的时间太长，可以通过设置`sink.clustering.sample-factor`来减少总样本数。或通过设置`sink.clustering.sort-in-cluster`为`false`禁用排序步骤。
+
+## INSERT OVERWRITE
+
+* 对于未分区的表，Paimon支持覆盖整个表。(或对于分区表禁用`dynamic-partition-overwrite`)。
+
+```sql
+INSERT OVERWRITE my_table SELECT ...
+```
+
+### 覆盖写分区
+
+* 静态覆盖写分区
+
+```sql
+INSERT OVERWRITE my_table PARTITION (key1 = value1, key2 = value2, ...) SELECT ...
+```
+
+### 动态覆盖写
+
+* Flink的默认覆盖模式是动态分区覆盖(这意味着Paimon只删除被覆盖数据中出现的分区)。您可以配置`dynamic-partition-overwrite`，将其更改为静态覆盖。
+
+```sql
+-- MyTable is a Partitioned Table
+
+-- Dynamic overwrite
+INSERT OVERWRITE my_table SELECT ...
+
+-- Static overwrite (Overwrite whole table)
+INSERT OVERWRITE my_table /*+ OPTIONS('dynamic-partition-overwrite' = 'false') */ SELECT ...
+```
+
+## Truncate Table
+
+```sql
+-- 历史版本
+INSERT OVERWRITE my_table /*+ OPTIONS('dynamic-partition-overwrite'='false') */ SELECT * FROM my_table WHERE false;
+-- FLINL 1.18+
+TRUNCATE TABLE my_table;
+```
+
+## 清理分区
+
+* Paimon支持俩种方式清理分区
+  * 与清除表一样，可以使用`INSERT OVERWRITE`通过向分区插入空值来清除分区的数据。
+  * 方法#1不支持删除多个分区。如果需要删除多个分区，可以通过`flink run`提交删除分区作业。
+
+```sql
+-- Syntax
+INSERT OVERWRITE my_table /*+ OPTIONS('dynamic-partition-overwrite'='false') */ 
+PARTITION (key1 = value1, key2 = value2, ...) SELECT selectSpec FROM my_table WHERE false;
+
+-- The following SQL is an example:
+-- table definition
+CREATE TABLE my_table (
+    k0 INT,
+    k1 INT,
+    v STRING
+) PARTITIONED BY (k0, k1);
+
+-- you can use
+INSERT OVERWRITE my_table /*+ OPTIONS('dynamic-partition-overwrite'='false') */ 
+PARTITION (k0 = 0) SELECT k1, v FROM my_table WHERE false;
+
+-- or
+INSERT OVERWRITE my_table /*+ OPTIONS('dynamic-partition-overwrite'='false') */ 
+PARTITION (k0 = 0, k1 = 0) SELECT v FROM my_table WHERE false;
+```
+
+## 更新数据
+
+> 1. 只有主键表支持更新数据
+> 2. 要支持此特性，需要MergeEngine是 [deduplicate](https://paimon.apache.org/docs/master/primary-key-table/merge-engine/#deduplicate) or [partial-update](https://paimon.apache.org/docs/master/primary-key-table/merge-engine/#partial-update) 
+> 3. 不支持更新主键。
+
+* 目前，Paimon支持在Flink 1.17及以后的版本中使用UPDATE更新记录。您可以在Flink的批处理模式下执行UPDATE。
+
+```sql
+-- Syntax
+UPDATE table_identifier SET column1 = value1, column2 = value2, ... WHERE condition;
+
+-- The following SQL is an example:
+-- table definition
+CREATE TABLE my_table (
+	a STRING,
+	b INT,
+	c INT,
+	PRIMARY KEY (a) NOT ENFORCED
+) WITH ( 
+	'merge-engine' = 'deduplicate' 
+);
+
+-- you can use
+UPDATE my_table SET b = 1, c = 2 WHERE a = 'myTable';
+```
+
+## 删除数据
+
+> 1. 只有主键表支持
+> 2. 如果表有多个主键，MergeEngine需要为deduplicate
+> 3. 不支持在流式模式删除数据
+
+```sql
+-- Syntax
+DELETE FROM table_identifier WHERE conditions;
+
+-- The following SQL is an example:
+-- table definition
+CREATE TABLE my_table (
+    id BIGINT NOT NULL,
+    currency STRING,
+    rate BIGINT,
+    dt String,
+    PRIMARY KEY (id, dt) NOT ENFORCED
+) PARTITIONED BY (dt) WITH ( 
+    'merge-engine' = 'deduplicate' 
+);
+
+-- you can use
+DELETE FROM my_table WHERE currency = 'UNKNOWN';
+```
+
+## Partition Make Done
+
+* 对于分区表，可能需要调度每个分区以触发下游批处理计算。因此，有必要选择这个时间来表明它已准备好进行调度，并尽量减少调度期间的数据漂移量。我们称这个过程为:“Partition Mark Done”.
+
+```sql
+CREATE TABLE my_partitioned_table (
+    f0 INT,
+    f1 INT,
+    f2 INT,
+    ...
+    dt STRING
+) PARTITIONED BY (dt) WITH (
+    'partition.timestamp-formatter'='yyyyMMdd',
+    'partition.timestamp-pattern'='$dt',
+    'partition.time-interval'='1 d',
+    'partition.idle-time-to-done'='15 m'
+);
+```
+
+* 首先，您需要定义分区的时间解析器和分区之间的时间间隔，以便确定何时可以正确地标记分区完成。
+* 其次，您需要定义空闲时间，它决定分区没有新数据需要多长时间，然后将其标记为已完成。
+* 第三，默认情况下，分区标记完成后会创建一个SUCCESS文件，SUCCESS文件的内容是一个json，包含creatationtime和modiationtime，它们可以帮助你了解是否有延迟的数据。您还可以配置其他操作。
+
+# SQL Query
+
+## Batch Query
+
+* Paimon的批处理读取返回表快照中的所有数据。默认情况下，批处理读取返回最新的快照。
+
+```sql
+SET 'execution.runtime-mode' = 'batch';
+```
+
+### Batch Time Travel
+
+* Paimon批处理读取随Time Travel可以**指定快照或标签**，并读取相应的数据。
+
+```sql
+-- read the snapshot with id 1L
+SELECT * FROM test1 /*+ OPTIONS('scan.snapshot-id' = '1') */;
+
+-- read the snapshot from specified timestamp in unix milliseconds
+SELECT * FROM test1 /*+ OPTIONS('scan.timestamp-millis' = '1678883047356') */;
+
+-- read the snapshot from specified timestamp string ,it will be automatically converted to timestamp in unix milliseconds
+-- Supported formats include：yyyy-MM-dd, yyyy-MM-dd HH:mm:ss, yyyy-MM-dd HH:mm:ss.SSS, use default local time zone
+SELECT * FROM test1 /*+ OPTIONS('scan.timestamp' = '2024-07-25 19:35:00') */;
+
+-- read tag 'my-tag'
+SELECT * FROM test1 /*+ OPTIONS('scan.tag-name' = 'my-tag') */;
+
+-- read the snapshot from watermark, will match the first snapshot after the watermark
+SELECT * FROM test1 /*+ OPTIONS('scan.watermark' = '1678883047356') */; 
+```
+
+### Batch Incremental
+
+* 读取开始快照(不包含)和结束快照之间的增量变化。例如:5,10表示快照5和快照10之间的变化量。TAG1,TAG3表示TAG1和TAG3之间的变化。
+
+```sql
+-- incremental between snapshot ids
+SELECT * FROM test1 /*+ OPTIONS('incremental-between' = '1,2') */;
+
+-- incremental between snapshot time mills
+SELECT * FROM test1 /*+ OPTIONS('incremental-between-timestamp' = '1692169000000,1692169900000') */;
+```
+
+* 默认情况下，将扫描changelog文件以查找生成changelog文件的表。否则，扫描新修改的文件。可以强制指定`incremental-between-scan-mode`。
+* 在批处理SQL中，不允许返回DELETE记录，因此将删除`-D`的记录。如果希望看到DELETE记录，您可以使用审计日志表
+
+```sql
+SELECT * FROM test1$audit_log /*+ OPTIONS('incremental-between' = '1,2') */;
+```
+
+## Streaming Query
+
+* 默认情况下，流式读取在第一次启动时生成表上的最新快照，并继续读取最新的更改。默认情况下，Paimon确保启动所包括所有数据都被正确处理，
+
+```sql
+-- 设置流式读取模式
+SET 'execution.runtime-mode' = 'streaming';
+-- 不读取快照，读取最新完整数据
+SELECT * FROM test1 /*+ OPTIONS('scan.mode' = 'latest') */;
+```
+
+### Streaming Time Travel
+
+* 如果您只想处理今天及以后的数据，那么可以使用分区过滤器
+
+```sql
+SELECT * FROM test1 WHERE dt > '2023-06-26';
+```
+
+* 如果它不是一个分区表，或者不能按分区进行过滤，则可以使用**Time travel**的流读取。
+
+```sql
+-- read changes from snapshot id 1L 
+SELECT * FROM test1 /*+ OPTIONS('scan.snapshot-id' = '1') */;
+
+-- read changes from snapshot specified timestamp
+SELECT * FROM test1 /*+ OPTIONS('scan.timestamp-millis' = '1678883047356') */;
+
+-- read snapshot id 1L upon first startup, and continue to read the changes
+SELECT * FROM test1 /*+ OPTIONS('scan.mode'='from-snapshot-full','scan.snapshot-id' = '1') */;
+```
+
+* Time Travel的流式读数依赖于快照，但是默认情况下，快照仅保留1小时内数据，这可以防止读取较旧的增量数据。因此，Paimon还提供了一种用于流式读取的模式，即`scan.file-creation-time-millis`，该模式提供了一种粗糙的过滤，以保留Timemillis之后生成的文件。
+
+```sql
+SELECT * FROM t /*+ OPTIONS('scan.file-creation-time-millis' = '1678883047356') */;
+```
+
+### Consumer ID
+
+* 您可以在流式读表时指定消费者id
+
+```sql
+SELECT * FROM t /*+ OPTIONS('consumer-id' = 'myid') */;
+```
+
+* 当流读取Paimon表时，要记录到文件系统中的下一个快照id。这有几个优点：
+  * 当上一个作业停止时，新启动的作业可以继续使用前一个消费进度，**而无需从状态恢复**。新的读取将从消费者文件中找到的下一个快照id开始读取。如果不想要这种行为，可以设置`consumer.ignore-progress`为`true`
+  * 在确定快照是否过期时，Paimon查看文件系统中表的所有消费者，如果仍然有消费者依赖于该快照，则该快照将不会在到期时被删除。
