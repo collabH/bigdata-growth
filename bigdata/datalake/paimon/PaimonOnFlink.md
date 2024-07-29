@@ -1,3 +1,5 @@
+[TOC]
+
 # 快速开始
 
 ## Jars
@@ -646,7 +648,7 @@ SELECT * FROM test1 /*+ OPTIONS('scan.mode'='from-snapshot-full','scan.snapshot-
 * Time Travel的流式读数依赖于快照，但是默认情况下，快照仅保留1小时内数据，这可以防止读取较旧的增量数据。因此，Paimon还提供了一种用于流式读取的模式，即`scan.file-creation-time-millis`，该模式提供了一种粗糙的过滤，以保留Timemillis之后生成的文件。
 
 ```sql
-SELECT * FROM t /*+ OPTIONS('scan.file-creation-time-millis' = '1678883047356') */;
+SELECT * FROM test1 /*+ OPTIONS('scan.file-creation-time-millis' = '1678883047356') */;
 ```
 
 ### Consumer ID
@@ -654,9 +656,534 @@ SELECT * FROM t /*+ OPTIONS('scan.file-creation-time-millis' = '1678883047356') 
 * 您可以在流式读表时指定消费者id
 
 ```sql
-SELECT * FROM t /*+ OPTIONS('consumer-id' = 'myid') */;
+SELECT * FROM test1 /*+ OPTIONS('consumer-id' = 'myid','consumer.expiration-time'='100') */;
 ```
 
 * 当流读取Paimon表时，要记录到文件系统中的下一个快照id。这有几个优点：
   * 当上一个作业停止时，新启动的作业可以继续使用前一个消费进度，**而无需从状态恢复**。新的读取将从消费者文件中找到的下一个快照id开始读取。如果不想要这种行为，可以设置`consumer.ignore-progress`为`true`
   * 在确定快照是否过期时，Paimon查看文件系统中表的所有消费者，如果仍然有消费者依赖于该快照，则该快照将不会在到期时被删除。
+
+> 注意:消费者将阻止快照过期。您可以指定消费者。过期时间，用于管理消费者的生命周期。
+
+* 默认情况下，消费者使用 `exactly-once` 模式来记录消费进度，这严格确保在消费者中记录的是所有读取器精确消费的**快照id + 1**。可以设置`consumer.mode`设置为` `at-least-once` 允许读取器以不同的速率使用快照，并将所有读取器中最慢的快照id记录到消费者中。这种模式可以提供更多的功能，如水印对齐。
+
+> 由于精确一次模式和至少一次模式的实现是完全不同的，所以切换模式时，flink的状态是不兼容的，不能从状态恢复。
+
+* 可以使用给定的消费者ID和下一个快照ID重置消费者，并删除具有给定消费者ID的消费者。首先，需要使用此消费者ID停止流任务，然后执行重置消费者操作作业。
+
+```bash
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    reset-consumer \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    --consumer_id <consumer-id> \
+    [--next_snapshot <next-snapshot-id>] \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+```
+
+### Read Overwrite
+
+* 默认情况下，流读取将忽略INSERT OVERWRITE生成的提交。如果您想要读取OVERWRITE的提交，配置`streaming-read-overwrite`
+
+## Read Parallelism
+
+* 默认情况下，批处理读取的并行度与split的数量相同，而流式读取的并行度与bucket的数量相同，但不大于``scan.infer-parallelism.max``配置，关闭`scan.infer-parallelism`配置将会使用全局并行度读取
+
+| Key                        | Default | Type    | Description                                                  |
+| :------------------------- | :------ | :------ | :----------------------------------------------------------- |
+| scan.infer-parallelism     | true    | Boolean | If it is false, parallelism of source are set by global parallelism. Otherwise, source parallelism is inferred from splits number (batch mode) or bucket number(streaming mode).如果为false，则source的并行度由全局并行度一致。否则，从splits个数(批处理模式)或bucket数(流模式)推断source并行性。 |
+| scan.infer-parallelism.max | 1024    | Integer | 如果scan.infer-parallelism配置为true, 该配置限制最大读取并行度 |
+| scan.parallelism           | (none)  | Integer | Define a custom parallelism for the scan source. By default, if this option is not defined, the planner will derive the parallelism for each statement individually by also considering the global configuration. If user enable the scan.infer-parallelism, the planner will derive the parallelism by inferred parallelism. |
+
+## 查询优化
+
+* 建议与查询一起指定**分区和主键**过滤，这将加快查询的Data Skipping，可以加速数据跳变的过滤函数如下：
+  * `=`
+  * `<`
+  * `<=`
+  * `>`
+  * `>=`
+  * `IN (...)`
+  * `LIKE 'abc%'`
+  * `IS NULL`
+* Paimon将按主键对数据进行排序，这加快了**点查询和范围查询**的速度。**当使用复合主键时，查询过滤器最好在主键的最左边形成一个前缀，以获得良好的加速**，具体如下：
+
+```sql
+CREATE TABLE orders (
+    catalog_id BIGINT,
+    order_id BIGINT,
+    .....,
+    PRIMARY KEY (catalog_id, order_id) NOT ENFORCED -- composite primary key
+);
+-- 按照主键顺序构造查询条件
+SELECT * FROM orders WHERE catalog_id=1025;
+
+SELECT * FROM orders WHERE catalog_id=1025 AND order_id=29495;
+
+SELECT * FROM orders
+  WHERE catalog_id=1025
+  AND order_id>2035 AND order_id<6000;
+-- bad case，以下查询不能获得查询加速
+SELECT * FROM orders WHERE order_id=29495;
+
+SELECT * FROM orders WHERE catalog_id=1025 OR order_id=29495;
+```
+
+# SQL Lookup
+
+## Normal Lookup
+
+* 通过`FOR SYSTEM_TIME AS OF`实现lookup join，注意：流表需要指定时间属性字段
+
+```sql
+SELECT o.order_id, o.total, c.country, c.zip
+FROM orders AS o
+JOIN customers
+FOR SYSTEM_TIME AS OF o.proc_time AS c
+ON o.customer_id = c.id;
+```
+
+## Retry Lookup
+
+* 如果lookup join不上的情况可以使用retry lookup来进行重试，防止join不上导致数据丢失，flink 1.16以上版本支持
+
+```sql
+-- 指定被join的表，重试条件和策略
+SELECT /*+ LOOKUP('table'='c', 'retry-predicate'='lookup_miss', 'retry-strategy'='fixed_delay', 'fixed-delay'='1s', 'max-attempts'='600') */
+o.order_id, o.total, c.country, c.zip
+FROM orders AS o
+JOIN customers
+FOR SYSTEM_TIME AS OF o.proc_time AS c
+ON o.customer_id = c.id;
+```
+
+## Async Retry Lookup
+
+* Retry Lookup是同步的，它的问题是，一条记录将阻塞后续记录，从而导致整个作业被阻塞。可以考虑使用**async + allow_unordered** 来避免阻塞，连接丢失的记录将不再阻塞其他记录。
+
+```sql
+SELECT /*+ LOOKUP('table'='c', 'retry-predicate'='lookup_miss', 'output-mode'='allow_unordered', 'retry-strategy'='fixed_delay', 'fixed-delay'='1s', 'max-attempts'='600') */
+o.order_id, o.total, c.country, c.zip
+FROM orders AS o
+JOIN customers /*+ OPTIONS('lookup.async'='true', 'lookup.async-thread-number'='16') */
+FOR SYSTEM_TIME AS OF o.proc_time AS c
+ON o.customer_id = c.id;
+```
+
+* 如果主表是CDC流，`allow_unordered`将会在Flink SQL忽略(只支持append流)，您可以尝试使用Paimon的`audit_log`系统表特性来(将CDC流转换为追加流)。
+
+## Dynamic Partition
+
+* 在传统的数据仓库中，每个分区经常维护最新的完整数据，因此这个分区表只需要join最新的分区。Paimon专门为这个场景支持了`max_pt`特性。
+
+```sql
+-- 定义分区表
+CREATE TABLE customers (
+  id INT,
+  name STRING,
+  country STRING,
+  zip STRING,
+  dt STRING,
+  PRIMARY KEY (id, dt) NOT ENFORCED
+) PARTITIONED BY (dt);
+-- Lookup Join
+SELECT o.order_id, o.total, c.country, c.zip
+FROM orders AS o
+JOIN customers /*+ OPTIONS('lookup.dynamic-partition'='max_pt()', 'lookup.dynamic-partition.refresh-interval'='1 h') */
+FOR SYSTEM_TIME AS OF o.proc_time AS c
+ON o.customer_id = c.id;
+```
+
+* Lookup节点会自动刷新最新分区，并查询最新分区的数据。
+
+## Query Service
+
+* 可以运行Flink Streaming Job来启动该表的查询服务。当QueryService存在时，Flink Lookup Join会优先从QueryService获取数据，这将有效提高查询性能。
+
+```sql
+-- flink sql
+CALL sys.query_service('database_name.table_name', parallelism);
+
+-- paimon action job
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    query_service \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table <table-name> \
+    [--parallelism <parallelism>] \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+```
+
+# SQL Alter
+
+```sql
+-- 修改/添加表属性
+ALTER TABLE my_table SET (
+    'write-buffer-size' = '256 MB'
+);
+-- 删除表属性
+ALTER TABLE my_table RESET ('write-buffer-size');
+-- 修改/添加表描述
+ALTER TABLE my_table SET (
+    'comment' = 'table comment'
+    );
+-- 删除表描述
+ALTER TABLE my_table RESET ('comment');
+-- 修改表名，如果使用对象存储，如S3或OSS，请谨慎使用此语法，因为对象存储的重命名不是原子性的，在失败的情况下可能只会移动部分文件。
+ALTER TABLE my_table RENAME TO my_table_new;
+-- 添加新列
+ALTER TABLE my_table ADD (c1 INT, c2 STRING);
+-- 修改列名
+ALTER TABLE my_table RENAME c0 TO c1;
+-- 删除列，在hive metastore中需要配置hive.metastore.disallow.incompatible.col.type.changes
+ALTER TABLE my_table DROP (c1, c2);
+-- 删除分区
+ALTER TABLE my_table DROP PARTITION (`id` = 1);
+ALTER TABLE my_table DROP PARTITION (`id` = 1, `name` = 'paimon');
+ALTER TABLE my_table DROP PARTITION (`id` = 1), PARTITION (`id` = 2);
+-- 修改列为空
+ALTER TABLE my_table MODIFY coupon_info FLOAT;
+-- 修改列不为空，如果NULL值已经存在则删除，当前仅支持Flink
+SET 'table.exec.sink.not-null-enforcer' = 'DROP';
+ALTER TABLE my_table MODIFY coupon_info FLOAT NOT NULL;
+-- 修改列描述
+ALTER TABLE my_table MODIFY buy_count BIGINT COMMENT 'buy count';
+-- 指定列前后添加新列
+ALTER TABLE my_table ADD c INT FIRST;
+ALTER TABLE my_table ADD c INT AFTER b;
+-- 修改列的位置
+ALTER TABLE my_table MODIFY col_a DOUBLE FIRST;
+ALTER TABLE my_table MODIFY col_a DOUBLE AFTER col_b;
+-- 修改列类型
+ALTER TABLE my_table MODIFY col_a DOUBLE;
+-- 添加Watermark
+ALTER TABLE my_table ADD (
+    ts AS TO_TIMESTAMP(log_ts) AFTER log_ts,
+    WATERMARK FOR ts AS ts - INTERVAL '1' HOUR
+);
+-- 删除Watermark
+ALTER TABLE my_table DROP WATERMARK;
+-- 修改Watermark
+ALTER TABLE my_table MODIFY WATERMARK FOR ts AS ts - INTERVAL '2' HOUR
+```
+
+# Expire Partition
+
+* 当创建分区表的时候可以设置`partition.expiration-time`。Paimon流式sink会定期检查分区的状态，并根据时间删除过期的分区。如何判断一个分区已经过期，当创建分区表的时候可以设置`partition.expiration-strategy`，该策略决定如何提取分区时间，并将其与当前时间进行比较，以查看分区的生存时间是否超过了`partition.expiration-time`。过期策略支持以下2种：
+  * `values-time` :该策略将从分区值中提取的时间与当前时间进行比较，此策略为默认策略。
+  * `update-time` : 该策略将分区的最后更新时间与当前时间进行比较。这一策略适用以下场景：
+    * 分区值不是日期格式
+    * 只想保留在过去的N天/几个月/几年中已更新的数据。
+    * 数据初始化会导入大量的历史数据。
+
+> **注意：**分区过期后，该分区在逻辑上被删除，最新的快照无法查询到该分区的数据。但是文件系统中的文件不会立即被物理删除，这取决于相应的快照何时到期。
+
+* `values-time` 策略：
+
+```sql
+CREATE TABLE t (...) PARTITIONED BY (dt) WITH (
+    'partition.expiration-time' = '7 d',
+    'partition.expiration-check-interval' = '1 d',
+    'partition.timestamp-formatter' = 'yyyyMMdd'   -- this is required in `values-time` strategy.
+);
+-- Let's say now the date is 2024-07-09，so before the date of 2024-07-02 will expire.
+insert into t values('pk', '2024-07-01');
+
+-- An example for multiple partition fields
+CREATE TABLE t (...) PARTITIONED BY (other_key, dt) WITH (
+    'partition.expiration-time' = '7 d',
+    'partition.expiration-check-interval' = '1 d',
+    'partition.timestamp-formatter' = 'yyyyMMdd',
+    'partition.timestamp-pattern' = '$dt'
+);
+```
+
+* `update-time` 策略
+
+```sql
+CREATE TABLE t (...) PARTITIONED BY (dt) WITH (
+    'partition.expiration-time' = '7 d',
+    'partition.expiration-check-interval' = '1 d',
+    'partition.expiration-strategy' = 'update-time'
+);
+
+-- The last update time of the partition is now, so it will not expire.
+insert into t values('pk', '2024-01-01');
+-- Support non-date formatted partition.
+insert into t values('pk', 'par-1'); 
+```
+
+## 参数配置
+
+| Option                              | Default     | Type     | Description                                                  |
+| :---------------------------------- | :---------- | :------- | :----------------------------------------------------------- |
+| partition.expiration-strategy       | values-time | String   | 指定分区过期策略，`vlaues-time`策略，从分区值中提取，默认策略。`update-time`策略，比较分区的最新更新时间与当天时间 |
+| partition.expiration-check-interval | 1 h         | Duration | 分区过期的校验间隔                                           |
+| partition.expiration-time           | (none)      | Duration | 分区的过期时间间隔。如果分区的生存期超过此值，则分区将过期。分区时间从分区值中提取。 |
+| partition.timestamp-formatter       | (none)      | String   | 从`'partition.timestamp-pattern`配置的字段提取的值进行格式化，默认为 'yyyy-MM-dd HH:mm:ss' 和 'yyyy-MM-dd'。支持多个分区字段，如`$year-$month-$day $hour:00:00`。与Java的DateTimeFormatter兼容 |
+| partition.timestamp-pattern         | (none)      | String   | 指定一个模式来从分区获取时间戳，默认情况下，从第一个字段读取。如果分区中的时间戳是一个名为“dt”的字段，则可以使用“$dt”。如果年、月、日和小时分布在多个字段中，则可以使用'$year-$month-$day $hour:00:00'。如果时间戳在dt和hour字段中，则可以使用'$dt $hour:00:00'。 |
+
+# Procedures
+
+* Flink1.18或最新版本支持`CALL`语法，这使得通过编写SQL而不是提交Flink作业来操纵Paimon表的数据和元数据变得更加容易。在1.18版本，procedure仅支持按位置传递参数，你必须按顺序传递所有参数，如果你不想传递一些参数，必须使用`''`跳过，如果你想compaction表`default.t`指定并行度4，但是不指定分区和排序策略，可以执行以下语法：
+
+```sql
+CALL sys.compact('default.t', '', '', '', 'sink.parallelism=4')
+```
+
+* 在更高版本，procedure支撑通过配置名传递参数，您可以以任何顺序传递参数，并且可以省略任何可选参数。如下：
+
+```sql
+CALL sys.compact(`table` => 'default.t', options => 'sink.parallelism=4')
+```
+
+* 指定分区，使用字符指定分区过滤器，`","`的意思表示`AND`,";"表示`OR`。例如指定分区过滤条件为`date=01 or date=02`你需要配置`date=01;date=02`;
+
+## Paimon支持的Procedures
+
+### compact
+
+* 指定特定表进行`compaction`
+
+```sql
+-- table(必选):指定需要compact的表，
+-- partitions(可选):指定需要compact的分区
+-- order_strategy(可选):排序策略，'order' or 'zorder' or 'hilbert' or 'none'.
+-- order_by(可选):排序字段
+-- options(可选):动态添加的表配置
+-- where(可选): 分区过滤器(不能和partitions一起使用).使用需要`where`
+-- use partition filter
+CALL sys.compact(`table` => 'default.T', partitions => 'p=0', order_strategy => 'zorder', order_by => 'a,b', options => 'sink.parallelism=4')
+-- use partition predicate
+CALL sys.compact(`table` => 'default.T', `where` => 'dt>10 and h<20', order_strategy => 'zorder', order_by => 'a,b', options => 'sink.parallelism=4')
+```
+
+### compact_database
+
+```sql
+-- includingDatabases: 指定需要compaction的库，支持正则表达式
+-- mode: compact的模式. "divided": 为每个表启动一个sink，检测新表需要重新启动作业。 "combined" (default): 为所有表启动单个合并sink，将自动检测新表。
+-- includingTables:指定需要compaction的表集合，支持正则表达式
+-- excludingTables: 指定不需要compaction的表集合，支持正则表达式
+-- tableOptions: 动态添加的表配置
+-- 使用方式
+CALL [catalog.]sys.compact_database()
+CALL [catalog.]sys.compact_database('includingDatabases')
+CALL [catalog.]sys.compact_database('includingDatabases', 'mode')
+CALL [catalog.]sys.compact_database('includingDatabases', 'mode', 'includingTables')
+CALL [catalog.]sys.compact_database('includingDatabases', 'mode', 'includingTables', 'excludingTables')
+CALL [catalog.]sys.compact_database('includingDatabases', 'mode', 'includingTables', 'excludingTables', 'tableOptions')
+```
+
+### create_tag
+
+* 为表的快照创建tag，支持指定快照
+
+```sql
+-- identifier: 表描述，不能为空
+-- tagName: tag名称
+-- snapshotId (Long): 指定快照id，基于此快照创建tag
+-- time_retained: 创建的tag最大保留时间
+-- 基于指定快照
+CALL [catalog.]sys.create_tag('identifier', 'tagName', snapshotId)
+-- 基于最新快照
+CALL [catalog.]sys.create_tag('identifier', 'tagName')
+-- 使用方式
+CALL sys.create_tag('default.T', 'my_tag', 10, '1 d')
+```
+
+### delete_tag
+
+```sql
+-- identifier: 表描述，不能为空
+-- tagName: tag名称
+-- 使用方式
+CALL [catalog.]sys.delete_tag('identifier', 'tagName')	
+```
+
+### merge_into
+
+* merge into过程，类似于iceberg支持的merge into语法，支撑对一条记录的不同情况进行对应操作
+
+```sql
+-- 参数参考：https://paimon.apache.org/how-to/writing-tables#merging-into-table
+-- 当匹配上执行upsert
+CALL [catalog.]sys.merge_into('identifier','targetAlias',
+'sourceSqls','sourceTable','mergeCondition',
+'matchedUpsertCondition','matchedUpsertSetting')
+-- 当匹配上执行upsert，当匹配不上执行insert
+CALL [catalog.]sys.merge_into('identifier','targetAlias',
+'sourceSqls','sourceTable','mergeCondition',
+'matchedUpsertCondition','matchedUpsertSetting',
+'notMatchedInsertCondition','notMatchedInsertValues')
+-- 当匹配上执行delete
+CALL [catalog].sys.merge_into('identifier','targetAlias',
+'sourceSqls','sourceTable','mergeCondition',
+'matchedDeleteCondition')
+-- 当匹配上 upsert + delete;
+-- 当匹配不上执行insert
+CALL [catalog].sys.merge_into('identifier','targetAlias',
+'sourceSqls','sourceTable','mergeCondition',
+'matchedUpsertCondition','matchedUpsertSetting',
+'notMatchedInsertCondition','notMatchedInsertValues',
+'matchedDeleteCondition')
+```
+
+### remove_orphan_files
+
+* 删除孤立文件过程
+
+```sql
+-- identifier: 指定表，不能为空，可以使用database_name.*清理整个db
+-- olderThan: 为了避免删除新写入的文件，此过程默认只删除超过1天的孤立文件。此参数可以修改间隔，例如'2023-10-31 12:00:00'，删除该时间之前的文件
+-- dryRun: 当为true时，只查看孤立文件，不要实际删除文件。默认为false。
+-- 使用方法
+CALL [catalog.]sys.remove_orphan_files('identifier')
+CALL [catalog.]sys.remove_orphan_files('identifier', 'olderThan')
+CALL [catalog.]sys.remove_orphan_files('identifier', 'olderThan', 'dryRun')
+```
+
+### reset_consumer
+
+* 重置consumer
+
+```sql
+-- identifier:指定表，不能为空
+-- consumerId: 重置或删除消费者
+-- nextSnapshotId (Long): 消费的新的下一个快照id。
+-- 重置特定消费者消费点为下一个快照
+CALL [catalog.]sys.reset_consumer('identifier', 'consumerId', nextSnapshotId)
+-- 删除消费者
+CALL [catalog.]sys.reset_consumer('identifier', 'consumerId')
+```
+
+### rollback_to
+
+* 回滚表到指定版本
+
+```sql
+-- identifier: 指定表，不能为空
+-- snapshotId (Long): 快照id
+-- tagName: tag名
+-- 回滚到指定快照
+CALL sys.rollback_to('identifier', snapshotId)
+-- 回滚到指定tag
+CALL sys.rollback_to('identifier', 'tagName')
+```
+
+### expire_snapshots
+
+* 过期指定快照
+
+```sql
+-- table: 指定表，不能为空
+-- retain_max: 已完成快照最大保留个数
+-- retain_min: 已完成快照最小保留个数
+-- order_than: 快照被删除的时间戳
+-- max_deletes: 一次可以删除的最大快照数量。
+-- for Flink 1.18
+CALL sys.expire_snapshots(table, retain_max)
+CALL sys.expire_snapshots('default.T', 2)
+-- for Flink 1.19 and later
+CALL sys.expire_snapshots(table, retain_max, retain_min, older_than, max_deletes)
+CALL sys.expire_snapshots(`table` => 'default.T', retain_max => 2)
+CALL sys.expire_snapshots(`table` => 'default.T', older_than => '2024-01-01 12:00:00')
+CALL sys.expire_snapshots(`table` => 'default.T', older_than => '2024-01-01 12:00:00', retain_min => 10)
+CALL sys.expire_snapshots(`table` => 'default.T', older_than => '2024-01-01 12:00:00', max_deletes => 10)
+```
+
+### expire_partitions
+
+* 过期分区
+
+```sql
+-- table: 指定表，不能为空
+-- expiration_time: 分区的过期时间间隔。如果分区的生存期超过此值，则分区将过期。分区时间从分区值中提取。
+-- timestamp_formatter: 从字符串格式化时间戳的格式化格式
+-- expire_strategy: 指定的分区过期策略，具体参考#Expire Partition章节
+CALL sys.expire_partitions(table, expiration_time, timestamp_formatter, expire_strategy)
+-- for Flink 1.18
+CALL sys.expire_partitions('default.T', '1 d', 'yyyy-MM-dd', 'values-time')
+-- for Flink 1.19 and later
+CALL sys.expire_partitions(`table` => 'default.T', expiration_time => '1 d', timestamp_formatter => 'yyyy-MM-dd', expire_strategy => 'values-time')
+
+```
+
+### repair
+
+* 将文件系统信息同步到Metastore，类似与hive中的msck repair table，数据直接写到文件系统时，修复该文件的元数据
+
+```sql
+-- empty: 为空时，表示这个catalog下的全部db和表
+-- databaseName : 指定的db
+-- tableName: 指定的表
+-- repair这个catalog下的全部db和表
+CALL sys.repair()
+-- repair这个表的全部表
+CALL sys.repair('databaseName')
+-- repair table
+CALL sys.repair('databaseName.tableName')
+-- 修复多个db或表，通过,分割
+CALL sys.repair('databaseName01,database02.tableName01,database03')
+
+CALL sys.repair('test_db.T')
+```
+
+### rewrite_file_index
+
+* 重写表的文件索引
+
+```sql
+-- identifier: <databaseName>.<tableName>.
+-- partitions : 指定分区，可选
+CALL sys.rewrite_file_index(<identifier> [, <partitions>])
+-- 重写整个表的文件索引
+CALL sys.rewrite_file_index('test_db.T')
+-- 重写指定分区的文件索引
+CALL sys.rewrite_file_index('test_db.T', 'pt=a')
+```
+
+### create_branch
+
+* 根据给定的快照/tag创建branch，或者只创建空branch
+
+```sql
+-- identifier: <databaseName>.<tableName>.不能为空
+-- branchName: 新branch名称
+-- snapshotId (Long): 基于这个快照创建branch
+-- tagName: 基于这个tag创建branch
+-- 基于指定的快照
+CALL [catalog.]sys.create_branch('identifier', 'branchName', snapshotId)
+CALL sys.create_branch('default.T', 'branch1', 10)
+-- 基于指定的tag
+CALL [catalog.]sys.create_branch('identifier', 'branchName', 'tagName')
+CALL sys.create_branch('default.T', 'branch1', 'tag1')
+-- create empty branch
+CALL [catalog.]sys.create_branch('identifier', 'branchName')
+CALL sys.create_branch('default.T', 'branch1')
+```
+
+### delete_branch
+
+* 删除branch
+
+```sql
+-- identifier:<databaseName>.<tableName>.不能为空
+-- branchName: branch名称，如果删除多个通过","分割
+CALL [catalog.]sys.delete_branch('identifier', 'branchName')	
+```
+
+### fast_forward
+
+* 将一个分支合并到主分支
+
+```sql
+-- identifier: <databaseName>.<tableName>.不能为空
+-- branchName: 要合并的分支名称。
+CALL [catalog.]sys.fast_forward('identifier', 'branchName')	
+CALL sys.fast_forward('default.T', 'branch1')
+```
+
