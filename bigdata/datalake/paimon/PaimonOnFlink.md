@@ -1187,3 +1187,140 @@ CALL [catalog.]sys.fast_forward('identifier', 'branchName')
 CALL sys.fast_forward('default.T', 'branch1')
 ```
 
+# Action Jars
+
+## 启动语法
+
+```shell
+# action： 执行任务类型
+# args：配置参数
+<FLINK_HOME>/bin/flink run \
+ /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+ <action>
+ <args>
+# 启动一个compact任务
+<FLINK_HOME>/bin/flink run \
+ /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+ compact \
+ --path <TABLE_PATH>
+```
+
+## Merge Into Table
+
+* Paimon支持MERGE INTO，通过flink run`提交`merge_into`作业。
+
+> * 只有主键表支持merge into
+> * 该操作不会产生`UPDATE_BEFORE`，因此不建议设置`changelog-producer = input`
+
+*  `merge_into`操作使用 `UPSERT`语义而不是 `UPDATE`，这意味着如果存在该行，则进行更新，否则会插入。例如，对于非主键表，您可以更新每一列，但是对于主键表，如果要更新主键，则必须插入一个新的行，该行与表中的行具有不同的主键。在这种情况下，`UPSERT`很有用。
+
+```shell
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    merge_into \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table <target-table> \
+    [--target_as <target-table-alias>] \
+    --source_table <source_table-name> \
+    [--source_sql <sql> ...]\
+    --on <merge-condition> \
+    --merge_actions <matched-upsert,matched-delete,not-matched-insert,not-matched-by-source-upsert,not-matched-by-source-delete> \
+    --matched_upsert_condition <matched-condition> \
+    --matched_upsert_set <upsert-changes> \
+    --matched_delete_condition <matched-condition> \
+    --not_matched_insert_condition <not-matched-condition> \
+    --not_matched_insert_values <insert-values> \
+    --not_matched_by_source_upsert_condition <not-matched-by-source-condition> \
+    --not_matched_by_source_upsert_set <not-matched-upsert-changes> \
+    --not_matched_by_source_delete_condition <not-matched-by-source-condition> \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+
+## 案例
+## 找到订单id相同的数据，如果T表的price大于100的数据进行upsert，小于10的删除
+./flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    merge_into \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table T \
+    --source_table S \
+    --on "T.id = S.order_id" \
+    --merge_actions \
+    matched-upsert,matched-delete \
+    --matched_upsert_condition "T.price > 100" \
+    --matched_upsert_set "mark = 'important'" \
+    --matched_delete_condition "T.price < 10" 
+    
+## 找到订单id相同的表，对price+20
+./flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    merge_into \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table T \
+    --source_table S \
+    --on "T.id = S.order_id" \
+    --merge_actions \
+    matched-upsert,not-matched-insert \
+    --matched_upsert_set "price = T.price + 20" \
+    --not_matched_insert_values * 
+
+-- For not matched by source order rows (which are in the target table and does not match any row in the
+-- source table based on the merge-condition), decrease the price or if the mark is 'trivial', delete them:
+# 找到订单id的数据，当匹配不上时，T表的mark不等于trivial执行upsert，T表的price-20，当T表的mark为trivial删除数据
+./flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    merge_into \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table T \
+    --source_table S \
+    --on "T.id = S.order_id" \
+    --merge_actions \
+    not-matched-by-source-upsert,not-matched-by-source-delete \
+    --not_matched_by_source_upsert_condition "T.mark <> 'trivial'" \
+    --not_matched_by_source_upsert_set "price = T.price - 20" \
+    --not_matched_by_source_delete_condition "T.mark = 'trivial'"
+    
+-- 在新的catalog里创建视图作为source表
+./flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    merge_into \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table T \
+    --source_sql "CREATE CATALOG test_cat WITH (...)" \
+    --source_sql "CREATE TEMPORARY VIEW test_cat.`default`.S AS SELECT order_id, price, 'important' FROM important_order" \
+    --source_table test_cat.default.S \
+    --on "T.id = S.order_id" \
+    --merge_actions not-matched-insert\
+    --not_matched_insert_values *
+```
+
+* `matched`语法解释：
+  * matched: 修改的行来自target表和每个基于merge-condition和可选的matched-condition能够匹配的source表的行 (source ∩ target).
+  * not matched: 修改的行来自source表和target表基于merge-condition和可选地not_matched_condition所有行不能匹配的数据 (source - target).
+  * not matched by source: 修改的行来自target表和source表基于merge-condition和可选地not-matched-by-source-condition 所有行不能匹配的数据(target - source)
+
+### 参数格式
+
+* matched_upsert_changes: col = <source_table>.col | expression [, …] (Means setting <target_table>.col with given value. Do not add ‘<target_table>.’ before ‘col’.)
+  Especially, you can use ‘*’ to set columns with all source columns (require target table’s schema is equal to source’s).*
+* *not_matched_upsert_changes is similar to matched_upsert_changes, but you cannot reference source table’s column or use ‘*’.
+
+* insert_values:
+  col1, col2, …, col_end
+  Must specify values of all columns. For each column, you can reference <source_table>.col or use an expression.
+  Especially, you can use ‘*’ to insert with all source columns (require target table’s schema is equal to source’s).
+
+* not_matched_condition cannot use target table’s columns to construct condition expression.
+
+* not_matched_by_source_condition cannot use source table’s columns to construct condition expression.
+
+```bash
+# 具体查看如下：
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    merge_into --help
+```
