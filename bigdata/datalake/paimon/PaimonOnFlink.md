@@ -1030,6 +1030,9 @@ CALL [catalog].sys.merge_into('identifier','targetAlias',
 'matchedUpsertCondition','matchedUpsertSetting',
 'notMatchedInsertCondition','notMatchedInsertValues',
 'matchedDeleteCondition')
+
+-- 案例
+call sys.merge_into('default.test1','t1','create TEMPORARY view s1 as select 1 as id,cast(1 as string) as name','s1','t1.id=s1.id','','name=s1.name','','*');
 ```
 
 ### remove_orphan_files
