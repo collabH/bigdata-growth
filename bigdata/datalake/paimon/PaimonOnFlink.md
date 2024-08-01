@@ -1327,3 +1327,82 @@ CALL sys.fast_forward('default.T', 'branch1')
     /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
     merge_into --help
 ```
+
+## Deleting from table
+
+* 在Flink 1.16和以前的版本中，Paimon只支持通过`flink run`提交删除作业来删除记录。
+
+```bash
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    delete \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table <table-name> \
+    --where <filter_spec> \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+    
+# filter_spec等同于SQL中的'WHERE'语句 .例如
+    age >= 18 AND age <= 60
+    animal <> 'cat'
+    id > (SELECT count(*) FROM employee)
+    
+# 查看更多参数
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    delete --help
+```
+
+## Drop Partition
+
+```bash
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    drop_partition \
+    --warehouse <warehouse-path> \
+    --database <database-name> \
+    --table <table-name> \
+    [--partition <partition_spec> [--partition <partition_spec> ...]] \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+
+partition_spec:
+key1=value1,key2=value2...
+
+# 查看更多参数
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    drop_partition --help
+```
+
+# Savepoint
+
+* Paimon有自己的快照管理，这可能会与Flink的checkpoint管理发生冲突，导致从Savepoint恢复时出现异常(不会影响底层数据存储)。
+* 可以通过以下方式执行savepoint：
+  * 使用`bin/flink stop --type [native/canonical] --savepointPath [:targetDirectory] :jobId`来触发savepoint
+  * 使用带有Flink savepoint的Paimon tag，并在从savepoint恢复之前滚回tag。
+
+## Stop with savepoint
+
+* Flink的这个特性确保最后一个checkpoint被完全处理，这意味着不会再留下未提交的元数据。
+
+```shell
+bin/flink stop --type [native/canonical] --savepointPath [:targetDirectory] :jobId
+```
+
+## Tag with Savepoint
+
+* 在Flink中，我们可以从kafka中消费，然后写到paimon。由于flink的checkpoint只保留有限的数量，因此我们将在特定时间(如代码升级、数据更新等)触发savepoint，以确保状态可以保留更长的时间，从而可以增量地恢复作业。
+* Paimon的快照类似于flink的checkpoint，两者都将自动过期，但Paimon的标记特性允许快照保留很长时间。因此，我们可以结合paimon的tag和flink的savepoint，实现作业从指定savepoint的增量恢复。
+
+### 启用方式
+
+* 步骤1：为savepoint启用自动创建tag
+  * 设置`sink.savepoint.auto-tag`为`true`
+* 步骤2：触发savepoint
+  * `bin/flink savepoint :jobId [:targetDirectory]`
+* 步骤3：选择与savepoint相对应的tag
+  * 与savepoint相对应的tag将以`savepoint-${savepointID}`的形式命名，可以通过`select * from test$tags`查询tag
+* 步骤4： 回滚paimon表
+  * 回滚paimon表到指定tag
+* 步骤5：从savepoint重新启动
+  * `bin/flink run -s :savepointPath [:runArgs]`
