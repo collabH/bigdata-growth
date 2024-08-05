@@ -94,6 +94,8 @@
 * [Paimon主键表](bigdata/datalake/paimon/PaimonPkTable.md)
 * [Paimon非主键表](bigdata/datalake/paimon/PaimonWithoutPkTable.md)
 * [Flink操作Paimon](bigdata/datalake/paimon/PaimonOnFlink.md)
+* [Spark操作Paimon](bigdata/datalake/paimon/PaimonOnSpark.md)
+* [Paimon Maintenance](bigdata/datalake/paimon/PaimonOnMaintenance.md)
 * [Paimon实践](bigdata/datalake/paimon/PaimonPractice.md)
 
 #### iceberg
