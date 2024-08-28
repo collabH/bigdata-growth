@@ -464,7 +464,7 @@ state.savepoints.dir: hdfs:///flink/savepoints
 
 * 建议同时将 [managed memory](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/memory/mem_setup_tm/#managed-memory) 设为0，以保证将最大限度的内存分配给 JVM 上的用户代码。
 
-**注意：**由于 HashMapStateBackend 将数据以对象形式存储在堆中，因此重用这些对象数据是不安全的。
+**注意：**  由于 HashMapStateBackend 将数据以对象形式存储在堆中，因此重用这些对象数据是不安全的。
 
 ##### EmbeddedRocksDBStateBackend
 
@@ -479,7 +479,7 @@ state.savepoints.dir: hdfs:///flink/savepoints
 
   - 所有高可用的场景。
 
-**注意：**可以保留的状态大小仅受磁盘空间的限制。与状态存储在内存中的 HashMapStateBackend 相比，EmbeddedRocksDBStateBackend 允许存储非常大的状态。 然而，这也意味着使用 EmbeddedRocksDBStateBackend 将会使应用程序的最大吞吐量降低。 所有的读写都必须序列化、反序列化操作，这个比基于堆内存的 state backend 的效率要低很多。 同时因为存在这些序列化、反序列化操作，重用放入 EmbeddedRocksDBStateBackend 的对象是安全的。
+**注意：**  可以保留的状态大小仅受磁盘空间的限制。与状态存储在内存中的 HashMapStateBackend 相比，EmbeddedRocksDBStateBackend 允许存储非常大的状态。 然而，这也意味着使用 EmbeddedRocksDBStateBackend 将会使应用程序的最大吞吐量降低。 所有的读写都必须序列化、反序列化操作，这个比基于堆内存的 state backend 的效率要低很多。 同时因为存在这些序列化、反序列化操作，重用放入 EmbeddedRocksDBStateBackend 的对象是安全的。
 
 * EmbeddedRocksDBStateBackend 是目前唯一支持增量 CheckPoint 的 State Backend。
 * 可以使用一些 RocksDB 的本地指标(metrics)，但默认是关闭的。你能在 [这里](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/deployment/config/#rocksdb-native-metrics) 找到关于 RocksDB 本地指标的文档。
@@ -558,9 +558,9 @@ state.checkpoints.dir: hdfs://namenode:40010/flink/checkpoints
 
   - `state.backend.rocksdb.memory.high-prio-pool-ratio`，默认值 `0.1`，即 10% 的 block cache 内存会优先分配给索引及过滤器。 我们强烈建议不要将此值设置为零，以防止索引和过滤器被频繁踢出缓存而导致性能问题。此外，我们默认将L0级的过滤器和索引将被固定到缓存中以提高性能，更多详细信息请参阅 [RocksDB 文档](https://github.com/facebook/rocksdb/wiki/Block-Cache#caching-index-filter-and-compression-dictionary-blocks)。
 
-**注意：**上述机制开启时将覆盖用户在 [`PredefinedOptions`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#predefined-per-columnfamily-options) 和 [`RocksDBOptionsFactory`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#passing-options-factory-to-rocksdb) 中对 block cache 和 write buffer 进行的配置。
+**注意： **上述机制开启时将覆盖用户在 [`PredefinedOptions`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#predefined-per-columnfamily-options) 和 [`RocksDBOptionsFactory`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#passing-options-factory-to-rocksdb) 中对 block cache 和 write buffer 进行的配置。
 
-**注意：** *仅面向专业用户*：若要手动控制内存，可以将 `state.backend.rocksdb.memory.managed` 设置为 `false`，并通过 [`ColumnFamilyOptions`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#passing-options-factory-to-rocksdb) 配置 RocksDB。 或者可以复用上述 cache/write-buffer-manager 机制，但将内存大小设置为与 Flink 的托管内存大小无关的固定大小（通过 `state.backend.rocksdb.memory.fixed-per-slot`/`state.backend.rocksdb.memory.fixed-per-tm` 选项）。 注意在这两种情况下，用户都需要确保在 JVM 之外有足够的内存可供 RocksDB 使用。
+**注意：**  仅面向专业用户 ： 若要手动控制内存，可以将 `state.backend.rocksdb.memory.managed` 设置为 `false`，并通过 [`ColumnFamilyOptions`](https://nightlies.apache.org/flink/flink-docs-release-1.19/zh/docs/ops/state/state_backends/#passing-options-factory-to-rocksdb) 配置 RocksDB。 或者可以复用上述 cache/write-buffer-manager 机制，但将内存大小设置为与 Flink 的托管内存大小无关的固定大小（通过 `state.backend.rocksdb.memory.fixed-per-slot`/`state.backend.rocksdb.memory.fixed-per-tm` 选项）。 注意在这两种情况下，用户都需要确保在 JVM 之外有足够的内存可供 RocksDB 使用。
 
 #### 计时器(内存vsRocksDB)
 
@@ -568,7 +568,7 @@ state.checkpoints.dir: hdfs://namenode:40010/flink/checkpoints
 * 当选择 RocksDB 作为 State Backend 时，默认情况下**计时器也存储在 RocksDB中** 。这是一种健壮且可扩展的方式，允许应用程序使用很多个计时器。另一方面，在 RocksDB 中维护计时器会有一定的成本，因此 Flink 也提供了将计时器存储在 JVM 堆上而使用 RocksDB 存储其他状态的选项。当计时器数量较少时，基于堆的计时器可以有更好的性能。
 * 您可以通过将 `state.backend.rocksdb.timer-service.factory` 配置项设置为 `heap`（而不是默认的 `rocksdb`）来将计时器存储在堆上。
 
-**注意：** *在 RocksDB state backend 中使用基于堆的计时器的组合当前不支持计时器状态的异步快照。其他状态（如 keyed state）可以被异步快照。*
+**注意：**  在 RocksDB state backend 中使用基于堆的计时器的组合当前不支持计时器状态的异步快照。其他状态（如 keyed state）可以被异步快照。
 
 #### 开启RocksDB原生监控指标配置
 
@@ -651,7 +651,7 @@ Flink应用想在大规模场景下可靠运行需要俩个条件：
 
 ![Illustration how the minimum-time-between-checkpoints parameter affects checkpointing behavior.](../img/checkpointinterval.jpg)
 
-***注意：*** 可以配置应用程序（通过`CheckpointConfig`）允许同时进行多个 checkpoints。 对于 Flink 中状态较大的应用程序，这通常会使用过多的资源到 checkpointing。 当手动触发 savepoint 时，它可能与正在进行的 checkpoint 同时进行。
+**注意：**  可以配置应用程序（通过`CheckpointConfig`）允许同时进行多个 checkpoints。 对于 Flink 中状态较大的应用程序，这通常会使用过多的资源到 checkpointing。 当手动触发 savepoint 时，它可能与正在进行的 checkpoint 同时进行。
 
 #### 优化RocksDB
 
@@ -672,7 +672,7 @@ Flink应用想在大规模场景下可靠运行需要俩个条件：
 
 ##### RocksDB内存调优
 
-* RocksDB State Backend 的性能在很大程度上取决于它可用的内存量。为了提高性能，增加内存会有很大的帮助，或者调整内存的功能。 默认情况下，RocksDB State Backend 将 Flink 的托管内存用于 RocksDB 的缓冲区和缓存（`State.Backend.RocksDB.memory.managed:true`）
+* RocksDB State Backend 的性能在很大程度上取决于它可用的内存量。为了提高性能，增加内存会有很大的帮助，或者调整内存的功能。 默认情况下，RocksDB State Backend 将 Flink 的托管内存用于 RocksDB 的缓冲区和缓存（`state.backend.rocksdb.memory.managed:true`）
 
   * 尝试提高性能的第一步应该是**增加托管内存的大小。这通常会大大改善这种情况**。 尤其是在容器、进程规模较大的情况下，除非应用程序本身逻辑需要大量的 JVM 堆，否则大部分总内存通常都可以用于 RocksDB 。默认的托管内存比例 *(0.4)* 是保守的，当 TaskManager 进程的内存为很多 GB 时，通常是可以增加该托管内存比例。
   * 在 RocksDB 中，写缓冲区的数量取决于应用程序中所拥有的状态数量（数据流中所有算子的状态）。每个状态对应一个列族（ColumnFamily），它需要自己写缓冲区。因此，具有多状态的应用程序通常需要更多的内存才能获得相同的性能。
@@ -731,7 +731,7 @@ ExecutionConfig executionConfig = new ExecutionConfig();
 executionConfig.setUseSnapshotCompression(true);
 ```
 
-**注意：** 压缩选项对增量快照没有影响，因为它们使用的是 RocksDB 的内部格式，该格式始终使用开箱即用的 snappy 压缩。
+**注意： ** 压缩选项对增量快照没有影响，因为它们使用的是 RocksDB 的内部格式，该格式始终使用开箱即用的 snappy 压缩。
 
 #### Task本地恢复
 
@@ -845,8 +845,8 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 
 1. Flink通过Checkpoint恢复时间长，会导致服务可用率降低。
 2. 非幂等或非事务场景，导致大量业务数据重复。
-3. **Checkpoint失败导致lag无法追上造成死循环：**Flink 任务如果持续反压严重，可能会进入死循环，永远追不上 lag。因为反压严重会导致 Flink Checkpoint 失败，Job 不能无限容忍 Checkpoint 失败，所以 Checkpoint 连续失败会导致 Job 失败。Job 失败后任务又会从很久之前的 Checkpoint 恢复开始追 lag，追 lag 时反压又很严重，Checkpoint 又会失败。**从而进入死循环，任务永远追不上 Lag**。
-4. **Kafka日志过期时间因数据量大不建议存储过长：**在一些大流量场景中，SSD 成本很高，所以 Kafka 只会保留最近三小时的数据。如果 Checkpoint 持续三小时内失败，任务一旦重启，数据将无法恢复。
+3. **Checkpoint失败导致lag无法追上造成死循环：** Flink 任务如果持续反压严重，可能会进入死循环，永远追不上 lag。因为反压严重会导致 Flink Checkpoint 失败，Job 不能无限容忍 Checkpoint 失败，所以 Checkpoint 连续失败会导致 Job 失败。Job 失败后任务又会从很久之前的 Checkpoint 恢复开始追 lag，追 lag 时反压又很严重，Checkpoint 又会失败。**从而进入死循环，任务永远追不上 Lag**。
+4. **Kafka日志过期时间因数据量大不建议存储过长：** 在一些大流量场景中，SSD 成本很高，所以 Kafka 只会保留最近三小时的数据。如果 Checkpoint 持续三小时内失败，任务一旦重启，数据将无法恢复。
 
 ### Checkpoint为什么会失败？
 
@@ -911,7 +911,7 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 ###### 空闲buffer检测
 
 * 社区在Flink-14396引入空闲buffer检测机制，如果buffer非空闲则不写output buffer，不做空闲检测前，Task 会卡在第五步的数据处理环节，不能及时响应 UC。空闲buffer检测后，Task 会卡在第三步，在这个环节接收到 UC Barrier 时，也可以快速开始 UC。
-* 第三步，只检查是否有一个空闲 Buffer**。所以当处理一条数据需要多个 Buffer 的场景，Task 处理完数据输出结果时，可能仍然会卡在第五步，导致 Task 不能处理 UC**。例如单条数据较大，flatmap 算子、window 触发以及广播 watermark，都是处理一条数据，需要多个 Buffer 的场景。这些场景 Task 仍然会卡在 request memory 上。
+* 第三步，只检查是否有一个空闲 Buffer。 **所以当处理一条数据需要多个 Buffer 的场景，Task 处理完数据输出结果时，可能仍然会卡在第五步，导致 Task 不能处理 UC** 。例如单条数据较大，flatmap 算子、window 触发以及广播 watermark，都是处理一条数据，需要多个 Buffer 的场景。这些场景 Task 仍然会卡在 request memory 上。
 
 ######  **Overdraft Buffer**(1.6版本支持)
 
@@ -920,9 +920,9 @@ Flink 支持多种不同的故障恢复策略，该策略需要通过Flink配置
 
 ### UC风险点
 
-* **Schema升级:**schema升级后，如果序列化不兼容，UC无法恢复；
-* **链接改变:**算子之间的链接发送变化，UC无法恢复
-* **小文件:**Data Buffer会写大量的filesystem小文件
+* **Schema升级:** schema升级后，如果序列化不兼容，UC无法恢复；
+* **链接改变:** 算子之间的链接发送变化，UC无法恢复
+* **小文件:** Data Buffer会写大量的filesystem小文件
 
 #### 利用Aligned Timeout混合使用AC+UC
 
