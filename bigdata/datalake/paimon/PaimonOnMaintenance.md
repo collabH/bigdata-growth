@@ -313,3 +313,313 @@ SELECT * FROM sys.catalog_options;
 * 参数 `'changelog-producer' = 'lookup' 或 'full-compaction'`, 和参数 `'full-compaction.delta-commits'`对写入性能十分影响，如果使用快照 /完整同步阶段，则可以删除这些参数，然后在增量阶段再次启用它们。
 * 如果发现运行的作业呈现锯齿状背压情况，可以尝试开启异步compaction（[Asynchronous Compaction](https://paimon.apache.org/docs/master/maintenance/write-performance/#asynchronous-compaction)）
 
+## Parallelism
+
+* 建议sink的并行度小于等于桶数，最好等于桶数。
+
+| Option           | Required | Default | Type    | Description                                                  |
+| :--------------- | :------- | :------ | :------ | :----------------------------------------------------------- |
+| sink.parallelism | No       | (none)  | Integer | 定义sink operator的并行度，默认情况，与sink operator上游operator保持一致。 |
+
+## Local Merging
+
+* 如果写入paimon的任务受到主键导致的数据倾斜（存在热点key问题），可以通过设置`'local-merge-buffer-size'`,输入的记录在被bucket重新shuffle并写入sink之前就会被缓冲和合并，当存在热点key时这有助于很大的缓解热key问题。
+* 缓冲区满时将刷新，默认情况下建议`'local-merge-buffer-size'`配置从`64m`开始增大，Flink CDC暂时不支持本地合并。
+
+## File Format
+
+* 如果想要最大的compaction性能，建议使用AVRO存储格式
+  * **优点：** 其可以实现高写吞吐量和compaction性能。
+  * **缺点：** 正常分析查询将会很慢，AVRO是行存储，它的最大问题是它没有查询projection。例如，如果表有100列，但只查询几列，对于行存来说需要就需要查询全部列的IO。此外，压缩效率会降低，存储成本会增加。
+* 配置文件存储格式为行存：
+
+```shell
+file.format = avro
+#  采集行存储的统计信息有点昂贵，建议关闭统计信息。
+metadata.stats-mode = none
+```
+
+* 通过 `'file.format.per.level' = '0:avro,1:avro'`配置，可以指定前2层存储格式为avro。
+
+## File Compression
+
+* 默认情况下，Paimon使用`zstd`压缩第一层数据文件，可以通过下述参数修改
+  * `'file.compression.zstd-level'`: 默认情况为1。为了获得更高的压缩率，可以将其配置为9，但是读写速度会显著降低。
+
+## 稳定性
+
+* 如果bucket或资源过少，full compaction可能导致checkpoint超时，Flink的默认checkpoint超时时间为10分钟，可以调大checkpoint超时时间：
+
+```shell
+execution.checkpointing.timeout = 60 min
+```
+
+## 初始化写操作
+
+* 在初始化写操作时，桶的写入器需要读取所有的历史文件。如果这里存在瓶颈(例如，同时写入大量分区)，可以使用`write-manifest-cache`来缓存读取的manifest数据，以加速初始化。
+
+## Write Memory
+
+* 在Paimon中，占用内存的地方主要有三个：
+  * **写入器的内存缓冲区** ，由单个任务的所有写入器共享和抢占。这个内存值可以通过`write-buffer-size`表属性来调整。
+  * **合并多个sorted runs以进行compaction时消耗的内存**。可以通过`num-sorted-run.compaction-trigger`进行调整，以更改要合并的sorted runs的数量。
+  * 如果行非常大，一次读取太多行数据将在进行compaction时消耗大量内存。减少`read.batch-size`配置可以减轻这种情况的影响。
+  * **写列式ORC文件所消耗的内存**。减少`orc.write.batch-size`配置可以减少ORC格式的内存消耗。
+  * 如果在写任务中动态compaction文件，那么某些大列的dictionary在compaction过程中会大量消耗内存
+    * 禁用parquet格式所有dictionary编码，配置`'parquet.enable.dictionary'= 'false'`
+    * 禁用ORC格式所有dictionary编码，配置`orc.dictionary.key.threshold='0'`,另外设置`orc.column.encoding.direct='field1,field2'`可以关闭指定列的dictionary编码。
+* 如果不使用Flink状态，可以通过以下参数降低manged内存
+
+```shell
+taskmanager.memory.managed.size=1m
+```
+
+* 或者可以通过以下参数，使用managed内存作为写缓冲区，防止OOM
+
+```shell
+sink.use-managed-memory-allocator=true
+```
+
+## Commit Memory
+
+* 如果写入表的数据量巨大，commiter节点可能会使用大内存，如果内存太小，可能会发生OOM。在这种情况下，需要增加Committer堆内存，如果统一增加Flink的TaskManager的内存，这可能会导致内存浪费，可以通过以下配置管理Commiter内存：
+  * 配置Flink配置`cluster.fine-grained-resource-management.enabled: true`（Flink1.18之后默认为true）
+  * 配置Paimon表参数`sink.committer-memory`,例如300 MB，取决于TaskManger大小。(也支持`sink.committer-cpu`)
+
+# Dedicated Compaction
+
+* Paimon的快照管理支持多个写入器的写入。
+
+> 对于类似于S3的对象存储，因为不支持"RENAME"语义，所以需要配置Hive metastore并且配置catalog的'lock.enabled'为true
+
+* 默认情况Paimon支持并发写入不同分区，推荐的模式是流作业将记录写入Paimon的最新分区;同时批处理作业(覆盖)将记录写入历史分区。
+
+![](./img/paimon_write_diff_partition.png)
+
+* 如果需要多个写入器将记录写入同一个分区，情况就会稍微复杂一些。如果不想使用UNION ALL，有多个流作业将记录写入"partial-update"Paimon表。
+
+## Dedicated Compaction Job
+
+* 默认情况下，Paimon写入器将在写入记录期间根据需要执行compaction，大多数情况下没什么问题。
+* Compaction将会标记一些数据文件为"deleted"(不是真正的删除，而是通过快照过期方式清理数据)。如果多个写入器标记这些文件，则在提交更改时将发生冲突。Paimon将会动态的解决冲突，但是可能会导致任务重启。
+* 为了避免这些缺点，用户还可以选择跳过写入器中的Compaction，并运行专门的Compaction作业。由于Compaction只由专门的作业执行，因此写入器可以不暂停地持续写入记录，并且不会发生冲突。配置后台异步Compaction作业需要将Paimon以下属性设置为true:
+
+| Option     | Required | Default | Type    | Description                                                  |
+| :--------- | :------- | :------ | :------ | :----------------------------------------------------------- |
+| write-only | No       | false   | Boolean | 如果设置为true，Compaction和snapshot过期将会被跳过，这个配置依赖于后台Compact任务 |
+
+* 启动一个后台Compaction任务：
+
+```sql
+-- 通过flink run启动
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    compact \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    [--partition <partition-name>] \
+    [--table_conf <table_conf>] \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+    
+-- 通过flink sql方式
+-- compact table
+CALL sys.compact(`table` => 'default.T');
+
+-- compact table with options
+CALL sys.compact(`table` => 'default.T', `options` => 'sink.parallelism=4');
+
+-- compact table partition
+CALL sys.compact(`table` => 'default.T', `partitions` => 'p=0');
+
+-- compact table partition with filter
+CALL sys.compact(`table` => 'default.T', `where` => 'dt>10 and h<20');
+```
+
+## Database Compaction Job
+
+* 通过以下SQL调用Paimon内置Procedures
+
+```sql
+CALL sys.compact_database('includingDatabases')
+
+CALL sys.compact_database('includingDatabases', 'mode')
+
+CALL sys.compact_database('includingDatabases', 'mode', 'includingTables')
+
+CALL sys.compact_database('includingDatabases', 'mode', 'includingTables', 'excludingTables')
+
+CALL sys.compact_database('includingDatabases', 'mode', 'includingTables', 'excludingTables', 'tableOptions')
+
+-- example
+CALL sys.compact_database('db1|db2', 'combined', 'table_.*', 'ignore', 'sink.parallelism=4')
+```
+
+## Sort Compact
+
+* 如果Paimon配置了动态bucket主键或者是append表，可以使用指定的列排序触发Compaction，以加快查询速度。
+
+```sql
+-- sort compact table
+CALL sys.compact(`table` => 'default.T', order_strategy => 'zorder', order_by => 'a,b')
+```
+
+## Historical Partition Compact
+
+* 对于一段时间没有收到任何新数据的分区，可以执行以下命令提交压缩作业。这些分区中的小文件将被完全压缩，目前仅支持批处理模式
+
+### For Table
+
+```sql
+-- history partition compact table
+CALL sys.compact(`table` => 'default.T', 'partition_idle_time' => '1 d')
+```
+
+### For Databases
+
+```sql
+-- history partition compact table语法
+CALL sys.compact_database('includingDatabases', 'mode', 'includingTables', 'excludingTables', 'tableOptions', 'partition_idle_time')
+-- history partition compact table
+CALL sys.compact_database('test_db', 'combined', '', '', '', '1 d')
+```
+
+# Manage Snapshots
+
+## Expire Snapshots
+
+* Paimon写入器每次提交生成一个或两个快照。每个快照可能会添加一些新的数据文件或将一些旧的数据文件标记为已删除。但是，标记的数据文件并没有真正被删除，因为Paimon还支持time traveling到更早的快照。只有当快照过期时才会删除。
+* 目前，Paimon写入器在提交新更改时自动执行过期。通过过期快照，可以删除不再使用的旧数据文件和元数据文件，释放磁盘空间。
+* 快照过期由以下表属性控制：
+
+| Option                         | Required | Default           | Type     | Description                                        |
+| :----------------------------- | :------- | :---------------- | :------- | :------------------------------------------------- |
+| snapshot.time-retained         | No       | 1 h               | Duration | 完成快照保留的最大时间                             |
+| snapshot.num-retained.min      | No       | 10                | Integer  | 完成快照保留最小数量，必须大于等于1                |
+| snapshot.num-retained.max      | No       | Integer.MAX_VALUE | Integer  | 完成快照保留最大数量，必须大于等于最小快照保留数量 |
+| snapshot.expire.execution-mode | No       | sync              | Enum     | 指定执行的过期模式                                 |
+| snapshot.expire.limit          | No       | 10                | Integer  | 一次允许过期的最大快照数。                         |
+
+* 当快照的数量小于`snapshot.num-retained.min`时，没有快照会过期(即使`snapshot.time-retained`配置满足)，`snapshot.num-retained.max`和`snapshot.time-retained`用于控制快照过期，直到剩余的快照满足条件。
+* 以下案例为快照过期详情(`snapshot.num-retained.min` = 2, `snapshot.time-retained` = 1h, `snapshot.num-retained.max` = 5):
+
+| New Snapshots                   | All snapshots after expiration check                         | explanation                                                  |
+| :------------------------------ | :----------------------------------------------------------- | :----------------------------------------------------------- |
+| (snapshots-1, 2023-07-06 10:00) | (snapshots-1, 2023-07-06 10:00)                              | No snapshot expired                                          |
+| (snapshots-2, 2023-07-06 10:20) | (snapshots-1, 2023-07-06 10:00) (snapshots-2, 2023-07-06 10:20) | No snapshot expired                                          |
+| (snapshots-3, 2023-07-06 10:40) | (snapshots-1, 2023-07-06 10:00) (snapshots-2, 2023-07-06 10:20) (snapshots-3, 2023-07-06 10:40) | No snapshot expired                                          |
+| (snapshots-4, 2023-07-06 11:00) | (snapshots-1, 2023-07-06 10:00) (snapshots-2, 2023-07-06 10:20) (snapshots-3, 2023-07-06 10:40) (snapshots-4, 2023-07-06 11:00) | No snapshot expired                                          |
+| (snapshots-5, 2023-07-06 11:20) | (snapshots-2, 2023-07-06 10:20) (snapshots-3, 2023-07-06 10:40) (snapshots-4, 2023-07-06 11:00) (snapshots-5, 2023-07-06 11:20) | snapshot-1 was expired because the condition `snapshot.time-retained` is not met |
+| (snapshots-6, 2023-07-06 11:30) | (snapshots-3, 2023-07-06 10:40) (snapshots-4, 2023-07-06 11:00) (snapshots-5, 2023-07-06 11:20) (snapshots-6, 2023-07-06 11:30) | snapshot-2 was expired because the condition `snapshot.time-retained` is not met |
+| (snapshots-7, 2023-07-06 11:35) | (snapshots-3, 2023-07-06 10:40) (snapshots-4, 2023-07-06 11:00) (snapshots-5, 2023-07-06 11:20) (snapshots-6, 2023-07-06 11:30) (snapshots-7, 2023-07-06 11:35) | No snapshot expired                                          |
+| (snapshots-8, 2023-07-06 11:36) | (snapshots-4, 2023-07-06 11:00) (snapshots-5, 2023-07-06 11:20) (snapshots-6, 2023-07-06 11:30) (snapshots-7, 2023-07-06 11:35) (snapshots-8, 2023-07-06 11:36) | snapshot-3 was expired because the condition `snapshot.num-retained.max` is not met |
+
+* **注意** ，保留时间过短或保留数量过少可能导致以下问题：
+  * 批量查询无法找到该文件。例如，表比较大，批处理查询需要10分钟才能读取，但是10分钟前的快照过期，此时批处理查询将读取已删除的快照。
+  * 重新启动表文件上的流式读取作业失败。当作业重新启动时，它所记录的快照可能已经过期。(您可以使用消费者Id来保护流读取在快照过期的小保留时间，被消费的快照即使过期也不会被删除)。
+* 默认情况下，paimon会**同步删除过期快照**。当需要删除的文件太多时，它们可能不会被快速删除，并向上游operator进行反压。为了避免这种情况，可以设置`snapshot.expire.execution-mode`为`async`来避免。
+
+## Rollback to Snapshot
+
+```java
+// flink run方式
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    rollback_to \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    --version <snapshot-id> \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+// java api
+import org.apache.paimon.table.Table;
+
+public class RollbackTo {
+
+    public static void main(String[] args) {
+        // before rollback:
+        // snapshot-3
+        // snapshot-4
+        // snapshot-5
+        // snapshot-6
+        // snapshot-7
+      
+        table.rollbackTo(5);
+        
+        // after rollback:
+        // snapshot-3
+        // snapshot-4
+        // snapshot-5
+    }
+}
+// spark
+CALL rollback(table => 'test.T', version => '2');
+```
+
+## 清理孤儿文件
+
+* 只有快照过期时才会物理删除Paimon文件。但是，在删除文件时可能会发生一些意想不到的错误，因此可能存在未被Paimon快照使用的文件(所谓的孤立文件)。您可以提交一个删除孤立文件作业来清理它们
+
+```sql
+-- spark/Flink SQL
+CALL sys.remove_orphan_files(table => "my_db.my_table", [older_than => "2023-10-31 12:00:00"])
+
+CALL sys.remove_orphan_files(table => "my_db.*", [older_than => "2023-10-31 12:00:00"])
+
+-- flink run action
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    remove_orphan_files \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    [--older_than <timestamp>] \
+    [--dry_run <false/true>] 
+```
+
+# Rescale Bucket
+
+* 由于bucket的数量极大地影响了性能，因此Paimon允许用户通过Alter Table命令来调整存储桶号，并通过**INSERT OVERWRITE**而无需重新创建表/分区来重新组织数据布局。执行覆盖作业时，该框架将使用旧的存储桶号自动扫描数据，并根据当前的存储桶号哈希记录。
+
+## Rescale Overwrite
+
+```sql
+-- rescale number of total buckets
+ALTER TABLE table_identifier SET ('bucket' = '...');
+
+-- reorganize data layout of table/partition
+INSERT OVERWRITE table_identifier [PARTITION (part_spec)]
+SELECT ... 
+FROM table_identifier
+[WHERE part_spec];
+```
+
+* **ALTER TABLE**只修改表的元数据，不会重新组织或重新格式化现有数据。重组现有数据必须通过**INSERT OVERWRITE**来实现。
+* 重新调整bucket数不会影响读作业和正在运行的写作业。
+* 一旦更改了存储bucket数，任何新调度的**INSERT INTO**作业，如果写入未重组的现有表/分区，将抛出TableException，消息如下：
+
+```text
+Try to write table/partition ... with a new bucket num ..., 
+but the previous bucket num is ... Please switch to batch mode, 
+and perform INSERT OVERWRITE to rescale current data layout first.
+```
+
+* 对于分区表，不同的分区可以有不同的bucket数量，例如：
+
+```sql
+ALTER TABLE my_table SET ('bucket' = '4');
+INSERT OVERWRITE my_table PARTITION (dt = '2022-01-01')
+SELECT * FROM ...;
+  
+ALTER TABLE my_table SET ('bucket' = '8');
+INSERT OVERWRITE my_table PARTITION (dt = '2022-01-02')
+SELECT * FROM ...;
+```
+
+* 在覆盖期内，请确保没有其他作业写入相同的表/分区。
+
+> 注:对于启用日志系统的表(例如:Kafka)，请重新调整topic分区，以保持一致性。
+
+## 使用Case
+
+https://paimon.apache.org/docs/master/maintenance/rescale-bucket/#use-case
