@@ -623,3 +623,123 @@ SELECT * FROM ...;
 ## 使用Case
 
 https://paimon.apache.org/docs/master/maintenance/rescale-bucket/#use-case
+
+# Manage Tags
+
+* Paimon的快照机制可以使用简单的方式查询历史数据，但是在大多数情况下，作业会生成太多快照，并且根据表配置，表将过期旧快照。快照过期会同时删除旧的数据文件，过期快照的历史数据将无法查询。
+* 为了解决这个问题，可以根据快照创建tag。tag将维护快照的manifest和数据文件。典型的用法是每天创建标记，然后可以维护每天的历史数据以进行批量读取。
+
+## Automatic Creation
+
+* Paimon支持在写作业中自动创建Tag
+
+### 选择创建模式
+
+* 通过表参数`tag.automatic-creation`配置动态创建Tag模式
+  * `process-time`: 基于机器时间创建Tag
+  * `watermark`: 根据Sink输入的水印创建TAG。
+  * `batch`: 在批处理场景下，当前任务完成后会生成一个标签。
+
+> 如果选择"watermark"，需要指定水印的时区，如果水印不是UTC时区，配置'sink.watermark-time-zone'
+
+### 选择创建周期
+
+* 配置表参数`tag.creation-period`为'daily'`, `'hourly'` and `'two-hours'来指定tag的创建周期，如果需要等待延迟的数据可以配置`'tag.creation-delay'`来指定延迟的间隔
+
+### 选择动态删除Tag的方式
+
+* 配置表参数`'tag.num-retained-max'` 或 `'tag.default-time-retained'`，配置tag保留的最大数量和最大时间，过期的tag将会动态删除
+
+```sql
+-- Flink SQL
+CREATE TABLE test_batch_tag_table (
+    id INT PRIMARY KEY NOT ENFORCED,
+    age INT
+) WITH (
+    'tag.automatic-creation' = 'batch',
+    'tag.num-retained-max' = '90'
+);
+
+insert into test_batch_tag_table values(2,25);
+
+-- 查询快照
+select * from test_batch_tag_table/*+ OPTIONS('scan.tag-name' ='batch-write-2024-08-30')*/;
+```
+
+## Create Tags
+
+```sql
+# Flink run action
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    create_tag \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    --tag_name <tag-name> \
+    [--snapshot <snapshot_id>] \
+    [--time_retained <time-retained>] \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+# java api
+import org.apache.paimon.table.Table;
+
+public class CreateTag {
+
+    public static void main(String[] args) {
+        Table table = ...;
+        table.createTag("my-tag", 1);
+        table.createTag("my-tag-retained-12-hours", 1, Duration.ofHours(12));
+    }
+}
+# spark sql
+CALL sys.create_tag(table => 'test.t', tag => 'test_tag', snapshot => 2);
+# 创建tag保留一天
+CALL sys.create_tag(table => 'test.t', tag => 'test_tag', snapshot => 2, time_retained => '1 d');
+# 基于最新的快照创建tag
+CALL sys.create_tag(table => 'test.t', tag => 'test_tag');
+```
+
+## Delete Tags
+
+```java
+// java api
+import org.apache.paimon.table.Table;
+
+public class DeleteTag {
+
+    public static void main(String[] args) {
+        Table table = ...;
+        table.deleteTag("my-tag");
+    }
+}
+// spark sql
+CALL sys.delete_tag(table => 'test.t', tag => 'test_tag');
+```
+
+## Rollback to Tag
+
+* 回滚表到指定tag，所有快照id大于标签的快照和标签都会被删除(数据也会被删除)。
+
+```java
+// java api
+import org.apache.paimon.table.Table;
+
+public class RollbackTo {
+
+    public static void main(String[] args) {
+        // before rollback:
+        // snapshot-3 [expired] -> tag3
+        // snapshot-4 [expired]
+        // snapshot-5 -> tag5
+        // snapshot-6
+        // snapshot-7
+      
+        table.rollbackTo("tag3");
+        
+        // after rollback:
+        // snapshot-3 -> tag3
+    }
+}
+// spark sql
+CALL sys.rollback(table => 'test.t', version => '2');
+```
