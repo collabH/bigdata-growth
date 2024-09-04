@@ -96,6 +96,7 @@
 * [Flink操作Paimon](bigdata/datalake/paimon/PaimonOnFlink.md)
 * [Spark操作Paimon](bigdata/datalake/paimon/PaimonOnSpark.md)
 * [Paimon Maintenance](bigdata/datalake/paimon/PaimonOnMaintenance.md)
+* [PaimonPrivileges](bigdata/datalake/paimon/PaimonPrivileges.md)
 * [Paimon实践](bigdata/datalake/paimon/PaimonPractice.md)
 
 #### iceberg
