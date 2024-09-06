@@ -743,3 +743,144 @@ public class RollbackTo {
 // spark sql
 CALL sys.rollback(table => 'test.t', version => '2');
 ```
+
+# Manage Branches
+
+* 在流数据处理中，由于数据的修正可能会影响到现有的数据，因此很难对数据进行修正，并且用户会看到流的临时结果。假设现有工作流正在处理的分支是“main”分支，通过创建自定义数据分支，可以帮助进行测试和数据对现有表上的新作业进行验证，这无需停止现有的读取/写入工作流，无需从主分支复制数据。通过合并或替换分支操作，用户可以完成数据的校正。
+
+## Create Branches
+
+* Paimon支持根据指定的快照或者tag创建分支，或者只是创建一个空分支，这意味着创建的分支的初始状态就像一个空表。
+
+```sql
+# Flink SQL
+-- 基于tag:batch-write-2024-09-05 创建branch1
+CALL sys.create_branch('default.test_batch_tag_table', 'branch1', 'batch-write-2024-09-05');
+
+-- create empty branch named 'branch2'
+CALL sys.create_branch('default.test_batch_tag_table', 'branch2');
+
+# Flink Action Jar
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    create_branch \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    --branch_name <branch-name> \
+    [--tag_name <tag-name>] \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+```
+
+## Delete Branches
+
+```sql
+# Flink SQL
+-- 删除branch2
+CALL sys.delete_branch('default.test_batch_tag_table', 'branch2');
+
+# Flink Action Jar
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    delete_branch \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    --branch_name <branch-name> \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+```
+
+## Read / Write With Branch
+
+* 查询指定分支或者向指定分支写数据
+
+```sql
+select * from `test_batch_tag_table$branch_branch2`;
+select * from `test_batch_tag_table$branch_branch1` /*+ OPTIONS('consumer-id' = 'myid') */;
+
+-- write to branch 'branch2'
+INSERT INTO `test_batch_tag_table$branch_branch2` SELECT * from `test_batch_tag_table$branch_branch1`;
+```
+
+## Fast Forward
+
+* 将自定义分支推到`main`分支时将删除在分支初始tag之后创建的所有快照、tag和schema。并将快照、tag和scheam从自定义分支复制到`main分支`。
+
+```sql
+# Flink SQL
+-- 切换表主分支到branch1
+CALL sys.fast_forward('default.test_batch_tag_table', 'branch1');
+
+# Flink Action Jar
+<FLINK_HOME>/bin/flink run \
+    /path/to/paimon-flink-action-0.9-SNAPSHOT.jar \
+    fast_forward \
+    --warehouse <warehouse-path> \
+    --database <database-name> \ 
+    --table <table-name> \
+    --branch_name <branch-name> \
+    [--catalog_conf <paimon-catalog-conf> [--catalog_conf <paimon-catalog-conf> ...]]
+```
+
+### Batch Reading from Fallback Branch
+
+* 设置表参数`scan.fallback-branch`当批处理作业从当前分支读取时，如果分区不存在，读取器将尝试从fallback分支(`scan.fallback-branch`配置的分支)读取该分区。对于流式读作业，目前不支持此特性，并且只会从当前分支生成结果。
+* **应用场景**
+  * 假设创建了一个按日期分区的Paimon表。有一个长时间运行的流作业，它将记录插入到Paimon中，以便可以及时查询今天的数据。还有一个批处理作业，每天晚上运行，将昨天的更正记录插入到Paimon中，从而保证数据的准确性。
+  * 当从这个Paimon表中查询时，首先从批处理作业的结果中读取。但是，如果分区(例如：今天的分区)在其结果中不存在，那么您希望从流作业的结果中读取。在这种情况下，您可以为流作业创建分支，并设置`scan.fallback-branch`为流的分支
+
+```sql
+-- create Paimon table
+CREATE TABLE T (
+    dt STRING NOT NULL,
+    name STRING NOT NULL,
+    amount BIGINT
+) PARTITIONED BY (dt);
+
+-- create a branch for streaming job
+CALL sys.create_branch('default.T', 'test');
+
+-- set primary key and bucket number for the branch
+ALTER TABLE `T$branch_test` SET (
+    'primary-key' = 'dt,name',
+    'bucket' = '2',
+    'changelog-producer' = 'lookup'
+);
+
+-- set fallback branch
+ALTER TABLE T SET (
+    'scan.fallback-branch' = 'test'
+);
+
+-- write records into the streaming branch
+INSERT INTO `T$branch_test` VALUES ('20240725', 'apple', 4), ('20240725', 'peach', 10), ('20240726', 'cherry', 3), ('20240726', 'pear', 6);
+
+-- write records into the default branch
+INSERT INTO T VALUES ('20240725', 'apple', 5), ('20240725', 'banana', 7);
+
+SELECT * FROM T;
+/*
++------------------+------------------+--------+
+|               dt |             name | amount |
++------------------+------------------+--------+
+|         20240725 |            apple |      5 |
+|         20240725 |           banana |      7 |
+|         20240726 |           cherry |      3 |
+|         20240726 |             pear |      6 |
++------------------+------------------+--------+
+*/
+
+-- reset fallback branch
+ALTER TABLE T RESET ( 'scan.fallback-branch' );
+
+-- now it only reads from default branch
+SELECT * FROM T;
+/*
++------------------+------------------+--------+
+|               dt |             name | amount |
++------------------+------------------+--------+
+|         20240725 |            apple |      5 |
+|         20240725 |           banana |      7 |
++------------------+------------------+--------+
+*/
+```
