@@ -1406,3 +1406,220 @@ bin/flink stop --type [native/canonical] --savepointPath [:targetDirectory] :job
   * 回滚paimon表到指定tag
 * 步骤5：从savepoint重新启动
   * `bin/flink run -s :savepointPath [:runArgs]`
+
+# Flink API
+
+## 依赖管理
+
+```xml
+ <dependency>
+            <groupId>org.apache.paimon</groupId>
+            <artifactId>paimon-flink-1.20</artifactId>
+            <version>0.9-SNAPSHOT</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-api-java-bridge</artifactId>
+            <version>1.20.0</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-api-java</artifactId>
+            <version>1.20.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-runtime</artifactId>
+            <version>1.20.0</version>
+        </dependency>
+ 				 <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-files</artifactId>
+            <version>1.20.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.hadoop</groupId>
+            <artifactId>hadoop-common</artifactId>
+            <version>3.3.4</version>
+        </dependency>
+```
+
+## Write to Table
+
+```java
+package org.myorg.quickstart;
+
+import org.apache.flink.api.common.typeinfo.Types;
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.table.api.DataTypes;
+import org.apache.flink.table.types.DataType;
+import org.apache.flink.types.Row;
+import org.apache.flink.types.RowKind;
+import org.apache.paimon.catalog.Catalog;
+import org.apache.paimon.catalog.FileSystemCatalog;
+import org.apache.paimon.catalog.Identifier;
+import org.apache.paimon.flink.sink.FlinkSinkBuilder;
+import org.apache.paimon.fs.Path;
+import org.apache.paimon.fs.local.LocalFileIO;
+import org.apache.paimon.options.Options;
+import org.apache.paimon.table.Table;
+
+public class PaimonFlinkWriteAPI {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // create a changelog DataStream
+        DataStream<Row> input =
+                env.fromElements(
+                                Row.ofKind(RowKind.INSERT, 1, 12),
+                                Row.ofKind(RowKind.INSERT, 2, 5),
+                                Row.ofKind(RowKind.UPDATE_BEFORE, 1, 12),
+                                Row.ofKind(RowKind.UPDATE_AFTER, 1, 100))
+                        .returns(
+                                Types.ROW_NAMED(
+                                        new String[]{"id", "age"}, Types.INT, Types.INT));
+
+        // get table from catalog
+        Options catalogOptions = new Options();
+        catalogOptions.set("user", "root");
+        catalogOptions.set("password", "root");
+
+        Catalog catalog = new FileSystemCatalog(new LocalFileIO(),
+                new Path("/Users/huangshimin/Documents/study/flink/paimonData"),
+                catalogOptions);
+        Table table = catalog.getTable(Identifier.create("default", "test_batch_tag_table"));
+
+        DataType inputType =
+                DataTypes.ROW(
+                        DataTypes.FIELD("id", DataTypes.INT()),
+                        DataTypes.FIELD("age", DataTypes.INT()));
+        FlinkSinkBuilder builder = new FlinkSinkBuilder(table)
+                .forRow(input, inputType)
+                .overwrite()
+                .parallelism(1);
+
+
+        builder.build();
+        env.execute();
+    }
+}
+```
+
+## Read from Table
+
+```java
+package org.myorg.quickstart;
+
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.paimon.catalog.Catalog;
+import org.apache.paimon.catalog.FileSystemCatalog;
+import org.apache.paimon.catalog.Identifier;
+import org.apache.paimon.flink.source.FlinkSourceBuilder;
+import org.apache.paimon.fs.Path;
+import org.apache.paimon.fs.local.LocalFileIO;
+import org.apache.paimon.options.Options;
+import org.apache.paimon.table.Table;
+
+public class PaimonFlinkReadAPI {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+
+        // get table from catalog
+        Options catalogOptions = new Options();
+        catalogOptions.set("user", "root");
+        catalogOptions.set("password", "root");
+
+        Catalog catalog = new FileSystemCatalog(new LocalFileIO(),
+                new Path("/Users/huangshimin/Documents/study/flink/paimonData"),
+                catalogOptions);
+        Table table = catalog.getTable(Identifier.create("default", "test_batch_tag_table"));
+
+        FlinkSourceBuilder builder = new FlinkSourceBuilder(table)
+                .env(env);
+
+
+        builder.build().print();
+        env.execute();
+    }
+}
+```
+
+## Cdc ingestion Table
+
+```java
+package org.myorg.quickstart;
+
+import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.paimon.catalog.Catalog;
+import org.apache.paimon.catalog.FileSystemCatalog;
+import org.apache.paimon.catalog.Identifier;
+import org.apache.paimon.flink.sink.cdc.RichCdcRecord;
+import org.apache.paimon.flink.sink.cdc.RichCdcSinkBuilder;
+import org.apache.paimon.fs.Path;
+import org.apache.paimon.fs.local.LocalFileIO;
+import org.apache.paimon.options.Options;
+import org.apache.paimon.table.Table;
+import org.apache.paimon.types.DataTypes;
+
+import static org.apache.paimon.types.RowKind.INSERT;
+import static org.apache.paimon.types.RowKind.UPDATE_AFTER;
+import static org.apache.paimon.types.RowKind.UPDATE_BEFORE;
+
+public class PaimonFlinkCDCWriteAPI {
+    public static void main(String[] args) throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        // create a cdc DataStream
+        DataStream<RichCdcRecord> dataStream =
+                env.fromElements(
+                        RichCdcRecord.builder(INSERT)
+                                .field("order_id", DataTypes.BIGINT(), "123")
+                                .field("price", DataTypes.DOUBLE(), "62.2")
+                                .build(),
+                        // dt field will be added with schema evolution
+                        RichCdcRecord.builder(INSERT)
+                                .field("order_id", DataTypes.BIGINT(), "245")
+                                .field("price", DataTypes.DOUBLE(), "82.1")
+                                .field("dt", DataTypes.TIMESTAMP(), "2023-06-12 20:21:12")
+                                .build(),
+                        RichCdcRecord.builder(UPDATE_BEFORE)
+                                .field("order_id", DataTypes.BIGINT(), "123")
+                                .field("price", DataTypes.DOUBLE(), "62.2")
+                                .build(),
+                        RichCdcRecord.builder(UPDATE_AFTER)
+                                .field("order_id", DataTypes.BIGINT(), "123")
+                                .field("price", DataTypes.DOUBLE(), "90.1")
+                                .field("dt", DataTypes.TIMESTAMP(), "2024-06-12 20:21:12")
+                                .build(),
+                        RichCdcRecord.builder(INSERT)
+                                .field("order_id", DataTypes.BIGINT(), "124")
+                                .field("price", DataTypes.DOUBLE(), "62.1")
+                                .field("dt", DataTypes.TIMESTAMP(), "2024-07-12 20:21:12")
+                                .build()
+                        );
+
+        Identifier identifier = Identifier.create("default", "cdc_table");
+        Options catalogOptions = new Options();
+        catalogOptions.set("user", "root");
+        catalogOptions.set("password", "root");
+        Catalog.Loader catalogLoader =
+                () -> new FileSystemCatalog(new LocalFileIO(),
+                        new Path("/Users/huangshimin/Documents/study/flink/paimonData"),
+                        catalogOptions);
+        Table table = catalogLoader.load().getTable(identifier);
+
+        new RichCdcSinkBuilder(table)
+                .forRichCdcRecord(dataStream)
+                .identifier(identifier)
+                .catalogLoader(catalogLoader)
+                .build();
+
+        env.execute();
+    }
+}
+```
