@@ -956,9 +956,9 @@ CALL sys.compact(`table` => 'default.t', options => 'sink.parallelism=4')
 -- options(可选):动态添加的表配置
 -- where(可选): 分区过滤器(不能和partitions一起使用).使用需要`where`
 -- use partition filter
-CALL sys.compact(`table` => 'default.T', partitions => 'p=0', order_strategy => 'zorder', order_by => 'a,b', options => 'sink.parallelism=4')
+CALL sys.compact(`table` => 'default.test_batch_tag_table', partitions => 'p=0', order_strategy => 'zorder', order_by => 'a,b', options => 'sink.parallelism=4')
 -- use partition predicate
-CALL sys.compact(`table` => 'default.T', `where` => 'dt>10 and h<20', order_strategy => 'zorder', order_by => 'a,b', options => 'sink.parallelism=4')
+CALL sys.compact(`table` => 'default.test_batch_tag_table', `where` => '1=1', order_strategy => 'zorder', order_by => 'id', options => 'sink.parallelism=4')
 ```
 
 ### compact_database
