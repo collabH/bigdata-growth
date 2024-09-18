@@ -358,7 +358,7 @@ CREATE TABLE my_table (
 
 * Lookup changelog-producer支持`changelog-producer.row-deduplicatr`以避免为同一条记录生成`-U、+U`更改日志。
 
-**注意：**增加'execution.checkpointing.max-concurrent-checkpoints'可以提升性能。
+**注意：** 增加'execution.checkpointing.max-concurrent-checkpoints'可以提升性能。
 
 ## Full Compaction
 
@@ -372,7 +372,7 @@ CREATE TABLE my_table (
 
 * Full-compaction changelog-producer 支持 `changelog-producer.row-deduplicate` 以避免为同一条记录生成`-U， +U`更改日志。
 
-**注意：**增加'execution.checkpointing.max-concurrent-checkpoints'可以提升性能。
+**注意：** 增加'execution.checkpointing.max-concurrent-checkpoints'可以提升性能。
 
 # Sequence & RowKind
 

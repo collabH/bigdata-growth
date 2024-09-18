@@ -303,9 +303,9 @@ taskmanager.numberOfTaskSlots: 2
 ./bin/sql-client.sh embedded
 ```
 
-## 通过Table Store读写数据
+## 通过Paimon读写数据
 
-### 创建table store表
+### 创建Paimon表
 
 ```sql
 CREATE CATALOG my_catalog WITH (
