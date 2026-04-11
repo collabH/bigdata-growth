@@ -1,17 +1,44 @@
 ![img.png](./img/logo.png)
 
-# repository
-
-[![Security Status](https://www.murphysec.com/platform3/v3/badge/1613734950386302976.svg?t=1)](https://www.murphysec.com/accept?code=6d3cfe0ef182c3d08318514d339bc2b8&type=1&from=2&t=2)
+# 大数据知识库 (BigData Knowledge Repository)
 
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT/)
 
-[![Stargazers over time](https://starchart.cc/collabH/repository.svg)](#)
+[![GitHub Stars](https://img.shields.io/github/stars/collabH/repository?style=social)](https://github.com/collabH/repository)
+
+[![Fork](https://img.shields.io/github/forks/collabH/repository?style=social)](https://github.com/collabH/repository/fork)
 
 ## 概述
 
 * 个人学习知识库涉及到数据仓库建模、实时计算、大数据、Java、算法等。
 * [在线文档](https://shimin-huang.gitbook.io/doc/)
+
+## 🤖 AI知识库助手
+
+本项目集成了 **大数据知识库AI Skill助手**，可以帮助您：
+
+- **📚 知识复习**：基于Flink、Spark、Hadoop、数据仓库、数据湖等知识库提供智能复习指导
+- **💼 面试准备**：提供大数据技术面试问题解答和面试技巧
+- **🎯 学习路径**：根据您的需求制定个性化的学习计划和路径
+- **❓ 问题解答**：解答大数据相关技术问题，提供详细解释和示例
+
+### 使用方法
+
+在支持的AI平台上激活 `bigdata-knowledge-coach` Skill，然后您可以：
+
+```
+# 询问技术问题
+"请帮我解释Flink的Checkpoint机制"
+
+# 请求面试准备
+"准备一下Spark Streaming的面试题"
+
+# 学习规划
+"我想学习数据仓库，请给出学习路径"
+
+# 知识点复习
+"帮我复习Hive的调优策略"
+```
 
 ## RoadMap
 
@@ -20,6 +47,8 @@
 ## 基础能力
 
 ### 数据结构
+
+* [数据结构概述](base/datastructure/数据结构.md)
 
 ### 分布式理论
 
@@ -31,7 +60,7 @@
 
 ### Scala
 
-* [ScalaOverView](./base/scala/ScalaOverView.md)
+* [Scala概述](base/scala/ScalaOverView.md)
 
 ### JVM
 
@@ -40,11 +69,11 @@
 #### 并发编程
 
 * [认识并发编程](base/java/并发编程/认识并发编程.md)
-* [并发工具包](base/java/并发编程/并发工具类concurrent.md)
+* [并发工具类](base/java/并发编程/并发工具类concurrent.md)
 
 #### JDK源码
 
-#### todo
+#### 待补充
 
 ## 算法
 
@@ -67,14 +96,14 @@
 
 #### hudi
 
-##### quick start
+##### 快速开始
 
 * [Hudi概览](bigdata/datalake/hudi/hudiOverview.md)
 * [Hudi整合Spark](bigdata/datalake/hudi/hudiWithSpark.md)
 * [Hudi整合Flink](bigdata/datalake/hudi/hudiWithFlink.md)
 * [Hudi调优实践](bigdata/datalake/hudi/hudi调优实践.md)
 * [Hudi原理分析](bigdata/datalake/hudi/hudi原理分析.md)
-* [hudi数据湖实践](bigdata/datalake/hudi/hudi数据湖实践.md)
+* [Hudi数据湖实践](bigdata/datalake/hudi/hudi数据湖实践.md)
 
 ##### doc with source
 
@@ -154,7 +183,7 @@
 #### HDFS
 
 * [Hadoop快速入门](bigdata/hadoop/Hadoop快速开始.xmind)
-* [HDFSOverView](bigdata/hadoop/HDFS/HDFSOverView.xmind)
+* [HDFS概述](bigdata/hadoop/HDFS/HDFSOverView.xmind)
 * [Hadoop广义生态系统](bigdata/hadoop/Hadoop广义生态系统.xmind)
 * [Hadoop高可用配置](bigdata/hadoop/Hadoop高可用配置.md)
 * [HadoopCommon分析](bigdata/hadoop/HDFS/HadoopCommon包分析.pdf)
@@ -166,9 +195,9 @@
 * [分布式处理框架MapReduce](bigdata/hadoop/MapReduce/分布式处理框架MapReduce.md)
 * [MapReduce概览](bigdata/hadoop/MapReduce/MapReduceOverView.xmind)
 * [MapReduce调优](bigdata/hadoop/MapReduce/MapReduce调优.xmind)
-* [MapReduce数据相关操作](bigdata/hadoop/MapReduce/MapReduce数据操作.md)
+* [MapReduce数据操作](bigdata/hadoop/MapReduce/MapReduce数据操作.md)
 * [MapReduce输入输出剖析](bigdata/hadoop/MapReduce/MapReduce输入输出剖析.md)
-* [MapReduce的工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
+* [MapReduce工作机制](bigdata/hadoop/MapReduce/MapReduce的工作原理剖析.md)
 
 #### Yarn
 
@@ -502,11 +531,34 @@
 
 * [iterm2](mac/iterm2)
 
-# 贡献方式
+# 🤝 贡献方式
 
-* 欢迎通过[Gitter](https://gitter.im/collabH-repository/community)参与贡献
+欢迎为这个知识库贡献内容！
+
+* 📝 **提交Pull Request**：修正错误、补充内容、更新文档
+* 🐛 **提交Issue**：报告bug、提出改进建议、询问问题
+* 💬 **参与讨论**：在Issue和Discussion中分享您的见解
+* 🌟 **Star支持**：如果这个项目对您有帮助，请给我们一个Star！
+
 * [贡献者指南](./CONTRIBUTING.md)
+* [代码规范](./CODE_OF_CONDUCT.md)
+* [安全政策](./SECURITY.md)
 
-# 技术分享
+## 📚 技术分享
 
-![](./img/公众号.png)
+![公众号](./img/公众号.png)
+
+### 技术栈覆盖
+
+- **实时计算**：Flink、Spark Streaming
+- **批处理**：Spark、MapReduce
+- **数据湖**：Hudi、Iceberg、Paimon
+- **数据仓库**：Hive、Kudu
+- **消息队列**：Kafka、Pulsar
+- **存储系统**：HDFS、RocksDB、HBase
+- **OLAP引擎**：ClickHouse、Druid、Impala
+- **调度系统**：DolphinScheduler、Azkaban
+- **采集工具**：Canal、Debezium、Flume
+- **缓存系统**：Alluxio
+- **图数据库**：Nebula Graph
+- **工具集**：Zeppelin、Calcite
