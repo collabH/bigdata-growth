@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "fengge-perspective": {
+      "source": "Walshyu/fengge-skill",
+      "sourceType": "github",
+      "computedHash": "25cc4e181311ef7195619f30b7c0b6fc7ce11ac53c79ed5b7c7390ff44c0711a"
+    },
+    "zhangxuefeng-perspective": {
+      "source": "alchaincyf/zhangxuefeng-skill",
+      "sourceType": "github",
+      "computedHash": "0ce2f96a8e4168d4c3ac178e8731dbd43357272a297c644e7e29f994481b088d"
+    }
+  }
+}
